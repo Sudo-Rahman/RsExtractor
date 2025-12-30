@@ -34,3 +34,5 @@ export * from './extraction';
 // Merge components
 export * from './merge';
 
+// Translation components
+export * from './translation';

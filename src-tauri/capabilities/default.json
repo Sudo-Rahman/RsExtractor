@@ -12,7 +12,12 @@
     "fs:default",
     "fs:allow-read",
     "fs:allow-write",
+    "fs:allow-app-write",
+    "fs:allow-app-write-recursive",
     "shell:default",
-    "store:default"
+    "store:default",
+    "http:default",
+    "http:allow-fetch",
+    "http:allow-fetch-cancel"
   ]
 }

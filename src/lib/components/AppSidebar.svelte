@@ -5,6 +5,7 @@
   import Merge from 'lucide-svelte/icons/git-merge';
   import Info from 'lucide-svelte/icons/info';
   import Settings from 'lucide-svelte/icons/settings';
+  import Languages from 'lucide-svelte/icons/languages';
   import type { ComponentProps } from 'svelte';
   import {OS} from "$lib/utils";
 
@@ -25,6 +26,11 @@
       id: 'merge',
       title: 'Merge',
       icon: Merge,
+    },
+    {
+      id: 'translate',
+      title: 'AI Translation',
+      icon: Languages,
     },
     {
       id: 'info',

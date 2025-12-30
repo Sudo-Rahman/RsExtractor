@@ -1,4 +1,5 @@
 import { Store } from '@tauri-apps/plugin-store';
+import type { LLMApiKeys } from '$lib/types';
 
 // Settings interface
 export interface AppSettings {
@@ -6,13 +7,20 @@ export interface AppSettings {
   ffprobePath: string;
   theme: 'system' | 'light' | 'dark';
   outputPathHistory: string[];
+  llmApiKeys: LLMApiKeys;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   ffmpegPath: '',
   ffprobePath: '',
   theme: 'system',
-  outputPathHistory: []
+  outputPathHistory: [],
+  llmApiKeys: {
+    openai: '',
+    anthropic: '',
+    google: '',
+    openrouter: ''
+  }
 };
 
 // Persistent store
@@ -39,12 +47,14 @@ export const settingsStore = {
       const ffprobePath = await s.get<string>('ffprobePath');
       const theme = await s.get<'system' | 'light' | 'dark'>('theme');
       const outputPathHistory = await s.get<string[]>('outputPathHistory');
+      const llmApiKeys = await s.get<LLMApiKeys>('llmApiKeys');
 
       settings = {
         ffmpegPath: ffmpegPath ?? DEFAULT_SETTINGS.ffmpegPath,
         ffprobePath: ffprobePath ?? DEFAULT_SETTINGS.ffprobePath,
         theme: theme ?? DEFAULT_SETTINGS.theme,
-        outputPathHistory: outputPathHistory ?? DEFAULT_SETTINGS.outputPathHistory
+        outputPathHistory: outputPathHistory ?? DEFAULT_SETTINGS.outputPathHistory,
+        llmApiKeys: llmApiKeys ?? DEFAULT_SETTINGS.llmApiKeys
       };
 
       isLoaded = true;
@@ -71,6 +81,17 @@ export const settingsStore = {
     settings = { ...settings, theme };
     const s = await getStore();
     await s.set('theme', theme);
+  },
+
+  async setLLMApiKey(provider: keyof LLMApiKeys, key: string) {
+    const newKeys = { ...settings.llmApiKeys, [provider]: key };
+    settings = { ...settings, llmApiKeys: newKeys };
+    const s = await getStore();
+    await s.set('llmApiKeys', newKeys);
+  },
+
+  getLLMApiKey(provider: keyof LLMApiKeys): string {
+    return settings.llmApiKeys[provider] || '';
   },
 
   async addOutputPathToHistory(path: string) {

@@ -8,13 +8,13 @@
   import { Separator } from '$lib/components/ui/separator';
   import { Alert, AlertTitle, AlertDescription, ThemeToggle } from '$lib/components';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
-  import { ExtractView, MergeView, SettingsView, InfoView } from '$lib/components/views';
+  import { ExtractView, MergeView, SettingsView, InfoView, TranslationView } from '$lib/components/views';
   import AlertCircle from 'lucide-svelte/icons/alert-circle';
   import { OS } from '$lib/utils';
   import {useSidebar} from "$lib/components/ui/sidebar";
 
   // Current view state
-  let currentView = $state<'extract' | 'merge' | 'info' | 'settings'>('extract');
+  let currentView = $state<'extract' | 'merge' | 'translate' | 'info' | 'settings'>('extract');
   let ffmpegAvailable = $state<boolean | null>(null);
   let unlistenDragDrop: (() => void) | null = null;
 
@@ -22,12 +22,14 @@
   let extractViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let mergeViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let infoViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let translateViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
 
   const isMacOS = OS() === 'MacOS';
 
   const viewTitles: Record<string, string> = {
     extract: 'Track Extraction',
     merge: 'Track Merge',
+    translate: 'AI Translation',
     info: 'File Information',
     settings: 'Settings'
   };
@@ -65,14 +67,15 @@
         await mergeViewRef.handleFileDrop(event.payload.paths);
       } else if (currentView === 'info' && infoViewRef) {
         await infoViewRef.handleFileDrop(event.payload.paths);
+      } else if (currentView === 'translate' && translateViewRef) {
+        await translateViewRef.handleFileDrop(event.payload.paths);
       }
     });
   }
 
   function handleNavigate(viewId: string) {
-    currentView = viewId as 'extract' | 'merge' | 'info' | 'settings';
+    currentView = viewId as 'extract' | 'merge' | 'translate' | 'info' | 'settings';
   }
-
 </script>
 
 <Sidebar.Provider>
@@ -111,6 +114,8 @@
         <ExtractView bind:this={extractViewRef} />
       {:else if currentView === 'merge'}
         <MergeView bind:this={mergeViewRef} />
+      {:else if currentView === 'translate'}
+        <TranslationView bind:this={translateViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
       {:else if currentView === 'info'}
         <InfoView bind:this={infoViewRef} />
       {:else if currentView === 'settings'}

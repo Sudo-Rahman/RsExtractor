@@ -25,6 +25,11 @@
   import XCircle from 'lucide-svelte/icons/x-circle';
   import RefreshCw from 'lucide-svelte/icons/refresh-cw';
   import Info from 'lucide-svelte/icons/info';
+  import Key from 'lucide-svelte/icons/key';
+  import Eye from 'lucide-svelte/icons/eye';
+  import EyeOff from 'lucide-svelte/icons/eye-off';
+
+  import { LLM_PROVIDERS, type LLMProvider } from '$lib/types';
 
   let ffmpegStatus = $state<'checking' | 'found' | 'not-found'>('checking');
   let ffmpegVersion = $state<string | null>(null);
@@ -34,6 +39,22 @@
     { value: 'light', label: 'Light', icon: Sun, description: 'Light theme' },
     { value: 'dark', label: 'Dark', icon: Moon, description: 'Dark theme' },
   ] as const;
+
+  // API Key visibility states
+  let showApiKeys = $state<Record<LLMProvider, boolean>>({
+    openai: false,
+    anthropic: false,
+    google: false,
+    openrouter: false
+  });
+
+  function toggleApiKeyVisibility(provider: LLMProvider) {
+    showApiKeys = { ...showApiKeys, [provider]: !showApiKeys[provider] };
+  }
+
+  async function handleApiKeyChange(provider: LLMProvider, value: string) {
+    await settingsStore.setLLMApiKey(provider, value);
+  }
 
   onMount(async () => {
     await settingsStore.load();
@@ -188,6 +209,65 @@
             Download FFmpeg
           </Button>
         {/if}
+      </Card.Content>
+    </Card.Root>
+
+    <!-- LLM API Keys -->
+    <Card.Root>
+      <Card.Header>
+        <div class="flex items-center gap-2">
+          <Key class="size-5 text-primary" />
+          <Card.Title>LLM API Keys</Card.Title>
+        </div>
+        <Card.Description>
+          Configure API keys for AI-powered subtitle translation
+        </Card.Description>
+      </Card.Header>
+      <Card.Content class="space-y-4">
+        {#each Object.entries(LLM_PROVIDERS) as [key, provider] (key)}
+          {@const providerKey = key as LLMProvider}
+          <div class="space-y-2">
+            <Label for={`api-key-${key}`}>{provider.name} API Key</Label>
+            <div class="flex gap-2">
+              <div class="relative flex-1">
+                <Input
+                  id={`api-key-${key}`}
+                  type={showApiKeys[providerKey] ? 'text' : 'password'}
+                  placeholder={`Enter your ${provider.name} API key`}
+                  value={settingsStore.settings.llmApiKeys[providerKey]}
+                  oninput={(e) => handleApiKeyChange(providerKey, e.currentTarget.value)}
+                  class="pr-10"
+                />
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onclick={() => toggleApiKeyVisibility(providerKey)}
+              >
+                {#if showApiKeys[providerKey]}
+                  <EyeOff class="size-4" />
+                {:else}
+                  <Eye class="size-4" />
+                {/if}
+              </Button>
+            </div>
+            {#if providerKey === 'openrouter'}
+              <p class="text-xs text-muted-foreground">
+                OpenRouter allows access to multiple models from different providers
+              </p>
+            {/if}
+          </div>
+        {/each}
+
+        <div class="pt-2 text-xs text-muted-foreground">
+          <p>API keys are stored locally and never shared. Get your keys from:</p>
+          <ul class="mt-1 space-y-1 list-disc list-inside">
+            <li><a href="https://platform.openai.com/api-keys" target="_blank" class="text-primary hover:underline">OpenAI Platform</a></li>
+            <li><a href="https://console.anthropic.com/" target="_blank" class="text-primary hover:underline">Anthropic Console</a></li>
+            <li><a href="https://aistudio.google.com/apikey" target="_blank" class="text-primary hover:underline">Google AI Studio</a></li>
+            <li><a href="https://openrouter.ai/keys" target="_blank" class="text-primary hover:underline">OpenRouter</a></li>
+          </ul>
+        </div>
       </Card.Content>
     </Card.Root>
 
