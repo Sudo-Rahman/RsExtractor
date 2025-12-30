@@ -173,6 +173,99 @@ async fn check_ffmpeg() -> Result<bool, String> {
     }
 }
 
+/// Get FFmpeg version string
+#[tauri::command]
+async fn get_ffmpeg_version() -> Result<String, String> {
+    let output = Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .map_err(|e| format!("Failed to get FFmpeg version: {}", e))?;
+
+    if output.status.success() {
+        let version_str = String::from_utf8_lossy(&output.stdout);
+        // Extract first line which contains version
+        if let Some(first_line) = version_str.lines().next() {
+            // Try to extract just the version number
+            if let Some(version) = first_line.split_whitespace().nth(2) {
+                return Ok(version.to_string());
+            }
+        }
+        Ok("Unknown".to_string())
+    } else {
+        Err("FFmpeg not found".to_string())
+    }
+}
+
+/// Merge tracks into a video file
+#[tauri::command]
+async fn merge_tracks(
+    video_path: String,
+    tracks: Vec<serde_json::Value>,
+    output_path: String,
+) -> Result<(), String> {
+    let mut args = vec![
+        "-i".to_string(),
+        video_path.clone(),
+    ];
+
+    // Add input files for each track
+    for track in &tracks {
+        if let Some(input_path) = track.get("inputPath").and_then(|v| v.as_str()) {
+            args.push("-i".to_string());
+            args.push(input_path.to_string());
+        }
+    }
+
+    // Map all streams
+    args.push("-map".to_string());
+    args.push("0".to_string()); // All streams from main video
+
+    // Map additional tracks
+    for (i, track) in tracks.iter().enumerate() {
+        args.push("-map".to_string());
+        args.push(format!("{}:0", i + 1)); // First stream from each input
+
+        // Set metadata if available
+        if let Some(config) = track.get("config") {
+            let stream_idx = i; // Simplified - would need proper stream counting
+
+            if let Some(lang) = config.get("language").and_then(|v| v.as_str()) {
+                if !lang.is_empty() && lang != "und" {
+                    args.push(format!("-metadata:s:{}", stream_idx));
+                    args.push(format!("language={}", lang));
+                }
+            }
+
+            if let Some(title) = config.get("title").and_then(|v| v.as_str()) {
+                if !title.is_empty() {
+                    args.push(format!("-metadata:s:{}", stream_idx));
+                    args.push(format!("title={}", title));
+                }
+            }
+        }
+    }
+
+    // Copy all codecs
+    args.push("-c".to_string());
+    args.push("copy".to_string());
+
+    // Output file
+    args.push("-y".to_string()); // Overwrite
+    args.push(output_path);
+
+    let output = Command::new("ffmpeg")
+        .args(&args)
+        .output()
+        .map_err(|e| format!("Failed to execute ffmpeg: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("FFmpeg merge failed: {}", stderr));
+    }
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -181,11 +274,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_store::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             probe_file,
             extract_track,
             open_folder,
-            check_ffmpeg
+            check_ffmpeg,
+            get_ffmpeg_version,
+            merge_tracks
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

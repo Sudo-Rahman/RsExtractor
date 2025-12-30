@@ -8,24 +8,28 @@
   import { Separator } from '$lib/components/ui/separator';
   import { Alert, AlertTitle, AlertDescription, ThemeToggle } from '$lib/components';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
-  import { ExtractView, MergeView } from '$lib/components/views';
+  import { ExtractView, MergeView, SettingsView, InfoView } from '$lib/components/views';
   import AlertCircle from 'lucide-svelte/icons/alert-circle';
   import { OS } from '$lib/utils';
   import {useSidebar} from "$lib/components/ui/sidebar";
 
   // Current view state
-  let currentView = $state<'extract' | 'merge'>('extract');
+  let currentView = $state<'extract' | 'merge' | 'info' | 'settings'>('extract');
   let ffmpegAvailable = $state<boolean | null>(null);
   let unlistenDragDrop: (() => void) | null = null;
 
-  // Reference to ExtractView for drag & drop forwarding
+  // References to views for drag & drop forwarding
   let extractViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let mergeViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let infoViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
 
   const isMacOS = OS() === 'MacOS';
 
   const viewTitles: Record<string, string> = {
-    extract: 'Extraction de pistes',
-    merge: 'Merge de pistes'
+    extract: 'Track Extraction',
+    merge: 'Track Merge',
+    info: 'File Information',
+    settings: 'Settings'
   };
 
   onMount(() => {
@@ -43,8 +47,8 @@
     try {
       ffmpegAvailable = await invoke<boolean>('check_ffmpeg');
       if (!ffmpegAvailable) {
-        toast.error('FFmpeg non trouvé', {
-          description: 'Veuillez installer FFmpeg pour utiliser cette application.'
+        toast.error('FFmpeg not found', {
+          description: 'Please install FFmpeg to use this application.'
         });
       }
     } catch (e) {
@@ -57,12 +61,16 @@
       // Forward to the appropriate view based on current view
       if (currentView === 'extract' && extractViewRef) {
         await extractViewRef.handleFileDrop(event.payload.paths);
+      } else if (currentView === 'merge' && mergeViewRef) {
+        await mergeViewRef.handleFileDrop(event.payload.paths);
+      } else if (currentView === 'info' && infoViewRef) {
+        await infoViewRef.handleFileDrop(event.payload.paths);
       }
     });
   }
 
   function handleNavigate(viewId: string) {
-    currentView = viewId as 'extract' | 'merge';
+    currentView = viewId as 'extract' | 'merge' | 'info' | 'settings';
   }
 
 </script>
@@ -84,16 +92,15 @@
       <div class="flex-1" data-tauri-drag-region={isMacOS}>
         <h1 data-tauri-drag-region={isMacOS} class="text-lg font-semibold">{viewTitles[currentView]}</h1>
       </div>
-      <ThemeToggle />
     </header>
 
     <!-- FFmpeg warning -->
-    {#if ffmpegAvailable === false}
+    {#if ffmpegAvailable === false && currentView !== 'settings'}
       <Alert variant="destructive" class="m-4 shrink-0">
         <AlertCircle class="size-4" />
-        <AlertTitle>FFmpeg non disponible</AlertTitle>
+        <AlertTitle>FFmpeg not available</AlertTitle>
         <AlertDescription>
-          Installez FFmpeg pour utiliser cette application. Sur macOS: <code class="bg-muted px-1 rounded">brew install ffmpeg</code>
+          Install FFmpeg to use this application. On macOS: <code class="bg-muted px-1 rounded">brew install ffmpeg</code>
         </AlertDescription>
       </Alert>
     {/if}
@@ -103,7 +110,11 @@
       {#if currentView === 'extract'}
         <ExtractView bind:this={extractViewRef} />
       {:else if currentView === 'merge'}
-        <MergeView />
+        <MergeView bind:this={mergeViewRef} />
+      {:else if currentView === 'info'}
+        <InfoView bind:this={infoViewRef} />
+      {:else if currentView === 'settings'}
+        <SettingsView />
       {/if}
     </main>
   </Sidebar.Inset>

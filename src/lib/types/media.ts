@@ -83,6 +83,8 @@ export interface FFprobeStream {
 
 export interface FFprobeFormat {
   filename: string;
+  format_name?: string;
+  format_long_name?: string;
   duration?: string;
   size?: string;
   bit_rate?: string;

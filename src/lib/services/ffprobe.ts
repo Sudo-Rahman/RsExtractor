@@ -46,7 +46,7 @@ function parseStream(stream: FFprobeStream): Track | null {
 /**
  * Scan a video file using ffprobe (via Tauri command)
  */
-export async function scanFile(filePath: string): Promise<VideoFile> {
+export async function scanFile(filePath: string): Promise<VideoFile & { rawData?: any; format?: string; bitrate?: number }> {
   const name = getFileName(filePath);
 
   try {
@@ -66,13 +66,22 @@ export async function scanFile(filePath: string): Promise<VideoFile> {
       ? parseInt(ffprobeOutput.format.size)
       : 0;
 
+    const bitrate = ffprobeOutput.format.bit_rate
+      ? parseInt(ffprobeOutput.format.bit_rate)
+      : undefined;
+
+    const format = ffprobeOutput.format.format_long_name || ffprobeOutput.format.format_name;
+
     return {
       path: filePath,
       name,
       size,
       duration,
       tracks,
-      status: 'ready'
+      status: 'ready',
+      rawData: ffprobeOutput,
+      format,
+      bitrate
     };
   } catch (error) {
     console.error('FFprobe error:', error);

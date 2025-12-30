@@ -1,0 +1,667 @@
+<script lang="ts" module>
+  export interface InfoViewApi {
+    handleFileDrop: (paths: string[]) => Promise<void>;
+  }
+</script>
+
+<script lang="ts">
+  import { open } from '@tauri-apps/plugin-dialog';
+  import { toast } from 'svelte-sonner';
+
+  import { fileListStore } from '$lib/stores/files.svelte';
+  import { mergeStore } from '$lib/stores';
+  import { scanFile } from '$lib/services/ffprobe';
+  import type { VideoFile, Track } from '$lib/types';
+
+  import { Button } from '$lib/components/ui/button';
+  import { Badge } from '$lib/components/ui/badge';
+  import { Separator } from '$lib/components/ui/separator';
+  import * as Card from '$lib/components/ui/card';
+  import * as Tabs from '$lib/components/ui/tabs';
+  import * as Select from '$lib/components/ui/select';
+
+  import FileVideo from 'lucide-svelte/icons/file-video';
+  import FileAudio from 'lucide-svelte/icons/file-audio';
+  import Subtitles from 'lucide-svelte/icons/subtitles';
+  import Video from 'lucide-svelte/icons/video';
+  import Volume2 from 'lucide-svelte/icons/volume-2';
+  import HardDrive from 'lucide-svelte/icons/hard-drive';
+  import Clock from 'lucide-svelte/icons/clock';
+  import Film from 'lucide-svelte/icons/film';
+  import Plus from 'lucide-svelte/icons/plus';
+  import Trash2 from 'lucide-svelte/icons/trash-2';
+  import Loader2 from 'lucide-svelte/icons/loader-2';
+  import XCircle from 'lucide-svelte/icons/x-circle';
+  import Import from 'lucide-svelte/icons/import';
+  import Languages from 'lucide-svelte/icons/languages';
+  import Layers from 'lucide-svelte/icons/layers';
+  import Copy from 'lucide-svelte/icons/copy';
+  import Check from 'lucide-svelte/icons/check';
+
+  const SUPPORTED_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
+
+  interface FileInfo {
+    id: string;
+    path: string;
+    name: string;
+    size: number;
+    duration?: number;
+    bitrate?: number;
+    format?: string;
+    tracks: Track[];
+    status: 'scanning' | 'ready' | 'error';
+    error?: string;
+    rawData?: any; // Raw ffprobe data
+  }
+
+  let files = $state<FileInfo[]>([]);
+  let selectedFileId = $state<string | null>(null);
+  let copiedField = $state<string | null>(null);
+
+  const selectedFile = $derived(() => files.find(f => f.id === selectedFileId));
+
+  let idCounter = 0;
+  function generateId(): string {
+    return `info-${Date.now()}-${++idCounter}`;
+  }
+
+  export async function handleFileDrop(paths: string[]) {
+    const supportedPaths = paths.filter(p => {
+      const ext = p.toLowerCase().substring(p.lastIndexOf('.'));
+      return SUPPORTED_EXTENSIONS.includes(ext);
+    });
+
+    if (supportedPaths.length === 0) {
+      toast.warning('No supported media files detected');
+      return;
+    }
+
+    await addFiles(supportedPaths);
+  }
+
+  async function handleAddFiles() {
+    const selected = await open({
+      multiple: true,
+      filters: [{
+        name: 'Media files',
+        extensions: SUPPORTED_EXTENSIONS.map(e => e.slice(1))
+      }]
+    });
+
+    if (selected) {
+      const paths = Array.isArray(selected) ? selected : [selected];
+      await addFiles(paths);
+    }
+  }
+
+  async function addFiles(paths: string[]) {
+    let added = 0;
+    let skipped = 0;
+
+    for (const path of paths) {
+      // Check duplicates
+      if (files.some(f => f.path === path)) {
+        skipped++;
+        continue;
+      }
+
+      const name = path.split('/').pop() || path.split('\\').pop() || path;
+      const fileId = generateId();
+
+      const newFile: FileInfo = {
+        id: fileId,
+        path,
+        name,
+        size: 0,
+        tracks: [],
+        status: 'scanning'
+      };
+
+      files = [...files, newFile];
+
+      if (!selectedFileId) {
+        selectedFileId = fileId;
+      }
+
+      try {
+        const scanned = await scanFile(path);
+
+        files = files.map(f => f.id === fileId ? {
+          ...f,
+          size: scanned.size,
+          duration: scanned.duration,
+          bitrate: scanned.bitrate,
+          format: scanned.format,
+          tracks: scanned.tracks,
+          status: 'ready' as const,
+          rawData: scanned.rawData
+        } : f);
+
+        added++;
+      } catch (error) {
+        files = files.map(f => f.id === fileId ? {
+          ...f,
+          status: 'error' as const,
+          error: error instanceof Error ? error.message : String(error)
+        } : f);
+      }
+    }
+
+    if (added > 0 && skipped > 0) {
+      toast.success(`Added ${added} file(s), ${skipped} duplicate(s) skipped`);
+    } else if (added > 0) {
+      toast.success(`Added ${added} file(s)`);
+    } else if (skipped > 0) {
+      toast.info(`${skipped} file(s) already imported`);
+    }
+  }
+
+  function handleImportFromExtraction() {
+    const extractionFiles = fileListStore.files.filter(f => f.status === 'ready');
+    if (extractionFiles.length === 0) {
+      toast.info('No files in Extraction to import');
+      return;
+    }
+
+    const paths = extractionFiles.map(f => f.path);
+    addFiles(paths);
+  }
+
+  function handleImportFromMerge() {
+    const mergeFiles = mergeStore.videoFiles.filter(f => f.status === 'ready');
+    if (mergeFiles.length === 0) {
+      toast.info('No files in Merge to import');
+      return;
+    }
+
+    const paths = mergeFiles.map(f => f.path);
+    addFiles(paths);
+  }
+
+  function handleRemoveFile(fileId: string) {
+    files = files.filter(f => f.id !== fileId);
+    if (selectedFileId === fileId) {
+      selectedFileId = files.length > 0 ? files[0].id : null;
+    }
+  }
+
+  function handleClearAll() {
+    files = [];
+    selectedFileId = null;
+  }
+
+  function copyToClipboard(text: string, fieldName: string) {
+    navigator.clipboard.writeText(text);
+    copiedField = fieldName;
+    setTimeout(() => copiedField = null, 2000);
+  }
+
+  function formatFileSize(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
+  function formatDuration(seconds: number): string {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    if (h > 0) {
+      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
+  function formatBitrate(bps: number): string {
+    if (bps > 1000000) {
+      return `${(bps / 1000000).toFixed(2)} Mbps`;
+    }
+    return `${(bps / 1000).toFixed(0)} kbps`;
+  }
+
+  function getTrackIcon(type: string) {
+    switch (type) {
+      case 'video': return Video;
+      case 'audio': return Volume2;
+      case 'subtitle': return Subtitles;
+      default: return Film;
+    }
+  }
+
+  function getTrackTypeColor(type: string) {
+    switch (type) {
+      case 'video': return 'text-blue-500';
+      case 'audio': return 'text-green-500';
+      case 'subtitle': return 'text-yellow-500';
+      default: return 'text-gray-500';
+    }
+  }
+
+  // Group tracks by type
+  function groupTracksByType(tracks: Track[]) {
+    const groups: Record<string, Track[]> = { video: [], audio: [], subtitle: [] };
+    for (const track of tracks) {
+      if (groups[track.type]) {
+        groups[track.type].push(track);
+      }
+    }
+    return groups;
+  }
+
+  // Count files by status
+  const readyFilesCount = $derived(files.filter(f => f.status === 'ready').length);
+  const extractionFilesCount = $derived(fileListStore.files.filter(f => f.status === 'ready').length);
+  const mergeFilesCount = $derived(mergeStore.videoFiles.filter(f => f.status === 'ready').length);
+</script>
+
+<div class="h-full flex overflow-hidden">
+  <!-- Left panel: File list -->
+  <div class="w-80 border-r flex flex-col overflow-hidden">
+    <div class="p-3 border-b flex items-center justify-between">
+      <span class="text-sm font-semibold">Files ({files.length})</span>
+      <div class="flex gap-1">
+        {#if files.length > 0}
+          <Button variant="ghost" size="icon-sm" onclick={handleClearAll} class="text-muted-foreground hover:text-destructive">
+            <Trash2 class="size-4" />
+          </Button>
+        {/if}
+        <Button size="sm" onclick={handleAddFiles}>
+          <Plus class="size-4 mr-1" />
+          Add
+        </Button>
+      </div>
+    </div>
+
+    <!-- Import from other views -->
+    {#if extractionFilesCount > 0 || mergeFilesCount > 0}
+      <div class="p-2 border-b bg-muted/30">
+        <p class="text-xs text-muted-foreground mb-2">Import from:</p>
+        <div class="flex gap-2">
+          {#if extractionFilesCount > 0}
+            <Button variant="outline" size="sm" class="flex-1 text-xs" onclick={handleImportFromExtraction}>
+              <Import class="size-3 mr-1" />
+              Extraction ({extractionFilesCount})
+            </Button>
+          {/if}
+          {#if mergeFilesCount > 0}
+            <Button variant="outline" size="sm" class="flex-1 text-xs" onclick={handleImportFromMerge}>
+              <Import class="size-3 mr-1" />
+              Merge ({mergeFilesCount})
+            </Button>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
+    <div class="flex-1 min-h-0 overflow-auto p-2 space-y-1">
+      {#each files as file (file.id)}
+        {@const isSelected = selectedFileId === file.id}
+        <button
+          class="w-full flex items-start gap-2 rounded-lg border p-2.5 text-left transition-colors hover:bg-accent {isSelected ? 'border-primary bg-primary/5' : ''}"
+          onclick={() => selectedFileId = file.id}
+        >
+          <div class="shrink-0 mt-0.5">
+            {#if file.status === 'scanning'}
+              <Loader2 class="size-4 text-muted-foreground animate-spin" />
+            {:else if file.status === 'error'}
+              <XCircle class="size-4 text-destructive" />
+            {:else}
+              <FileVideo class="size-4 text-primary" />
+            {/if}
+          </div>
+
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium truncate">{file.name}</p>
+            {#if file.status === 'ready'}
+              <div class="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+                <span>{formatFileSize(file.size)}</span>
+                {#if file.duration}
+                  <span>•</span>
+                  <span>{formatDuration(file.duration)}</span>
+                {/if}
+              </div>
+            {:else if file.status === 'scanning'}
+              <p class="text-xs text-muted-foreground mt-1">Scanning...</p>
+            {:else if file.status === 'error'}
+              <p class="text-xs text-destructive mt-1 truncate">{file.error}</p>
+            {/if}
+          </div>
+
+          <Button
+            variant="ghost" size="icon-sm"
+            class="shrink-0 text-muted-foreground hover:text-destructive"
+            onclick={(e: MouseEvent) => { e.stopPropagation(); handleRemoveFile(file.id); }}
+          >
+            <Trash2 class="size-3" />
+          </Button>
+        </button>
+      {:else}
+        <div class="flex flex-col items-center justify-center py-12 text-center">
+          <Film class="size-12 text-muted-foreground/30 mb-3" />
+          <p class="text-sm text-muted-foreground">No files</p>
+          <p class="text-xs text-muted-foreground mt-1 mb-4">Drop media files here or click Add</p>
+          <Button variant="outline" size="sm" onclick={handleAddFiles}>
+            <Plus class="size-4 mr-1" />
+            Add files
+          </Button>
+        </div>
+      {/each}
+    </div>
+  </div>
+
+  <!-- Right panel: File details -->
+  <div class="flex-1 flex flex-col overflow-hidden">
+    {#if selectedFile()}
+      {@const file = selectedFile()!}
+      {@const groups = groupTracksByType(file.tracks)}
+
+      <div class="p-4 border-b">
+        <h2 class="text-lg font-semibold truncate">{file.name}</h2>
+        <p class="text-sm text-muted-foreground truncate mt-0.5">{file.path}</p>
+      </div>
+
+      <div class="flex-1 min-h-0 overflow-auto">
+        <Tabs.Root value="overview" class="h-full">
+          <div class="px-4 pt-2 border-b">
+            <Tabs.List>
+              <Tabs.Trigger value="overview">Overview</Tabs.Trigger>
+              <Tabs.Trigger value="tracks">Tracks ({file.tracks.length})</Tabs.Trigger>
+              <Tabs.Trigger value="raw">Raw Data</Tabs.Trigger>
+            </Tabs.List>
+          </div>
+
+          <!-- Overview Tab -->
+          <Tabs.Content value="overview" class="p-4 space-y-4 mt-0">
+            <!-- General Info -->
+            <Card.Root>
+              <Card.Header class="pb-2">
+                <Card.Title class="text-sm flex items-center gap-2">
+                  <Film class="size-4" />
+                  General Information
+                </Card.Title>
+              </Card.Header>
+              <Card.Content class="space-y-3">
+                <div class="grid grid-cols-2 gap-4">
+                  <div>
+                    <p class="text-xs text-muted-foreground">Format</p>
+                    <p class="text-sm font-medium">{file.format || 'Unknown'}</p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-muted-foreground">Size</p>
+                    <p class="text-sm font-medium">{formatFileSize(file.size)}</p>
+                  </div>
+                  {#if file.duration}
+                    <div>
+                      <p class="text-xs text-muted-foreground">Duration</p>
+                      <p class="text-sm font-medium">{formatDuration(file.duration)}</p>
+                    </div>
+                  {/if}
+                  {#if file.bitrate}
+                    <div>
+                      <p class="text-xs text-muted-foreground">Overall Bitrate</p>
+                      <p class="text-sm font-medium">{formatBitrate(file.bitrate)}</p>
+                    </div>
+                  {/if}
+                </div>
+              </Card.Content>
+            </Card.Root>
+
+            <!-- Track Summary -->
+            <Card.Root>
+              <Card.Header class="pb-2">
+                <Card.Title class="text-sm flex items-center gap-2">
+                  <Layers class="size-4" />
+                  Track Summary
+                </Card.Title>
+              </Card.Header>
+              <Card.Content>
+                <div class="flex gap-4">
+                  {#if groups.video.length > 0}
+                    <div class="flex items-center gap-2">
+                      <Video class="size-4 text-blue-500" />
+                      <span class="text-sm">{groups.video.length} Video</span>
+                    </div>
+                  {/if}
+                  {#if groups.audio.length > 0}
+                    <div class="flex items-center gap-2">
+                      <Volume2 class="size-4 text-green-500" />
+                      <span class="text-sm">{groups.audio.length} Audio</span>
+                    </div>
+                  {/if}
+                  {#if groups.subtitle.length > 0}
+                    <div class="flex items-center gap-2">
+                      <Subtitles class="size-4 text-yellow-500" />
+                      <span class="text-sm">{groups.subtitle.length} Subtitle</span>
+                    </div>
+                  {/if}
+                </div>
+              </Card.Content>
+            </Card.Root>
+
+            <!-- Video Track Details -->
+            {#if groups.video.length > 0}
+              <Card.Root>
+                <Card.Header class="pb-2">
+                  <Card.Title class="text-sm flex items-center gap-2">
+                    <Video class="size-4 text-blue-500" />
+                    Video
+                  </Card.Title>
+                </Card.Header>
+                <Card.Content class="space-y-3">
+                  {#each groups.video as track, i}
+                    <div class="p-3 rounded-md bg-muted/50 space-y-2">
+                      <div class="flex items-center gap-2">
+                        <Badge variant="outline" class="font-mono">#{track.index}</Badge>
+                        <span class="font-medium">{track.codec.toUpperCase()}</span>
+                        {#if track.codecLong}
+                          <span class="text-xs text-muted-foreground">({track.codecLong})</span>
+                        {/if}
+                      </div>
+                      <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                        {#if track.width && track.height}
+                          <div>
+                            <p class="text-xs text-muted-foreground">Resolution</p>
+                            <p>{track.width}×{track.height}</p>
+                          </div>
+                        {/if}
+                        {#if track.frameRate}
+                          <div>
+                            <p class="text-xs text-muted-foreground">Frame Rate</p>
+                            <p>{track.frameRate} fps</p>
+                          </div>
+                        {/if}
+                        {#if track.bitrate}
+                          <div>
+                            <p class="text-xs text-muted-foreground">Bitrate</p>
+                            <p>{formatBitrate(track.bitrate)}</p>
+                          </div>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
+                </Card.Content>
+              </Card.Root>
+            {/if}
+
+            <!-- Audio Tracks Details -->
+            {#if groups.audio.length > 0}
+              <Card.Root>
+                <Card.Header class="pb-2">
+                  <Card.Title class="text-sm flex items-center gap-2">
+                    <Volume2 class="size-4 text-green-500" />
+                    Audio ({groups.audio.length})
+                  </Card.Title>
+                </Card.Header>
+                <Card.Content class="space-y-2">
+                  {#each groups.audio as track}
+                    <div class="p-3 rounded-md bg-muted/50">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <Badge variant="outline" class="font-mono">#{track.index}</Badge>
+                        <span class="font-medium">{track.codec.toUpperCase()}</span>
+                        {#if track.language}
+                          <Badge variant="secondary">{track.language}</Badge>
+                        {/if}
+                        {#if track.title}
+                          <span class="text-sm text-muted-foreground">"{track.title}"</span>
+                        {/if}
+                        {#if track.default}
+                          <Badge>Default</Badge>
+                        {/if}
+                      </div>
+                      <div class="flex gap-4 mt-2 text-sm text-muted-foreground">
+                        {#if track.channels}
+                          <span>{track.channels} channels</span>
+                        {/if}
+                        {#if track.sampleRate}
+                          <span>{track.sampleRate} Hz</span>
+                        {/if}
+                        {#if track.bitrate}
+                          <span>{formatBitrate(track.bitrate)}</span>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
+                </Card.Content>
+              </Card.Root>
+            {/if}
+
+            <!-- Subtitle Tracks Details -->
+            {#if groups.subtitle.length > 0}
+              <Card.Root>
+                <Card.Header class="pb-2">
+                  <Card.Title class="text-sm flex items-center gap-2">
+                    <Subtitles class="size-4 text-yellow-500" />
+                    Subtitles ({groups.subtitle.length})
+                  </Card.Title>
+                </Card.Header>
+                <Card.Content class="space-y-2">
+                  {#each groups.subtitle as track}
+                    <div class="p-3 rounded-md bg-muted/50">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <Badge variant="outline" class="font-mono">#{track.index}</Badge>
+                        <span class="font-medium">{track.codec.toUpperCase()}</span>
+                        {#if track.language}
+                          <Badge variant="secondary">{track.language}</Badge>
+                        {/if}
+                        {#if track.title}
+                          <span class="text-sm text-muted-foreground">"{track.title}"</span>
+                        {/if}
+                        {#if track.default}
+                          <Badge>Default</Badge>
+                        {/if}
+                        {#if track.forced}
+                          <Badge variant="destructive">Forced</Badge>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
+                </Card.Content>
+              </Card.Root>
+            {/if}
+          </Tabs.Content>
+
+          <!-- Tracks Tab -->
+          <Tabs.Content value="tracks" class="p-4 space-y-2 mt-0">
+            {#each file.tracks as track (track.id)}
+              {@const Icon = getTrackIcon(track.type)}
+              <Card.Root>
+                <Card.Content class="p-3">
+                  <div class="flex items-start gap-3">
+                    <div class="p-2 rounded-md bg-muted">
+                      <Icon class="size-4 {getTrackTypeColor(track.type)}" />
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <Badge variant="outline" class="font-mono">#{track.index}</Badge>
+                        <span class="font-semibold capitalize">{track.type}</span>
+                        <span class="font-medium">{track.codec.toUpperCase()}</span>
+                        {#if track.language}
+                          <Badge variant="secondary">{track.language}</Badge>
+                        {/if}
+                        {#if track.default}
+                          <Badge>Default</Badge>
+                        {/if}
+                        {#if track.forced}
+                          <Badge variant="destructive">Forced</Badge>
+                        {/if}
+                      </div>
+
+                      {#if track.title}
+                        <p class="text-sm text-muted-foreground mt-1">"{track.title}"</p>
+                      {/if}
+
+                      <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
+                        {#if track.codecLong}
+                          <span>Codec: {track.codecLong}</span>
+                        {/if}
+                        {#if track.type === 'video'}
+                          {#if track.width && track.height}
+                            <span>Resolution: {track.width}×{track.height}</span>
+                          {/if}
+                          {#if track.frameRate}
+                            <span>FPS: {track.frameRate}</span>
+                          {/if}
+                        {/if}
+                        {#if track.type === 'audio'}
+                          {#if track.channels}
+                            <span>Channels: {track.channels}</span>
+                          {/if}
+                          {#if track.sampleRate}
+                            <span>Sample Rate: {track.sampleRate} Hz</span>
+                          {/if}
+                        {/if}
+                        {#if track.bitrate}
+                          <span>Bitrate: {formatBitrate(track.bitrate)}</span>
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
+                </Card.Content>
+              </Card.Root>
+            {:else}
+              <div class="text-center py-8 text-muted-foreground">
+                No tracks found
+              </div>
+            {/each}
+          </Tabs.Content>
+
+          <!-- Raw Data Tab -->
+          <Tabs.Content value="raw" class="p-4 mt-0">
+            <Card.Root>
+              <Card.Header class="pb-2 flex flex-row items-center justify-between">
+                <Card.Title class="text-sm">Raw FFprobe Output</Card.Title>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onclick={() => copyToClipboard(JSON.stringify(file.rawData, null, 2), 'raw')}
+                >
+                  {#if copiedField === 'raw'}
+                    <Check class="size-4 mr-1" />
+                    Copied!
+                  {:else}
+                    <Copy class="size-4 mr-1" />
+                    Copy JSON
+                  {/if}
+                </Button>
+              </Card.Header>
+              <Card.Content>
+                <pre class="text-xs bg-muted p-3 rounded-md overflow-auto max-h-[500px] font-mono">{JSON.stringify(file.rawData, null, 2)}</pre>
+              </Card.Content>
+            </Card.Root>
+          </Tabs.Content>
+        </Tabs.Root>
+      </div>
+    {:else}
+      <div class="flex-1 flex items-center justify-center">
+        <div class="text-center">
+          <Film class="size-16 text-muted-foreground/30 mx-auto mb-4" />
+          <h3 class="text-lg font-medium text-muted-foreground">No file selected</h3>
+          <p class="text-sm text-muted-foreground mt-1">Select a file from the list or add new files</p>
+        </div>
+      </div>
+    {/if}
+  </div>
+</div>
+

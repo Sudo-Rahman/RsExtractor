@@ -3,10 +3,10 @@
   import { Badge } from '$lib/components/ui/badge';
   import FileOutput from 'lucide-svelte/icons/file-output';
   import Merge from 'lucide-svelte/icons/git-merge';
+  import Info from 'lucide-svelte/icons/info';
   import Settings from 'lucide-svelte/icons/settings';
   import type { ComponentProps } from 'svelte';
   import {OS} from "$lib/utils";
-  import {useSidebar} from "$lib/components/ui/sidebar";
 
   interface NavItem {
     id: string;
@@ -25,6 +25,11 @@
       id: 'merge',
       title: 'Merge',
       icon: Merge,
+    },
+    {
+      id: 'info',
+      title: 'Info',
+      icon: Info,
     },
   ];
 
@@ -98,9 +103,13 @@
   <Sidebar.Footer>
     <Sidebar.Menu>
       <Sidebar.MenuItem>
-        <Sidebar.MenuButton>
+        {@const isActive = currentView === 'settings'}
+        <Sidebar.MenuButton
+          isActive={isActive}
+          onclick={() => onNavigate?.('settings')}
+        >
           {#snippet child({ props })}
-            <button {...props} class="flex items-center gap-2 w-full">
+            <button {...props} class="flex items-center gap-2 w-full p-2 rounded-lg" class:bg-accent={isActive}>
               <Settings class="size-4" />
               <span>Paramètres</span>
             </button>

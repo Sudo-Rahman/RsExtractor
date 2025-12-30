@@ -31,25 +31,12 @@
     class: className = ''
   }: MergeTrackEditorProps = $props();
 
-  const typeIcons = {
-    video: Video,
-    audio: Volume2,
-    subtitle: Subtitles,
-  };
-
-  const typeLabels = {
-    video: 'Vidéo',
-    audio: 'Audio',
-    subtitle: 'Sous-titre',
-    data: 'Données'
-  };
-
-  const typeColors = {
-    video: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30',
-    audio: 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/30',
-    subtitle: 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/30',
-    data: 'bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/30'
-  };
+  const TYPE_CONFIG = {
+    video: { icon: Video, label: 'Video', color: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30' },
+    audio: { icon: Volume2, label: 'Audio', color: 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/30' },
+    subtitle: { icon: Subtitles, label: 'Subtitle', color: 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/30' },
+    data: { icon: Video, label: 'Data', color: 'bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/30' }
+  } as const;
 
   function getConfig(trackId: string): MergeTrackConfig | undefined {
     return trackConfigs.get(trackId);
@@ -60,18 +47,12 @@
   }
 
   const groupedTracks = $derived(() => {
-    const groups: Record<string, MergeTrack[]> = {
-      video: [],
-      audio: [],
-      subtitle: [],
-    };
-
+    const groups: Record<string, MergeTrack[]> = { video: [], audio: [], subtitle: [] };
     for (const track of tracks) {
       if (groups[track.type]) {
         groups[track.type].push(track);
       }
     }
-
     return groups;
   });
 
@@ -79,25 +60,23 @@
   let dragOverTrackId = $state<string | null>(null);
 
   function handleDragStart(e: DragEvent, trackId: string) {
+    console.log('dragOver', dragOverTrackId, trackId);
+    if (!e.dataTransfer) return;
     draggedTrackId = trackId;
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', trackId);
-    }
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', trackId);
   }
 
   function handleDragOver(e: DragEvent, trackId: string) {
+    console.log('dragOver', dragOverTrackId, trackId);
     e.preventDefault();
     if (draggedTrackId && draggedTrackId !== trackId) {
       dragOverTrackId = trackId;
     }
   }
 
-  function handleDragLeave() {
-    dragOverTrackId = null;
-  }
-
   function handleDrop(e: DragEvent, targetTrackId: string) {
+    console.log('dragOver', dragOverTrackId, trackId);
     e.preventDefault();
     if (draggedTrackId && draggedTrackId !== targetTrackId) {
       const targetConfig = getConfig(targetTrackId);
@@ -105,11 +84,10 @@
         onReorderTrack?.(draggedTrackId, targetConfig.order);
       }
     }
-    draggedTrackId = null;
-    dragOverTrackId = null;
+    resetDragState();
   }
 
-  function handleDragEnd() {
+  function resetDragState() {
     draggedTrackId = null;
     dragOverTrackId = null;
   }
@@ -118,34 +96,36 @@
 <div class={cn('space-y-4', className)}>
   {#each Object.entries(groupedTracks()) as [type, typeTracks]}
     {#if typeTracks.length > 0}
-      {@const Icon = typeIcons[type as keyof typeof typeIcons]}
+      {@const typeConfig = TYPE_CONFIG[type as keyof typeof TYPE_CONFIG]}
+      {@const Icon = typeConfig?.icon}
       <Card.Root>
         <Card.Header class="py-3">
           <div class="flex items-center gap-2">
             {#if Icon}
               <Icon class="size-4 text-muted-foreground" />
             {/if}
-            <Card.Title class="text-sm">{typeLabels[type as keyof typeof typeLabels]} ({typeTracks.length})</Card.Title>
+            <Card.Title class="text-sm">{typeConfig?.label || type} ({typeTracks.length})</Card.Title>
           </div>
         </Card.Header>
         <Card.Content class="pt-0 space-y-1.5">
           {#each typeTracks as track (track.id)}
             {@const config = getConfig(track.id)}
             {@const enabled = isEnabled(track.id)}
+            {@const trackTypeConfig = TYPE_CONFIG[track.type as keyof typeof TYPE_CONFIG]}
             <div
               class={cn(
                 'flex items-center gap-2 rounded-md border p-2.5 transition-all',
                 enabled ? 'bg-card' : 'bg-muted/30 opacity-60',
                 dragOverTrackId === track.id && 'border-primary border-dashed',
                 draggedTrackId === track.id && 'opacity-50',
-                typeColors[track.type as keyof typeof typeColors]
+                trackTypeConfig?.color
               )}
               draggable="true"
               ondragstart={(e) => handleDragStart(e, track.id)}
               ondragover={(e) => handleDragOver(e, track.id)}
-              ondragleave={handleDragLeave}
+              ondragleave={() => dragOverTrackId = null}
               ondrop={(e) => handleDrop(e, track.id)}
-              ondragend={handleDragEnd}
+              ondragend={resetDragState}
               role="listitem"
             >
               <div class="cursor-grab active:cursor-grabbing text-muted-foreground/50 hover:text-muted-foreground">
@@ -169,10 +149,10 @@
                     </Badge>
                   {/if}
                   {#if config?.default ?? track.default}
-                    <Badge class="text-xs">Défaut</Badge>
+                    <Badge class="text-xs">Default</Badge>
                   {/if}
                   {#if config?.forced ?? track.forced}
-                    <Badge variant="destructive" class="text-xs">Forcé</Badge>
+                    <Badge variant="destructive" class="text-xs">Forced</Badge>
                   {/if}
                 </div>
 
@@ -219,7 +199,7 @@
                 onclick={() => onEditTrack?.(track.id)}
               >
                 <Settings2 class="size-4" />
-                <span class="sr-only">Modifier</span>
+                <span class="sr-only">Edit</span>
               </Button>
             </div>
           {/each}
@@ -231,7 +211,7 @@
   {#if tracks.length === 0}
     <Card.Root>
       <Card.Content class="py-8 text-center text-muted-foreground">
-        <p>Sélectionnez un fichier pour voir ses pistes</p>
+        <p>Select a file to view its tracks</p>
       </Card.Content>
     </Card.Root>
   {/if}

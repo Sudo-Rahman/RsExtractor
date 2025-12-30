@@ -29,13 +29,13 @@
   import Upload from 'lucide-svelte/icons/upload';
 
   export async function handleFileDrop(paths: string[]) {
-    const videoExtensions = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v'];
+    const videoExtensions = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
     const videoPaths = paths.filter(p =>
       videoExtensions.some(ext => p.toLowerCase().endsWith(ext))
     );
 
     if (videoPaths.length === 0) {
-      toast.warning('Aucun fichier vidéo valide détecté');
+      toast.warning('No valid media files detected');
       return;
     }
 
@@ -71,7 +71,7 @@
       }
     }
 
-    toast.success(`${videoPaths.length} fichier(s) importé(s)`);
+    toast.success(`${videoPaths.length} file(s) imported`);
   }
 
   async function handleImportClick() {
@@ -79,8 +79,8 @@
       const selected = await open({
         multiple: true,
         filters: [{
-          name: 'Fichiers vidéo',
-          extensions: ['mkv', 'mp4', 'avi', 'mov', 'webm', 'm4v']
+          name: 'Media files',
+          extensions: ['mkv', 'mp4', 'avi', 'mov', 'webm', 'm4v', 'mks', 'mka']
         }]
       });
 
@@ -90,7 +90,7 @@
       }
     } catch (error) {
       console.error('Error opening file dialog:', error);
-      toast.error('Erreur lors de l\'ouverture du dialogue');
+      toast.error('Error opening file dialog');
     }
   }
 
