@@ -83,7 +83,7 @@
             {/if}
           </div>
         {:else if file.status === 'scanning'}
-          <p class="text-xs text-muted-foreground mt-1">Analyse en cours...</p>
+          <p class="text-xs text-muted-foreground mt-1">Scanning...</p>
         {:else if file.status === 'error'}
           <p class="text-xs text-destructive mt-1">{file.error}</p>
         {/if}
@@ -97,7 +97,7 @@
         onclick={(e: MouseEvent) => { e.stopPropagation(); onRemove?.(file.path); }}
       >
         <Trash2 class="size-4" />
-        <span class="sr-only">Supprimer</span>
+        <span class="sr-only">Remove</span>
       </Button>
     </button>
   {:else}

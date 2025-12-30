@@ -203,54 +203,118 @@ async fn merge_tracks(
     tracks: Vec<serde_json::Value>,
     output_path: String,
 ) -> Result<(), String> {
+    // First, probe the video to count streams
+    let probe_output = Command::new("ffprobe")
+        .args([
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
+            "-show_streams",
+            &video_path,
+        ])
+        .output()
+        .map_err(|e| format!("Failed to probe video: {}", e))?;
+
+    if !probe_output.status.success() {
+        return Err("Failed to probe video file".to_string());
+    }
+
+    let probe_json: serde_json::Value = serde_json::from_slice(&probe_output.stdout)
+        .map_err(|e| format!("Failed to parse probe output: {}", e))?;
+
+    let original_stream_count = probe_json
+        .get("streams")
+        .and_then(|s| s.as_array())
+        .map(|arr| arr.len())
+        .unwrap_or(0);
+
     let mut args = vec![
+        "-y".to_string(), // Overwrite output
         "-i".to_string(),
         video_path.clone(),
     ];
 
-    // Add input files for each track
+    // Add input files for each track with optional delay
     for track in &tracks {
         if let Some(input_path) = track.get("inputPath").and_then(|v| v.as_str()) {
+            // Check for delay
+            let delay_ms = track
+                .get("config")
+                .and_then(|c| c.get("delayMs"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+
+            if delay_ms != 0 {
+                // Convert ms to seconds for itsoffset
+                let delay_sec = delay_ms as f64 / 1000.0;
+                args.push("-itsoffset".to_string());
+                args.push(format!("{:.3}", delay_sec));
+            }
+
             args.push("-i".to_string());
             args.push(input_path.to_string());
         }
     }
 
-    // Map all streams
+    // Map all streams from main video
     args.push("-map".to_string());
-    args.push("0".to_string()); // All streams from main video
+    args.push("0".to_string());
 
     // Map additional tracks
-    for (i, track) in tracks.iter().enumerate() {
+    for (i, _track) in tracks.iter().enumerate() {
+        let input_idx = i + 1;
         args.push("-map".to_string());
-        args.push(format!("{}:0", i + 1)); // First stream from each input
-
-        // Set metadata if available
-        if let Some(config) = track.get("config") {
-            let stream_idx = i; // Simplified - would need proper stream counting
-
-            if let Some(lang) = config.get("language").and_then(|v| v.as_str()) {
-                if !lang.is_empty() && lang != "und" {
-                    args.push(format!("-metadata:s:{}", stream_idx));
-                    args.push(format!("language={}", lang));
-                }
-            }
-
-            if let Some(title) = config.get("title").and_then(|v| v.as_str()) {
-                if !title.is_empty() {
-                    args.push(format!("-metadata:s:{}", stream_idx));
-                    args.push(format!("title={}", title));
-                }
-            }
-        }
+        args.push(format!("{}:0", input_idx));
     }
 
     // Copy all codecs
     args.push("-c".to_string());
     args.push("copy".to_string());
 
+    // Now set metadata and disposition for each added track
+    // Use absolute output stream indices
+    for (i, track) in tracks.iter().enumerate() {
+        let output_stream_idx = original_stream_count + i;
+
+        if let Some(config) = track.get("config") {
+            // Language
+            if let Some(lang) = config.get("language").and_then(|v| v.as_str()) {
+                if !lang.is_empty() && lang != "und" {
+                    args.push(format!("-metadata:s:{}", output_stream_idx));
+                    args.push(format!("language={}", lang));
+                }
+            }
+
+            // Title
+            if let Some(title) = config.get("title").and_then(|v| v.as_str()) {
+                if !title.is_empty() {
+                    args.push(format!("-metadata:s:{}", output_stream_idx));
+                    args.push(format!("title={}", title));
+                }
+            }
+
+            // Default flag
+            if let Some(is_default) = config.get("default").and_then(|v| v.as_bool()) {
+                args.push(format!("-disposition:{}", output_stream_idx));
+                if is_default {
+                    args.push("default".to_string());
+                } else {
+                    args.push("0".to_string());
+                }
+            }
+
+            // Forced flag (for subtitles)
+            if let Some(is_forced) = config.get("forced").and_then(|v| v.as_bool()) {
+                if is_forced {
+                    args.push(format!("-disposition:{}", output_stream_idx));
+                    args.push("+forced".to_string());
+                }
+            }
+        }
+    }
+
     // Output file
-    args.push("-y".to_string()); // Overwrite
     args.push(output_path);
 
     let output = Command::new("ffmpeg")

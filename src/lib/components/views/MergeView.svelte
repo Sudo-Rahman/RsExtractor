@@ -334,7 +334,15 @@
           outputFilename = outputFilename.replace(/\.[^.]+$/, '') + '.mkv';
         }
 
-        const fullOutputPath = `${outputPath}/${outputFilename}`;
+        let fullOutputPath = `${outputPath}/${outputFilename}`;
+
+        // Check if output path is the same as input path (FFmpeg cannot edit files in-place)
+        if (fullOutputPath === video.path) {
+          // Add "_merged" suffix before extension
+          const nameWithoutExt = outputFilename.replace(/\.mkv$/, '');
+          outputFilename = `${nameWithoutExt}_merged.mkv`;
+          fullOutputPath = `${outputPath}/${outputFilename}`;
+        }
 
         const trackArgs = attachedTracks.map(track => ({
           inputPath: track.path,
@@ -649,7 +657,7 @@
                   </Button>
                 </div>
               {:else}
-                <p class="text-sm text-muted-foreground text-center py-4">
+                <p class="text-sm text-muted-foreground text-center py-4 select-none">
                   No unassigned tracks. Add tracks or drag here to detach.
                 </p>
               {/each}

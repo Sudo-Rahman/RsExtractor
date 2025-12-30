@@ -60,7 +60,6 @@
   let dragOverTrackId = $state<string | null>(null);
 
   function handleDragStart(e: DragEvent, trackId: string) {
-    console.log('dragOver', dragOverTrackId, trackId);
     if (!e.dataTransfer) return;
     draggedTrackId = trackId;
     e.dataTransfer.effectAllowed = 'move';
@@ -68,7 +67,6 @@
   }
 
   function handleDragOver(e: DragEvent, trackId: string) {
-    console.log('dragOver', dragOverTrackId, trackId);
     e.preventDefault();
     if (draggedTrackId && draggedTrackId !== trackId) {
       dragOverTrackId = trackId;
@@ -76,7 +74,6 @@
   }
 
   function handleDrop(e: DragEvent, targetTrackId: string) {
-    console.log('dragOver', dragOverTrackId, trackId);
     e.preventDefault();
     if (draggedTrackId && draggedTrackId !== targetTrackId) {
       const targetConfig = getConfig(targetTrackId);

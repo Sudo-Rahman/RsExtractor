@@ -100,7 +100,7 @@
         <AlertCircle class="size-4" />
         <AlertTitle>FFmpeg not available</AlertTitle>
         <AlertDescription>
-          Install FFmpeg to use this application. On macOS: <code class="bg-muted px-1 rounded">brew install ffmpeg</code>
+          Install FFmpeg to use this application.
         </AlertDescription>
       </Alert>
     {/if}

@@ -47,29 +47,29 @@
 <Card.Root class={className}>
   <Card.Header class="pb-3">
     <Card.Title class="text-base">Extraction</Card.Title>
-    <Card.Description>Configurez et lancez l'extraction</Card.Description>
+    <Card.Description>Configure and run extraction</Card.Description>
   </Card.Header>
   <Card.Content class="space-y-4">
     <!-- Output directory -->
     <div class="space-y-2">
-      <span class="text-sm font-medium">Dossier de destination</span>
+      <span class="text-sm font-medium">Output folder</span>
       <div class="flex gap-2">
         <div class="flex-1 flex items-center gap-2 rounded-md border bg-muted/50 px-3 py-2 text-sm min-w-0">
           <Folder class="size-4 text-muted-foreground shrink-0" />
           <span class="truncate text-muted-foreground">
-            {outputDir || 'Aucun dossier sélectionné'}
+            {outputDir || 'No folder selected'}
           </span>
         </div>
         <Button variant="outline" size="icon" onclick={onSelectOutputDir}>
           <FolderOpen class="size-4" />
-          <span class="sr-only">Parcourir</span>
+          <span class="sr-only">Browse</span>
         </Button>
       </div>
     </div>
 
     <!-- Selection summary -->
     <div class="rounded-md bg-muted/50 p-3 text-sm flex items-center justify-between">
-      <span>Pistes sélectionnées</span>
+      <span>Selected tracks</span>
       <Badge variant={selectedCount > 0 ? 'default' : 'secondary'}>
         {selectedCount}
       </Badge>
@@ -81,21 +81,21 @@
         {#if isCompleted}
           <Alert.Root class="border-green-500/50 bg-green-500/10">
             <CheckCircle class="size-4 text-green-500" />
-            <Alert.Title>Extraction terminée !</Alert.Title>
+            <Alert.Title>Extraction complete!</Alert.Title>
             <Alert.Description>
-              Toutes les pistes ont été extraites avec succès.
+              All tracks have been successfully extracted.
             </Alert.Description>
           </Alert.Root>
         {:else}
           <div class="space-y-2">
             <div class="flex justify-between text-sm">
-              <span class="text-muted-foreground">Extraction en cours...</span>
+              <span class="text-muted-foreground">Extracting...</span>
               <span class="font-medium">{progressPercent()}%</span>
             </div>
             <Progress value={progressPercent()} />
             {#if progress.currentFile}
               <p class="text-xs text-muted-foreground truncate">
-                Fichier {progress.currentFileIndex}/{progress.totalFiles}: {progress.currentFile}
+                File {progress.currentFileIndex}/{progress.totalFiles}: {progress.currentFile}
               </p>
             {/if}
           </div>
@@ -107,7 +107,7 @@
     {#if progress.error}
       <Alert.Root variant="destructive">
         <AlertCircle class="size-4" />
-        <Alert.Title>Erreur</Alert.Title>
+        <Alert.Title>Error</Alert.Title>
         <Alert.Description>{progress.error}</Alert.Description>
       </Alert.Root>
     {/if}
@@ -117,7 +117,7 @@
     {#if isCompleted}
       <Button class="w-full" onclick={onOpenFolder}>
         <FolderOpen class="size-4 mr-2" />
-        Ouvrir le dossier
+        Open folder
       </Button>
     {:else}
       <Button
@@ -127,10 +127,10 @@
       >
         {#if isExtracting}
           <Loader2 class="size-4 mr-2 animate-spin" />
-          Extraction...
+          Extracting...
         {:else}
           <Play class="size-4 mr-2" />
-          Extraire ({selectedCount} piste{selectedCount > 1 ? 's' : ''})
+          Extract ({selectedCount} track{selectedCount > 1 ? 's' : ''})
         {/if}
       </Button>
     {/if}

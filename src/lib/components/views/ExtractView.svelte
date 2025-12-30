@@ -220,9 +220,9 @@
     extractionStore.updateProgress({ status: 'completed' });
 
     if (errorCount === 0) {
-      toast.success(`${successCount} piste(s) extraite(s) avec succès`);
+      toast.success(`${successCount} track(s) extracted successfully`);
     } else {
-      toast.warning(`${successCount} succès, ${errorCount} erreur(s)`);
+      toast.warning(`${successCount} success, ${errorCount} error(s)`);
     }
   }
 
@@ -238,7 +238,7 @@
     fileListStore.clear();
     extractionStore.reset();
     extractionStore.clearAllTracks();
-    toast.info('Liste des fichiers vidée');
+    toast.info('File list cleared');
   }
 
   const selectedFile = $derived(fileListStore.selectedFile);
@@ -253,7 +253,7 @@
 <div class="h-full flex overflow-hidden">
   <!-- Left panel: File list -->
   <div class="w-80 border-r flex flex-col overflow-hidden">
-    <div class="p-4 border-b shrink-0 flex items-center justify-between">
+    <div class="p-3 border-b shrink-0 flex items-center justify-between">
       <h2 class="font-semibold">Fichiers ({fileListStore.files.length})</h2>
       <div class="flex items-center gap-1">
         {#if fileListStore.files.length > 0}
@@ -264,12 +264,12 @@
             class="text-muted-foreground hover:text-destructive"
           >
             <Trash2 class="size-4" />
-            <span class="sr-only">Vider la liste</span>
+            <span class="sr-only">Clear list</span>
           </Button>
         {/if}
         <Button size="sm" onclick={handleImportClick}>
           <Upload class="size-4 mr-1" />
-          Importer
+          Add
         </Button>
       </div>
     </div>
@@ -279,7 +279,7 @@
         <DropZone isDragging={uiStore.isDragging} />
       </div>
     {:else}
-      <div class="flex-1 min-h-0 overflow-auto p-4">
+      <div class="flex-1 min-h-0 overflow-auto p-2">
         <FileList
           files={fileListStore.files}
           selectedPath={fileListStore.selectedFilePath}
@@ -302,7 +302,7 @@
       </div>
     {/if}
 
-    <div class="flex-1 min-h-0 overflow-auto p-6">
+    <div class="flex-1 min-h-0 overflow-auto p-4">
       {#if selectedFile}
         <TrackDetails
           file={selectedFile}
@@ -313,7 +313,7 @@
         />
       {:else}
         <div class="h-full flex items-center justify-center text-muted-foreground py-20">
-          <p>Sélectionnez un fichier pour voir les pistes</p>
+          <p>Select a file to view its tracks</p>
         </div>
       {/if}
     </div>

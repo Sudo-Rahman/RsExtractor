@@ -42,10 +42,10 @@
   });
 
   const typeLabels: Record<string, string> = {
-    video: 'Vidéo',
+    video: 'Video',
     audio: 'Audio',
-    subtitle: 'Sous-titres',
-    data: 'Données'
+    subtitle: 'Subtitles',
+    data: 'Data'
   };
 
   const typeIcons: Record<string, typeof Video> = {
@@ -75,7 +75,7 @@
     <Card.Header class="pb-3">
       <Card.Title class="text-base truncate">{file.name}</Card.Title>
       <Card.Description>
-        {file.tracks.length} piste{file.tracks.length > 1 ? 's' : ''} disponible{file.tracks.length > 1 ? 's' : ''}
+        {file.tracks.length} track{file.tracks.length > 1 ? 's' : ''} available
       </Card.Description>
     </Card.Header>
   </Card.Root>
@@ -99,7 +99,7 @@
                   class="h-7 text-xs"
                   onclick={() => onSelectAll?.(type as Track['type'])}
                 >
-                  Tout sélectionner
+                  Select all
                 </Button>
               {:else}
                 <Button
@@ -108,7 +108,7 @@
                   class="h-7 text-xs"
                   onclick={() => onDeselectAll?.(type as Track['type'])}
                 >
-                  Tout désélectionner
+                  Deselect all
                 </Button>
               {/if}
             </div>
@@ -140,10 +140,10 @@
                       </Badge>
                     {/if}
                     {#if track.default}
-                      <Badge class="text-xs">Défaut</Badge>
+                      <Badge class="text-xs">Default</Badge>
                     {/if}
                     {#if track.forced}
-                      <Badge variant="destructive" class="text-xs">Forcé</Badge>
+                      <Badge variant="destructive" class="text-xs">Forced</Badge>
                     {/if}
                   </div>
 
@@ -186,7 +186,7 @@
   {#if file.tracks.length === 0}
     <Card.Root>
       <Card.Content class="py-8 text-center text-muted-foreground">
-        Aucune piste détectée dans ce fichier
+        No tracks detected in this file
       </Card.Content>
     </Card.Root>
   {/if}

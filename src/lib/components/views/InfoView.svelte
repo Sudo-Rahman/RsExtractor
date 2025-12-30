@@ -276,7 +276,7 @@
 
     <!-- Import from other views -->
     {#if extractionFilesCount > 0 || mergeFilesCount > 0}
-      <div class="p-2 border-b bg-muted/30">
+      <div class="p-2 border-b">
         <p class="text-xs text-muted-foreground mb-2">Import from:</p>
         <div class="flex gap-2">
           {#if extractionFilesCount > 0}
@@ -364,7 +364,7 @@
 
       <div class="flex-1 min-h-0 overflow-auto">
         <Tabs.Root value="overview" class="h-full">
-          <div class="px-4 pt-2 border-b">
+          <div class="px-4 pt-2">
             <Tabs.List>
               <Tabs.Trigger value="overview">Overview</Tabs.Trigger>
               <Tabs.Trigger value="tracks">Tracks ({file.tracks.length})</Tabs.Trigger>
@@ -629,7 +629,7 @@
 
           <!-- Raw Data Tab -->
           <Tabs.Content value="raw" class="p-4 mt-0">
-            <Card.Root>
+            <Card.Root >
               <Card.Header class="pb-2 flex flex-row items-center justify-between">
                 <Card.Title class="text-sm">Raw FFprobe Output</Card.Title>
                 <Button
@@ -647,7 +647,7 @@
                 </Button>
               </Card.Header>
               <Card.Content>
-                <pre class="text-xs bg-muted p-3 rounded-md overflow-auto max-h-[500px] font-mono">{JSON.stringify(file.rawData, null, 2)}</pre>
+                <pre class="text-xs bg-muted p-3 rounded-md font-mono">{JSON.stringify(file.rawData, null, 2)}</pre>
               </Card.Content>
             </Card.Root>
           </Tabs.Content>
