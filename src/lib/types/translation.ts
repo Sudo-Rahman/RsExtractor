@@ -84,12 +84,15 @@ export interface TranslationConfig {
   targetLanguage: LanguageCode;
   provider: LLMProvider;
   model: string;
+  batchCount: number; // Number of batches to split the file into (1 = no splitting)
 }
 
 export interface TranslationProgress {
-  status: 'idle' | 'translating' | 'completed' | 'error';
+  status: 'idle' | 'translating' | 'completed' | 'error' | 'cancelled';
   currentFile: string;
   progress: number; // 0-100
+  currentBatch: number;
+  totalBatches: number;
   error?: string;
 }
 
@@ -101,6 +104,19 @@ export interface TranslationResult {
   error?: string;
 }
 
+// File translation job for multi-file support
+export interface TranslationJob {
+  id: string;
+  file: SubtitleFile;
+  status: 'pending' | 'translating' | 'completed' | 'error' | 'cancelled';
+  progress: number;
+  currentBatch: number;
+  totalBatches: number;
+  result?: TranslationResult;
+  error?: string;
+  abortController?: AbortController;
+}
+
 // API Keys interface
 export interface LLMApiKeys {
   openai: string;
@@ -109,3 +125,8 @@ export interface LLMApiKeys {
   openrouter: string;
 }
 
+// Translation settings
+export interface TranslationSettings {
+  maxParallelFiles: number; // Max files to process in parallel
+  defaultBatchCount: number; // Default number of batches to split files into
+}

@@ -1,5 +1,5 @@
 import { Store } from '@tauri-apps/plugin-store';
-import type { LLMApiKeys } from '$lib/types';
+import type { LLMApiKeys, TranslationSettings } from '$lib/types';
 
 // Settings interface
 export interface AppSettings {
@@ -8,6 +8,7 @@ export interface AppSettings {
   theme: 'system' | 'light' | 'dark';
   outputPathHistory: string[];
   llmApiKeys: LLMApiKeys;
+  translationSettings: TranslationSettings;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -20,6 +21,10 @@ const DEFAULT_SETTINGS: AppSettings = {
     anthropic: '',
     google: '',
     openrouter: ''
+  },
+  translationSettings: {
+    maxParallelFiles: 1,
+    defaultBatchCount: 1
   }
 };
 
@@ -48,13 +53,15 @@ export const settingsStore = {
       const theme = await s.get<'system' | 'light' | 'dark'>('theme');
       const outputPathHistory = await s.get<string[]>('outputPathHistory');
       const llmApiKeys = await s.get<LLMApiKeys>('llmApiKeys');
+      const translationSettings = await s.get<TranslationSettings>('translationSettings');
 
       settings = {
         ffmpegPath: ffmpegPath ?? DEFAULT_SETTINGS.ffmpegPath,
         ffprobePath: ffprobePath ?? DEFAULT_SETTINGS.ffprobePath,
         theme: theme ?? DEFAULT_SETTINGS.theme,
         outputPathHistory: outputPathHistory ?? DEFAULT_SETTINGS.outputPathHistory,
-        llmApiKeys: llmApiKeys ?? DEFAULT_SETTINGS.llmApiKeys
+        llmApiKeys: llmApiKeys ?? DEFAULT_SETTINGS.llmApiKeys,
+        translationSettings: translationSettings ?? DEFAULT_SETTINGS.translationSettings
       };
 
       isLoaded = true;
@@ -92,6 +99,21 @@ export const settingsStore = {
 
   getLLMApiKey(provider: keyof LLMApiKeys): string {
     return settings.llmApiKeys[provider] || '';
+  },
+
+  async setTranslationSettings(newSettings: Partial<TranslationSettings>) {
+    const updated = { ...settings.translationSettings, ...newSettings };
+    settings = { ...settings, translationSettings: updated };
+    const s = await getStore();
+    await s.set('translationSettings', updated);
+  },
+
+  async setMaxParallelFiles(count: number) {
+    await this.setTranslationSettings({ maxParallelFiles: count });
+  },
+
+  async setDefaultBatchCount(count: number) {
+    await this.setTranslationSettings({ defaultBatchCount: count });
   },
 
   async addOutputPathToHistory(path: string) {

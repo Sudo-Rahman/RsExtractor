@@ -59,6 +59,24 @@ function getLanguageName(code: LanguageCode): string {
 }
 
 /**
+ * Split array into N equal batches
+ * @param array - The array to split
+ * @param batchCount - Number of batches to create (1 = no splitting)
+ */
+function splitIntoNBatches<T>(array: T[], batchCount: number): T[][] {
+  if (batchCount <= 1 || array.length === 0) return [array];
+
+  const batches: T[][] = [];
+  const itemsPerBatch = Math.ceil(array.length / batchCount);
+
+  for (let i = 0; i < array.length; i += itemsPerBatch) {
+    batches.push(array.slice(i, i + itemsPerBatch));
+  }
+
+  return batches;
+}
+
+/**
  * Build translation request from parsed subtitle
  */
 function buildTranslationRequest(
@@ -142,7 +160,7 @@ interface LLMResponse {
   error?: string;
 }
 
-async function callOpenAI(apiKey: string, model: string, systemPrompt: string, userPrompt: string): Promise<LLMResponse> {
+async function callOpenAI(apiKey: string, model: string, systemPrompt: string, userPrompt: string, signal?: AbortSignal): Promise<LLMResponse> {
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -158,7 +176,8 @@ async function callOpenAI(apiKey: string, model: string, systemPrompt: string, u
         ],
         temperature: 0.3,
         response_format: { type: 'json_object' }
-      })
+      }),
+      signal
     });
 
     if (!response.ok) {
@@ -168,12 +187,15 @@ async function callOpenAI(apiKey: string, model: string, systemPrompt: string, u
 
     const data = await response.json();
     return { content: data.choices[0]?.message?.content || '' };
-  } catch (error) {
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      return { content: '', error: 'Request cancelled' };
+    }
     return { content: '', error: `OpenAI request failed: ${error}` };
   }
 }
 
-async function callAnthropic(apiKey: string, model: string, systemPrompt: string, userPrompt: string): Promise<LLMResponse> {
+async function callAnthropic(apiKey: string, model: string, systemPrompt: string, userPrompt: string, signal?: AbortSignal): Promise<LLMResponse> {
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -188,7 +210,8 @@ async function callAnthropic(apiKey: string, model: string, systemPrompt: string
         messages: [
           { role: 'user', content: userPrompt }
         ]
-      })
+      }),
+      signal
     });
 
     if (!response.ok) {
@@ -198,12 +221,15 @@ async function callAnthropic(apiKey: string, model: string, systemPrompt: string
 
     const data = await response.json();
     return { content: data.content[0]?.text || '' };
-  } catch (error) {
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      return { content: '', error: 'Request cancelled' };
+    }
     return { content: '', error: `Anthropic request failed: ${error}` };
   }
 }
 
-async function callGoogle(apiKey: string, model: string, systemPrompt: string, userPrompt: string): Promise<LLMResponse> {
+async function callGoogle(apiKey: string, model: string, systemPrompt: string, userPrompt: string, signal?: AbortSignal): Promise<LLMResponse> {
   try {
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
       method: 'POST',
@@ -223,7 +249,8 @@ async function callGoogle(apiKey: string, model: string, systemPrompt: string, u
           temperature: 0.3,
           responseMimeType: 'application/json'
         }
-      })
+      }),
+      signal
     });
 
     if (!response.ok) {
@@ -233,12 +260,15 @@ async function callGoogle(apiKey: string, model: string, systemPrompt: string, u
 
     const data = await response.json();
     return { content: data.candidates[0]?.content?.parts[0]?.text || '' };
-  } catch (error) {
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      return { content: '', error: 'Request cancelled' };
+    }
     return { content: '', error: `Google AI request failed: ${error}` };
   }
 }
 
-async function callOpenRouter(apiKey: string, model: string, systemPrompt: string, userPrompt: string): Promise<LLMResponse> {
+async function callOpenRouter(apiKey: string, model: string, systemPrompt: string, userPrompt: string, signal?: AbortSignal): Promise<LLMResponse> {
   try {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -255,7 +285,8 @@ async function callOpenRouter(apiKey: string, model: string, systemPrompt: strin
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.3,
-      })
+      }),
+      signal
     });
 
     if (!response.ok) {
@@ -265,7 +296,10 @@ async function callOpenRouter(apiKey: string, model: string, systemPrompt: strin
 
     const data = await response.json();
     return { content: data.choices[0]?.message?.content || '' };
-  } catch (error) {
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      return { content: '', error: 'Request cancelled' };
+    }
     return { content: '', error: `OpenRouter request failed: ${error}` };
   }
 }
@@ -278,28 +312,41 @@ async function callLLM(
   apiKey: string,
   model: string,
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  signal?: AbortSignal
 ): Promise<LLMResponse> {
   switch (provider) {
     case 'openai':
-      return callOpenAI(apiKey, model, systemPrompt, userPrompt);
+      return callOpenAI(apiKey, model, systemPrompt, userPrompt, signal);
     case 'anthropic':
-      return callAnthropic(apiKey, model, systemPrompt, userPrompt);
+      return callAnthropic(apiKey, model, systemPrompt, userPrompt, signal);
     case 'google':
-      return callGoogle(apiKey, model, systemPrompt, userPrompt);
+      return callGoogle(apiKey, model, systemPrompt, userPrompt, signal);
     case 'openrouter':
-      return callOpenRouter(apiKey, model, systemPrompt, userPrompt);
+      return callOpenRouter(apiKey, model, systemPrompt, userPrompt, signal);
     default:
       return { content: '', error: `Unknown provider: ${provider}` };
   }
 }
 
 // ============================================================================
-// MAIN TRANSLATION FUNCTION
+// BATCH PROGRESS CALLBACK TYPE
+// ============================================================================
+
+export interface BatchProgressInfo {
+  progress: number;
+  currentBatch: number;
+  totalBatches: number;
+}
+
+// ============================================================================
+// MAIN TRANSLATION FUNCTION WITH BATCHING
 // ============================================================================
 
 /**
  * Translate subtitle file using the robust parsing/reconstruction pipeline
+ * Supports batching for large files and cancellation via AbortSignal
+ * @param batchCount - Number of batches to split the file into (1 = no splitting)
  */
 export async function translateSubtitle(
   file: SubtitleFile,
@@ -307,7 +354,9 @@ export async function translateSubtitle(
   model: string,
   sourceLang: LanguageCode,
   targetLang: LanguageCode,
-  onProgress?: (progress: number) => void
+  onProgress?: (info: BatchProgressInfo | number) => void,
+  batchCount: number = 1, // 1 = no splitting
+  signal?: AbortSignal
 ): Promise<TranslationResult> {
   const apiKey = settingsStore.getLLMApiKey(provider);
 
@@ -329,7 +378,23 @@ export async function translateSubtitle(
     };
   }
 
-  onProgress?.(5);
+  // Check for cancellation
+  if (signal?.aborted) {
+    return {
+      originalFile: file,
+      translatedContent: '',
+      success: false,
+      error: 'Translation cancelled'
+    };
+  }
+
+  const reportProgress = (info: BatchProgressInfo) => {
+    if (onProgress) {
+      onProgress(info);
+    }
+  };
+
+  reportProgress({ progress: 5, currentBatch: 0, totalBatches: 0 });
 
   // Step 1: Parse the subtitle file
   const parsed = parseSubtitle(file.content);
@@ -352,69 +417,109 @@ export async function translateSubtitle(
     };
   }
 
-  onProgress?.(10);
+  reportProgress({ progress: 10, currentBatch: 0, totalBatches: 0 });
 
-  // Step 2: Build translation request (only text, no timestamps)
-  const translationRequest = buildTranslationRequest(parsed.cues, sourceLang, targetLang);
-  const userPrompt = buildUserPrompt(translationRequest);
+  // Step 2: Split into N batches
+  const batches = splitIntoNBatches(parsed.cues, batchCount);
+  const totalBatches = batches.length;
 
-  onProgress?.(15);
+  reportProgress({ progress: 15, currentBatch: 0, totalBatches });
 
-  // Step 3: Call LLM for translation
-  const llmResponse = await callLLM(provider, apiKey, model, TRANSLATION_SYSTEM_PROMPT, userPrompt);
+  // Step 3: Translate each batch
+  const allTranslatedCues: TranslatedCue[] = [];
 
-  onProgress?.(70);
+  for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+    // Check for cancellation before each batch
+    if (signal?.aborted) {
+      return {
+        originalFile: file,
+        translatedContent: '',
+        success: false,
+        error: 'Translation cancelled'
+      };
+    }
 
-  if (llmResponse.error) {
-    return {
-      originalFile: file,
-      translatedContent: '',
-      success: false,
-      error: llmResponse.error
-    };
+    const batch = batches[batchIndex];
+    const batchProgress = 15 + ((batchIndex / totalBatches) * 70);
+
+    reportProgress({
+      progress: Math.round(batchProgress),
+      currentBatch: batchIndex + 1,
+      totalBatches
+    });
+
+    // Build translation request for this batch
+    const translationRequest = buildTranslationRequest(batch, sourceLang, targetLang);
+    const userPrompt = buildUserPrompt(translationRequest);
+
+    // Call LLM for translation
+    const llmResponse = await callLLM(
+      provider,
+      apiKey,
+      model,
+      TRANSLATION_SYSTEM_PROMPT,
+      userPrompt,
+      signal
+    );
+
+    if (signal?.aborted) {
+      return {
+        originalFile: file,
+        translatedContent: '',
+        success: false,
+        error: 'Translation cancelled'
+      };
+    }
+
+    if (llmResponse.error) {
+      return {
+        originalFile: file,
+        translatedContent: '',
+        success: false,
+        error: `Batch ${batchIndex + 1}/${totalBatches} failed: ${llmResponse.error}`
+      };
+    }
+
+    // Parse LLM response
+    const translationResponse = parseTranslationResponse(llmResponse.content);
+
+    if (!translationResponse) {
+      return {
+        originalFile: file,
+        translatedContent: '',
+        success: false,
+        error: `Batch ${batchIndex + 1}/${totalBatches}: Failed to parse translation response`
+      };
+    }
+
+    // Add translated cues from this batch
+    allTranslatedCues.push(...translationResponse.cues);
   }
 
-  // Step 4: Parse LLM response
-  const translationResponse = parseTranslationResponse(llmResponse.content);
+  reportProgress({ progress: 85, currentBatch: totalBatches, totalBatches });
 
-  if (!translationResponse) {
-    return {
-      originalFile: file,
-      translatedContent: '',
-      success: false,
-      error: 'Failed to parse translation response. The LLM may have returned invalid JSON.'
-    };
-  }
-
-  onProgress?.(80);
-
-  // Step 5: Validate translation
-  const validation = validateTranslation(parsed.cues, translationResponse.cues);
+  // Step 4: Validate all translations
+  const validation = validateTranslation(parsed.cues, allTranslatedCues);
 
   if (!validation.valid) {
-    // Log validation errors for debugging
     console.warn('Translation validation errors:', validation.errors);
-
-    // For now, proceed but warn user
-    // In future: implement retry logic
   }
 
-  onProgress?.(85);
+  reportProgress({ progress: 90, currentBatch: totalBatches, totalBatches });
 
-  // Step 6: Reconstruct subtitle file
+  // Step 5: Reconstruct subtitle file
   const { content: translatedContent } = reconstructSubtitle(
     parsed,
-    translationResponse.cues,
+    allTranslatedCues,
     file.content
   );
 
-  onProgress?.(100);
+  reportProgress({ progress: 100, currentBatch: totalBatches, totalBatches });
 
   return {
     originalFile: file,
     translatedContent,
     success: true,
-    // Include validation warnings if any
     error: validation.valid ? undefined : `Warning: ${validation.errors.length} validation issue(s) detected`
   };
 }

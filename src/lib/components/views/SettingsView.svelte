@@ -28,6 +28,7 @@
   import Key from 'lucide-svelte/icons/key';
   import Eye from 'lucide-svelte/icons/eye';
   import EyeOff from 'lucide-svelte/icons/eye-off';
+  import Languages from 'lucide-svelte/icons/languages';
 
   import { LLM_PROVIDERS, type LLMProvider } from '$lib/types';
 
@@ -267,6 +268,50 @@
             <li><a href="https://aistudio.google.com/apikey" target="_blank" class="text-primary hover:underline">Google AI Studio</a></li>
             <li><a href="https://openrouter.ai/keys" target="_blank" class="text-primary hover:underline">OpenRouter</a></li>
           </ul>
+        </div>
+      </Card.Content>
+    </Card.Root>
+
+    <!-- Translation Settings -->
+    <Card.Root>
+      <Card.Header>
+        <div class="flex items-center gap-2">
+          <Languages class="size-5 text-primary" />
+          <Card.Title>Translation Settings</Card.Title>
+        </div>
+        <Card.Description>
+          Configure parallel processing and batching
+        </Card.Description>
+      </Card.Header>
+      <Card.Content class="space-y-4">
+        <div class="space-y-2">
+          <Label for="max-parallel">Maximum Parallel Files</Label>
+          <Input
+            id="max-parallel"
+            type="number"
+            min="1"
+            max="10"
+            value={settingsStore.settings.translationSettings.maxParallelFiles}
+            oninput={(e) => settingsStore.setMaxParallelFiles(parseInt(e.currentTarget.value) || 1)}
+          />
+          <p class="text-xs text-muted-foreground">
+            Number of files to translate simultaneously (1-10)
+          </p>
+        </div>
+
+        <div class="space-y-2">
+          <Label for="default-batch">Default Number of Batches</Label>
+          <Input
+            id="default-batch"
+            type="number"
+            min="1"
+            max="20"
+            value={settingsStore.settings.translationSettings.defaultBatchCount}
+            oninput={(e) => settingsStore.setDefaultBatchCount(parseInt(e.currentTarget.value) || 1)}
+          />
+          <p class="text-xs text-muted-foreground">
+            Default number of parts to split files into (1 = no split)
+          </p>
         </div>
       </Card.Content>
     </Card.Root>

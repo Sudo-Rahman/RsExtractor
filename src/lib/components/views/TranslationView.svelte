@@ -5,25 +5,38 @@
 </script>
 
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { open, save } from '@tauri-apps/plugin-dialog';
   import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
   import { toast } from 'svelte-sonner';
 
   import { translationStore, settingsStore } from '$lib/stores';
-  import { translateSubtitle, detectSubtitleFormat, getSubtitleExtension } from '$lib/services/translation';
-  import type { SubtitleFile } from '$lib/types';
+  import { translateSubtitle, detectSubtitleFormat, getSubtitleExtension, type BatchProgressInfo } from '$lib/services/translation';
+  import type { SubtitleFile, TranslationJob } from '$lib/types';
 
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
   import { Badge } from '$lib/components/ui/badge';
+  import { Progress } from '$lib/components/ui/progress';
+  import { Input } from '$lib/components/ui/input';
+  import { Label } from '$lib/components/ui/label';
+  import { ScrollArea } from '$lib/components/ui/scroll-area';
+  import * as Resizable from '$lib/components/ui/resizable';
 
-  import { SubtitleDropZone, TranslationConfigPanel, TranslationResultPanel } from '$lib/components/translation';
+  import { SubtitleDropZone, TranslationConfigPanel } from '$lib/components/translation';
 
   import Upload from 'lucide-svelte/icons/upload';
   import Play from 'lucide-svelte/icons/play';
   import Trash2 from 'lucide-svelte/icons/trash-2';
   import FileText from 'lucide-svelte/icons/file-text';
   import Languages from 'lucide-svelte/icons/languages';
+  import X from 'lucide-svelte/icons/x';
+  import Square from 'lucide-svelte/icons/square';
+  import Check from 'lucide-svelte/icons/check';
+  import AlertCircle from 'lucide-svelte/icons/alert-circle';
+  import Download from 'lucide-svelte/icons/download';
+  import Copy from 'lucide-svelte/icons/copy';
+  import Loader2 from 'lucide-svelte/icons/loader-2';
 
   interface TranslationViewProps {
     onNavigateToSettings?: () => void;
@@ -31,9 +44,14 @@
 
   let { onNavigateToSettings }: TranslationViewProps = $props();
 
+  // Reactive state for API key check - use $derived to react to settings changes
+  const hasApiKey = $derived(
+    settingsStore.isLoaded && !!settingsStore.getLLMApiKey(translationStore.config.provider)
+  );
+
   // Expose API for drag & drop from parent
   export async function handleFileDrop(paths: string[]) {
-    const subtitleExtensions = ['.srt', '.ass', '.vtt'];
+    const subtitleExtensions = ['.srt', '.ass', '.vtt', '.ssa'];
     const subtitlePaths = paths.filter(p =>
       subtitleExtensions.some(ext => p.toLowerCase().endsWith(ext))
     );
@@ -43,8 +61,10 @@
       return;
     }
 
-    // Only take the first file
-    await loadSubtitleFile(subtitlePaths[0]);
+    // Load all files
+    for (const path of subtitlePaths) {
+      await loadSubtitleFile(path);
+    }
   }
 
   async function loadSubtitleFile(path: string) {
@@ -67,7 +87,7 @@
         size: new Blob([content]).size
       };
 
-      translationStore.setSubtitleFile(subtitleFile);
+      translationStore.addFile(subtitleFile);
       toast.success(`Loaded: ${name}`);
     } catch (error) {
       console.error('Error loading subtitle file:', error);
@@ -78,15 +98,20 @@
   async function handleImportClick() {
     try {
       const selected = await open({
-        multiple: false,
+        multiple: true,
         filters: [{
           name: 'Subtitle files',
-          extensions: ['srt', 'ass', 'vtt']
+          extensions: ['srt', 'ass', 'vtt', 'ssa']
         }]
       });
 
-      if (selected && typeof selected === 'string') {
-        await loadSubtitleFile(selected);
+      if (selected) {
+        const paths = Array.isArray(selected) ? selected : [selected];
+        for (const path of paths) {
+          if (typeof path === 'string') {
+            await loadSubtitleFile(path);
+          }
+        }
       }
     } catch (error) {
       console.error('Error opening file dialog:', error);
@@ -94,59 +119,69 @@
     }
   }
 
-  async function handleTranslate() {
-    const file = translationStore.subtitleFile;
-    if (!file) {
-      toast.error('No subtitle file loaded');
-      return;
-    }
-
-    const { provider, model, sourceLanguage, targetLanguage } = translationStore.config;
+  async function translateJob(job: TranslationJob) {
+    const { provider, model, sourceLanguage, targetLanguage, batchCount } = translationStore.config;
 
     // Validate API key
     const apiKey = settingsStore.getLLMApiKey(provider);
     if (!apiKey) {
-      toast.error(`No API key configured for ${provider}`);
+      translationStore.updateJob(job.id, {
+        status: 'error',
+        error: `No API key configured for ${provider}`
+      });
       return;
     }
 
     if (!model) {
-      toast.error('Please select a model');
+      translationStore.updateJob(job.id, {
+        status: 'error',
+        error: 'Please select a model'
+      });
       return;
     }
 
-    translationStore.updateProgress({
-      status: 'translating',
-      currentFile: file.name,
-      progress: 0
-    });
+    // Create abort controller for this job
+    const abortController = new AbortController();
+    translationStore.setJobAbortController(job.id, abortController);
+    translationStore.updateJob(job.id, { status: 'translating', progress: 0 });
 
     try {
       const result = await translateSubtitle(
-        file,
+        job.file,
         provider,
         model,
         sourceLanguage,
         targetLanguage,
-        (progress) => {
-          translationStore.updateProgress({ progress });
-        }
+        (info: BatchProgressInfo | number) => {
+          if (typeof info === 'number') {
+            translationStore.updateJob(job.id, { progress: info });
+          } else {
+            translationStore.updateJob(job.id, {
+              progress: info.progress,
+              currentBatch: info.currentBatch,
+              totalBatches: info.totalBatches
+            });
+          }
+        },
+        batchCount,
+        abortController.signal
       );
 
-      translationStore.setResult(result);
-      translationStore.updateProgress({
+      translationStore.updateJob(job.id, {
+        result,
         status: result.success ? 'completed' : 'error',
+        error: result.error,
         progress: 100
       });
 
       if (result.success) {
-        toast.success('Translation completed');
+        toast.success(`Translation completed: ${job.file.name}`);
       } else {
         toast.error(result.error || 'Translation failed');
       }
     } catch (error) {
       console.error('Translation error:', error);
-      translationStore.updateProgress({
+      translationStore.updateJob(job.id, {
         status: 'error',
         error: error instanceof Error ? error.message : String(error)
       });
@@ -154,15 +189,56 @@
     }
   }
 
-  async function handleSaveResult() {
-    const translationResult = translationStore.result;
-    const file = translationStore.subtitleFile;
+  async function handleTranslateAll() {
+    const pendingJobs = translationStore.jobs.filter(j => j.status === 'pending' || j.status === 'error');
 
-    if (!translationResult?.translatedContent || !file) return;
+    if (pendingJobs.length === 0) {
+      toast.warning('No files to translate');
+      return;
+    }
+
+    translationStore.updateProgress({
+      status: 'translating',
+      currentFile: '',
+      progress: 0,
+      currentBatch: 0,
+      totalBatches: 0
+    });
+
+    const maxParallel = settingsStore.settings.translationSettings.maxParallelFiles;
+
+    // Process jobs in parallel batches
+    for (let i = 0; i < pendingJobs.length; i += maxParallel) {
+      const batch = pendingJobs.slice(i, i + maxParallel);
+      await Promise.all(batch.map(job => translateJob(job)));
+    }
+
+    translationStore.updateProgress({
+      status: 'completed',
+      progress: 100
+    });
+  }
+
+  function handleCancelAll() {
+    translationStore.cancelAllJobs();
+    toast.info('All translations cancelled');
+  }
+
+  function handleCancelJob(jobId: string) {
+    translationStore.cancelJob(jobId);
+    toast.info('Translation cancelled');
+  }
+
+  function handleRemoveJob(jobId: string) {
+    translationStore.removeJob(jobId);
+  }
+
+  async function handleSaveResult(job: TranslationJob) {
+    if (!job.result?.translatedContent) return;
 
     try {
-      const extension = getSubtitleExtension(file.format);
-      const baseName = file.name.replace(/\.[^/.]+$/, '');
+      const extension = getSubtitleExtension(job.file.format);
+      const baseName = job.file.name.replace(/\.[^/.]+$/, '');
       const targetLang = translationStore.config.targetLanguage;
       const defaultFileName = `${baseName}.${targetLang}${extension}`;
 
@@ -175,7 +251,7 @@
       });
 
       if (savePath) {
-        await writeTextFile(savePath, translationResult.translatedContent);
+        await writeTextFile(savePath, job.result.translatedContent);
         toast.success('File saved successfully');
       }
     } catch (error) {
@@ -184,89 +260,271 @@
     }
   }
 
-  function handleClearFile() {
-    translationStore.reset();
+  async function handleCopyToClipboard(content: string) {
+    try {
+      await navigator.clipboard.writeText(content);
+      toast.success('Copied to clipboard');
+    } catch {
+      toast.error('Failed to copy to clipboard');
+    }
   }
-
-  const hasFile = $derived(translationStore.hasFile);
-  const isTranslating = $derived(translationStore.isTranslating);
-  const canTranslate = $derived(
-    hasFile &&
-    translationStore.config.model &&
-    settingsStore.getLLMApiKey(translationStore.config.provider)
-  );
 
   function formatFileSize(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
+
+  function getStatusIcon(status: TranslationJob['status']) {
+    switch (status) {
+      case 'pending': return FileText;
+      case 'translating': return Loader2;
+      case 'completed': return Check;
+      case 'error': return AlertCircle;
+      case 'cancelled': return X;
+      default: return FileText;
+    }
+  }
+
+  function getStatusColor(status: TranslationJob['status']) {
+    switch (status) {
+      case 'pending': return 'text-muted-foreground';
+      case 'translating': return 'text-primary animate-spin';
+      case 'completed': return 'text-green-500';
+      case 'error': return 'text-destructive';
+      case 'cancelled': return 'text-orange-500';
+      default: return 'text-muted-foreground';
+    }
+  }
+
+  const hasFiles = $derived(translationStore.hasFiles);
+  const isTranslating = $derived(translationStore.isTranslating);
+  const canTranslate = $derived(
+    hasFiles &&
+    translationStore.config.model &&
+    hasApiKey
+  );
+  const selectedJob = $derived(translationStore.selectedJob);
 </script>
 
-<div class="flex h-full">
-  <!-- Left Panel: File Import & Config -->
-  <div class="w-1/2 border-r flex flex-col min-h-0 p-4 gap-4 overflow-auto">
-    <!-- File Section -->
-    <Card.Root>
-      <Card.Header class="pb-3">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <FileText class="size-5 text-primary" />
-            <Card.Title>Subtitle File</Card.Title>
-          </div>
-          <Button variant="outline" size="sm" onclick={handleImportClick} disabled={isTranslating}>
-            <Upload class="size-4 mr-2" />
-            Import
-          </Button>
-        </div>
-      </Card.Header>
-      <Card.Content>
-        {#if hasFile}
-          <div class="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-            <div class="flex items-center gap-3 min-w-0">
-              <FileText class="size-5 text-muted-foreground shrink-0" />
-              <div class="min-w-0">
-                <p class="font-medium truncate">{translationStore.subtitleFile?.name}</p>
-                <div class="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Badge variant="outline" class="text-xs uppercase">
-                    {translationStore.subtitleFile?.format}
-                  </Badge>
-                  <span>{formatFileSize(translationStore.subtitleFile?.size || 0)}</span>
-                </div>
-              </div>
+<div class="flex flex-col h-full">
+  <!-- Top Section: Config and File List -->
+  <div class="flex border-b min-h-0 flex-1">
+    <!-- Left Panel: File Import & Config -->
+    <div class="flex-1 max-w-108 border-r flex flex-col min-h-0 p-4 gap-4 overflow-auto">
+      <!-- File Section -->
+      <Card.Root>
+        <Card.Header class="pb-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <FileText class="size-5 text-primary" />
+              <Card.Title>Subtitle Files</Card.Title>
+              {#if translationStore.jobs.length > 0}
+                <Badge variant="secondary">{translationStore.jobs.length}</Badge>
+              {/if}
             </div>
-            <Button variant="ghost" size="icon" onclick={handleClearFile} disabled={isTranslating}>
-              <Trash2 class="size-4" />
+            <Button variant="outline" size="sm" onclick={handleImportClick} disabled={isTranslating}>
+              <Upload class="size-4 mr-2" />
+              Import
             </Button>
           </div>
+        </Card.Header>
+        <Card.Content>
+          {#if hasFiles}
+            <ScrollArea class="max-h-48">
+              <div class="space-y-2">
+                {#each translationStore.jobs as job (job.id)}
+                  {@const StatusIcon = getStatusIcon(job.status)}
+                  <div
+                    class="flex items-center justify-between p-2 rounded-lg bg-muted/50 hover:bg-muted cursor-pointer transition-colors {selectedJob?.id === job.id ? 'border-2 border-accent' : ''}"
+                    onclick={() => translationStore.selectJob(job.id)}
+                    onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') translationStore.selectJob(job.id); }}
+                    role="button"
+                    tabindex="0"
+                  >
+                    <div class="flex items-center gap-2 min-w-0 flex-1">
+                      <StatusIcon class="size-4 shrink-0 {getStatusColor(job.status)}" />
+                      <div class="min-w-0 flex-1">
+                        <p class="text-sm font-medium truncate">{job.file.name}</p>
+                        <div class="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Badge variant="outline" class="text-xs uppercase">{job.file.format}</Badge>
+                          {#if job.status === 'translating'}
+                            <span>{job.progress}%</span>
+                            {#if job.totalBatches > 1}
+                              <span class="text-muted-foreground">
+                                (Batch {job.currentBatch}/{job.totalBatches})
+                              </span>
+                            {/if}
+                          {/if}
+                        </div>
+                        {#if job.status === 'translating'}
+                          <Progress value={job.progress} class="h-1 mt-1" />
+                        {/if}
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      {#if job.status === 'translating'}
+                        <Button variant="ghost" size="icon" class="size-7" onclick={(e) => { e.stopPropagation(); handleCancelJob(job.id); }}>
+                          <Square class="size-3" />
+                        </Button>
+                      {:else}
+                        <Button variant="ghost" size="icon" class="size-7" onclick={(e) => { e.stopPropagation(); handleRemoveJob(job.id); }} disabled={isTranslating}>
+                          <X class="size-3" />
+                        </Button>
+                      {/if}
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            </ScrollArea>
+          {:else}
+            <SubtitleDropZone />
+          {/if}
+        </Card.Content>
+      </Card.Root>
+
+      <!-- Config Panel -->
+      <TranslationConfigPanel onNavigateToSettings={onNavigateToSettings} />
+
+      <!-- Batch Settings -->
+      <Card.Root>
+        <Card.Header class="pb-3">
+          <Card.Title class="text-sm">Batch Settings</Card.Title>
+        </Card.Header>
+        <Card.Content class="space-y-3">
+          <div class="space-y-2">
+            <Label for="batch-count" class="text-xs">Number of batches</Label>
+            <Input
+              id="batch-count"
+              type="number"
+              min="1"
+              max="20"
+              value={translationStore.config.batchCount}
+              oninput={(e) => translationStore.setBatchCount(parseInt(e.currentTarget.value) || 1)}
+              class="h-8"
+            />
+            <p class="text-xs text-muted-foreground">
+              Split file into N parts to avoid token limits (1 = no split)
+            </p>
+          </div>
+        </Card.Content>
+      </Card.Root>
+
+      <!-- Action Buttons -->
+      <div class="flex gap-2 mt-auto">
+        {#if isTranslating}
+          <Button variant="destructive" class="flex-1" onclick={handleCancelAll}>
+            <Square class="size-4 mr-2" />
+            Cancel All
+          </Button>
         {:else}
-          <SubtitleDropZone />
+          <Button
+            size="lg"
+            class="flex-1"
+            onclick={handleTranslateAll}
+            disabled={!canTranslate}
+          >
+            <Play class="size-4 mr-2" />
+            Translate {translationStore.jobs.length > 1 ? `(${translationStore.jobs.length})` : ''}
+          </Button>
         {/if}
-      </Card.Content>
-    </Card.Root>
+      </div>
+    </div>
 
-    <!-- Config Panel -->
-    <TranslationConfigPanel onNavigateToSettings={onNavigateToSettings} />
+    <!-- Right Panel: Comparison View -->
+    <div class="flex-2 flex flex-col min-h-0 overflow-scroll">
+      {#if selectedJob}
+        <div class="p-4 border-b flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <FileText class="size-5 text-primary" />
+            <h3 class="font-medium">{selectedJob.file.name}</h3>
+            <Badge variant={selectedJob.status === 'completed' ? 'default' : selectedJob.status === 'error' ? 'destructive' : 'secondary'}>
+              {selectedJob.status}
+            </Badge>
+          </div>
+          {#if selectedJob.result?.translatedContent}
+            <div class="flex gap-2">
+              <Button variant="outline" size="sm" onclick={() => handleCopyToClipboard(selectedJob.result!.translatedContent)}>
+                <Copy class="size-4 mr-2" />
+                Copy
+              </Button>
+              <Button size="sm" onclick={() => handleSaveResult(selectedJob)}>
+                <Download class="size-4 mr-2" />
+                Save
+              </Button>
+            </div>
+          {/if}
+        </div>
 
-    <!-- Translate Button -->
-    <Button
-      size="lg"
-      class="w-full"
-      onclick={handleTranslate}
-      disabled={!canTranslate || isTranslating}
-    >
-      {#if isTranslating}
-        <Languages class="size-4 mr-2 animate-pulse" />
-        Translating...
+        <Resizable.PaneGroup direction="horizontal" class="flex-1 min-h-0">
+          <!-- Original Content -->
+          <Resizable.Pane defaultSize={50} minSize={20}>
+            <div class="h-full flex flex-col">
+              <div class="p-2 bg-muted/30 border-b">
+                <span class="text-sm font-medium">Original</span>
+              </div>
+              <div class="flex-1 overflow-y-scroll">
+                <pre class="p-4 text-sm whitespace-pre-wrap font-mono">{selectedJob.file.content}</pre>
+              </div>
+            </div>
+          </Resizable.Pane>
+
+          <Resizable.Handle withHandle />
+
+          <!-- Translated Content -->
+          <Resizable.Pane defaultSize={50} minSize={20}>
+            <div class="h-full flex flex-col">
+              <div class="p-2 bg-muted/30 border-b">
+                <span class="text-sm font-medium">Translation</span>
+              </div>
+              <div class="flex-1 overflow-y-scroll">
+                {#if selectedJob.status === 'translating'}
+                  <div class="flex flex-col items-center justify-center h-full p-8 gap-4">
+                    <Loader2 class="size-8 text-primary animate-spin" />
+                    <div class="text-center">
+                      <p class="font-medium">Translating...</p>
+                      <p class="text-sm text-muted-foreground">
+                        {selectedJob.progress}%
+                        {#if selectedJob.totalBatches > 1}
+                          - Batch {selectedJob.currentBatch}/{selectedJob.totalBatches}
+                        {/if}
+                      </p>
+                    </div>
+                    <Progress value={selectedJob.progress} class="w-48" />
+                  </div>
+                {:else if selectedJob.result?.translatedContent}
+                  <pre class="p-4 text-sm whitespace-pre-wrap font-mono">{selectedJob.result.translatedContent}</pre>
+                {:else if selectedJob.status === 'error'}
+                  <div class="flex flex-col items-center justify-center h-full p-8 gap-4">
+                    <AlertCircle class="size-8 text-destructive" />
+                    <div class="text-center">
+                      <p class="font-medium text-destructive">Translation failed</p>
+                      <p class="text-sm text-muted-foreground mt-2">{selectedJob.error}</p>
+                    </div>
+                  </div>
+                {:else if selectedJob.status === 'cancelled'}
+                  <div class="flex flex-col items-center justify-center h-full p-8 gap-4">
+                    <X class="size-8 text-orange-500" />
+                    <p class="font-medium text-orange-500">Translation cancelled</p>
+                  </div>
+                {:else}
+                  <div class="flex flex-col items-center justify-center h-full p-8 text-center text-muted-foreground">
+                    <Languages class="size-8 mb-4" />
+                    <p>Click "Translate" to start</p>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          </Resizable.Pane>
+        </Resizable.PaneGroup>
       {:else}
-        <Play class="size-4 mr-2" />
-        Translate
+        <div class="flex-1 flex flex-col items-center justify-center text-center text-muted-foreground p-8">
+          <Languages class="size-12 mb-4" />
+          <p class="text-lg font-medium">No file selected</p>
+          <p class="text-sm">Import subtitle files to get started</p>
+        </div>
       {/if}
-    </Button>
-  </div>
-
-  <!-- Right Panel: Results -->
-  <div class="w-1/2 flex flex-col min-h-0 p-4">
-    <TranslationResultPanel onSave={handleSaveResult} />
+    </div>
   </div>
 </div>
+
