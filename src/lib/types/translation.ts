@@ -74,7 +74,7 @@ export type LanguageCode = typeof SUPPORTED_LANGUAGES[number]['code'];
 export interface SubtitleFile {
   path: string;
   name: string;
-  format: 'srt' | 'ass' | 'vtt';
+  format: 'srt' | 'ass' | 'vtt' | 'ssa';
   content: string;
   size: number;
 }

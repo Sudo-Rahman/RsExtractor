@@ -1,103 +1,150 @@
-import { fetch as ft } from '@tauri-apps/plugin-http';
 import type {
   LLMProvider,
   SubtitleFile,
   TranslationResult,
   LanguageCode
 } from '$lib/types';
+import type {
+  Cue,
+  ParsedSubtitle,
+  TranslationRequest,
+  TranslationCue,
+  TranslationResponse,
+  TranslatedCue,
+  ValidationResult
+} from '$lib/types/subtitle';
 import { SUPPORTED_LANGUAGES } from '$lib/types';
 import { settingsStore } from '$lib/stores';
+import { parseSubtitle, detectFormat } from './subtitle-parser';
+import { reconstructSubtitle, validateTranslation } from './subtitle-reconstructor';
 
-// System prompt optimized for subtitle translation
-const TRANSLATION_SYSTEM_PROMPT = `You are an expert subtitle translator and localization specialist. Your primary goal is to produce natural, fluid translations that feel native to the target language while preserving the original meaning and emotional tone.
+// ============================================================================
+// SYSTEM PROMPT (for JSON-based translation)
+// ============================================================================
 
-CRITICAL PRIORITIES:
-1. NATURALNESS: Prioritize how native speakers actually talk over literal word-for-word translation
-2. FLUIDITY: Create smooth, flowing dialogue that sounds authentic when read aloud
-3. TONE PRESERVATION: Maintain the emotional nuance, formality level, and character personality
-4. CONTEXT AWARENESS: Consider relationships between characters and situational context
+const TRANSLATION_SYSTEM_PROMPT = `You are an expert subtitle translator. You will receive a JSON object containing subtitle cues to translate.
 
-TRANSLATION APPROACH:
+CRITICAL RULES:
+1. Return ONLY a valid JSON object with the translated cues
+2. NEVER add, remove, or reorder cues - translate exactly what you receive
+3. PRESERVE ALL PLACEHOLDERS EXACTLY (⟦TAG_0⟧, ⟦BR_0⟧, etc.) - they represent formatting that must not be changed
+4. Do NOT merge or split cues
+5. Do NOT add explanations, markdown, or any text outside the JSON
 
-Language Registers:
-- Adapt formal/informal speech patterns appropriately for the target language
-- Preserve respectful/casual dynamics between characters
-- Use natural interjections and fillers native to the target language
+TRANSLATION QUALITY:
+- Prioritize natural, idiomatic expressions over literal translation
+- Adapt dialogue to sound like authentic conversation
+- Preserve emotional tone and character speaking styles
+- Respect subtitle reading constraints (~40 chars/line, ~21 chars/second)
 
-Dialogue vs. Internal Monologue:
-- Dialogue: Should sound like authentic spoken conversation
-- Internal thoughts: Can be slightly more literal but must remain natural
-- Narration: Clear, descriptive, appropriate narrative voice
+SELF-CHECK before responding:
+- Are all cue IDs preserved?
+- Are all placeholders identical and in the right positions?
+- Is the JSON valid?
 
-Idiomatic Expressions:
-- Replace source idioms with equivalent target language expressions
-- Avoid awkward literal translations of phrases
-- Use culturally appropriate metaphors and sayings
+OUTPUT FORMAT:
+{
+  "cues": [
+    { "id": "original_id", "translatedText": "translated text with ⟦placeholders⟧ preserved" }
+  ]
+}`;
 
-Sentence Structure:
-- Reorganize sentences to follow natural target language syntax
-- Vary sentence length for better flow
-- Break or combine sentences if it improves readability
-
-TECHNICAL REQUIREMENTS:
-
-Subtitle Constraints:
-- Respect maximum line length (typically ~40 characters per line)
-- Ensure text fits comfortable reading speed (~21 characters/second)
-- Break lines at natural pause points
-
-Formatting Preservation:
-- Maintain ALL timing codes exactly as given
-- Preserve formatting tags (italics, positioning, colors, etc.)
-- Keep line breaks (\N) and style markers intact
-- Do NOT modify technical markup like {\\fs15\\c&H...}
-
-QUALITY CHECKLIST:
-✓ Does this sound natural when read aloud?
-✓ Would a native speaker say it this way?
-✓ Is the emotional tone preserved?
-✓ Are relationships and formality levels appropriate?
-✓ Is the meaning clear and accurate?
-✓ Does it fit subtitle reading constraints?
-
-IMPORTANT: Return ONLY the translated subtitle file content with all original formatting intact. Do NOT add explanations, markdown formatting, or commentary.`;
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
 
 function getLanguageName(code: LanguageCode): string {
   const lang = SUPPORTED_LANGUAGES.find(l => l.code === code);
   return lang?.name || code;
 }
 
-function buildUserPrompt(content: string, sourceLang: LanguageCode, targetLang: LanguageCode): string {
-  const sourceText = sourceLang === 'auto'
-    ? 'the detected source language'
-    : getLanguageName(sourceLang);
-  const targetText = getLanguageName(targetLang);
+/**
+ * Build translation request from parsed subtitle
+ */
+function buildTranslationRequest(
+  cues: Cue[],
+  sourceLang: LanguageCode,
+  targetLang: LanguageCode
+): TranslationRequest {
+  const translationCues: TranslationCue[] = cues.map(cue => ({
+    id: cue.id,
+    speaker: cue.speaker,
+    style: cue.style,
+    text: cue.textSkeleton
+  }));
 
-  return `Translate the following subtitle file from ${sourceText} to ${targetText}.
-
-TRANSLATION GUIDELINES FOR THIS REQUEST:
-- Prioritize natural, idiomatic ${targetText} over literal translation
-- Adapt dialogue to sound like authentic conversation in ${targetText}
-- Preserve character relationships and speaking styles
-- Maintain emotional tone and context from the original
-- Keep all technical formatting and timing codes unchanged
-
-Subtitle file to translate:
-
-${content}
-
-Remember: Your translation should feel native to ${targetText} speakers while staying true to the original meaning and tone.`;
+  return {
+    sourceLang: sourceLang === 'auto' ? 'auto-detect' : getLanguageName(sourceLang),
+    targetLang: getLanguageName(targetLang),
+    rules: {
+      placeholders: 'MUST_PRESERVE_EXACTLY',
+      noReordering: true,
+      noMerging: true,
+      noSplitting: true
+    },
+    cues: translationCues
+  };
 }
+
+/**
+ * Build user prompt with translation request
+ */
+function buildUserPrompt(request: TranslationRequest): string {
+  return `Translate the following subtitle cues from ${request.sourceLang} to ${request.targetLang}.
+
+${JSON.stringify(request, null, 2)}`;
+}
+
+/**
+ * Parse LLM response to extract translated cues
+ */
+function parseTranslationResponse(responseText: string): TranslationResponse | null {
+  try {
+    // Try to extract JSON from response (in case LLM adds extra text)
+    let jsonStr = responseText.trim();
+
+    // Find JSON object boundaries
+    const startIndex = jsonStr.indexOf('{');
+    const endIndex = jsonStr.lastIndexOf('}');
+
+    if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+      jsonStr = jsonStr.substring(startIndex, endIndex + 1);
+    }
+
+    const parsed = JSON.parse(jsonStr);
+
+    // Validate structure
+    if (!parsed.cues || !Array.isArray(parsed.cues)) {
+      console.error('Invalid response structure: missing cues array');
+      return null;
+    }
+
+    // Normalize the response
+    const cues: TranslatedCue[] = parsed.cues.map((cue: any) => ({
+      id: cue.id || cue.ID || '',
+      translatedText: cue.translatedText || cue.translated_text || cue.text || ''
+    }));
+
+    return { cues };
+  } catch (error) {
+    console.error('Failed to parse translation response:', error);
+    console.error('Response text:', responseText);
+    return null;
+  }
+}
+
+// ============================================================================
+// LLM API CALLS
+// ============================================================================
 
 interface LLMResponse {
   content: string;
   error?: string;
 }
 
-// OpenAI API call
 async function callOpenAI(apiKey: string, model: string, systemPrompt: string, userPrompt: string): Promise<LLMResponse> {
   try {
-    const response = await ft('https://api.openai.com/v1/chat/completions', {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -110,7 +157,7 @@ async function callOpenAI(apiKey: string, model: string, systemPrompt: string, u
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.3,
-        max_tokens: 128000
+        response_format: { type: 'json_object' }
       })
     });
 
@@ -126,7 +173,6 @@ async function callOpenAI(apiKey: string, model: string, systemPrompt: string, u
   }
 }
 
-// Anthropic API call
 async function callAnthropic(apiKey: string, model: string, systemPrompt: string, userPrompt: string): Promise<LLMResponse> {
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -138,7 +184,6 @@ async function callAnthropic(apiKey: string, model: string, systemPrompt: string
       },
       body: JSON.stringify({
         model,
-        max_tokens: 128000,
         system: systemPrompt,
         messages: [
           { role: 'user', content: userPrompt }
@@ -158,7 +203,6 @@ async function callAnthropic(apiKey: string, model: string, systemPrompt: string
   }
 }
 
-// Google AI (Gemini) API call
 async function callGoogle(apiKey: string, model: string, systemPrompt: string, userPrompt: string): Promise<LLMResponse> {
   try {
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
@@ -177,7 +221,7 @@ async function callGoogle(apiKey: string, model: string, systemPrompt: string, u
         ],
         generationConfig: {
           temperature: 0.3,
-          maxOutputTokens: 128000
+          responseMimeType: 'application/json'
         }
       })
     });
@@ -194,7 +238,6 @@ async function callGoogle(apiKey: string, model: string, systemPrompt: string, u
   }
 }
 
-// OpenRouter API call
 async function callOpenRouter(apiKey: string, model: string, systemPrompt: string, userPrompt: string): Promise<LLMResponse> {
   try {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -212,7 +255,6 @@ async function callOpenRouter(apiKey: string, model: string, systemPrompt: strin
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.3,
-        max_tokens: 128000
       })
     });
 
@@ -228,7 +270,37 @@ async function callOpenRouter(apiKey: string, model: string, systemPrompt: strin
   }
 }
 
-// Main translation function
+/**
+ * Call the appropriate LLM API
+ */
+async function callLLM(
+  provider: LLMProvider,
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userPrompt: string
+): Promise<LLMResponse> {
+  switch (provider) {
+    case 'openai':
+      return callOpenAI(apiKey, model, systemPrompt, userPrompt);
+    case 'anthropic':
+      return callAnthropic(apiKey, model, systemPrompt, userPrompt);
+    case 'google':
+      return callGoogle(apiKey, model, systemPrompt, userPrompt);
+    case 'openrouter':
+      return callOpenRouter(apiKey, model, systemPrompt, userPrompt);
+    default:
+      return { content: '', error: `Unknown provider: ${provider}` };
+  }
+}
+
+// ============================================================================
+// MAIN TRANSLATION FUNCTION
+// ============================================================================
+
+/**
+ * Translate subtitle file using the robust parsing/reconstruction pipeline
+ */
 export async function translateSubtitle(
   file: SubtitleFile,
   provider: LLMProvider,
@@ -257,63 +329,117 @@ export async function translateSubtitle(
     };
   }
 
-  onProgress?.(10);
+  onProgress?.(5);
 
-  const userPrompt = buildUserPrompt(file.content, sourceLang, targetLang);
+  // Step 1: Parse the subtitle file
+  const parsed = parseSubtitle(file.content);
 
-  onProgress?.(20);
-
-  let response: LLMResponse;
-
-  switch (provider) {
-    case 'openai':
-      response = await callOpenAI(apiKey, model, TRANSLATION_SYSTEM_PROMPT, userPrompt);
-      break;
-    case 'anthropic':
-      response = await callAnthropic(apiKey, model, TRANSLATION_SYSTEM_PROMPT, userPrompt);
-      break;
-    case 'google':
-      response = await callGoogle(apiKey, model, TRANSLATION_SYSTEM_PROMPT, userPrompt);
-      break;
-    case 'openrouter':
-      response = await callOpenRouter(apiKey, model, TRANSLATION_SYSTEM_PROMPT, userPrompt);
-      break;
-    default:
-      return {
-        originalFile: file,
-        translatedContent: '',
-        success: false,
-        error: `Unknown provider: ${provider}`
-      };
-  }
-
-  onProgress?.(90);
-
-  if (response.error) {
+  if (!parsed) {
     return {
       originalFile: file,
       translatedContent: '',
       success: false,
-      error: response.error
+      error: 'Could not parse subtitle file. Unsupported format.'
     };
   }
+
+  if (parsed.cues.length === 0) {
+    return {
+      originalFile: file,
+      translatedContent: '',
+      success: false,
+      error: 'No subtitle cues found in file.'
+    };
+  }
+
+  onProgress?.(10);
+
+  // Step 2: Build translation request (only text, no timestamps)
+  const translationRequest = buildTranslationRequest(parsed.cues, sourceLang, targetLang);
+  const userPrompt = buildUserPrompt(translationRequest);
+
+  onProgress?.(15);
+
+  // Step 3: Call LLM for translation
+  const llmResponse = await callLLM(provider, apiKey, model, TRANSLATION_SYSTEM_PROMPT, userPrompt);
+
+  onProgress?.(70);
+
+  if (llmResponse.error) {
+    return {
+      originalFile: file,
+      translatedContent: '',
+      success: false,
+      error: llmResponse.error
+    };
+  }
+
+  // Step 4: Parse LLM response
+  const translationResponse = parseTranslationResponse(llmResponse.content);
+
+  if (!translationResponse) {
+    return {
+      originalFile: file,
+      translatedContent: '',
+      success: false,
+      error: 'Failed to parse translation response. The LLM may have returned invalid JSON.'
+    };
+  }
+
+  onProgress?.(80);
+
+  // Step 5: Validate translation
+  const validation = validateTranslation(parsed.cues, translationResponse.cues);
+
+  if (!validation.valid) {
+    // Log validation errors for debugging
+    console.warn('Translation validation errors:', validation.errors);
+
+    // For now, proceed but warn user
+    // In future: implement retry logic
+  }
+
+  onProgress?.(85);
+
+  // Step 6: Reconstruct subtitle file
+  const { content: translatedContent } = reconstructSubtitle(
+    parsed,
+    translationResponse.cues,
+    file.content
+  );
 
   onProgress?.(100);
 
   return {
     originalFile: file,
-    translatedContent: response.content,
-    success: true
+    translatedContent,
+    success: true,
+    // Include validation warnings if any
+    error: validation.valid ? undefined : `Warning: ${validation.errors.length} validation issue(s) detected`
   };
 }
 
-// Validate API key by making a simple test request
+// ============================================================================
+// UTILITY EXPORTS
+// ============================================================================
+
+export { detectFormat as detectSubtitleFormat };
+
+export function getSubtitleExtension(format: 'srt' | 'ass' | 'vtt' | 'ssa'): string {
+  const extensions: Record<string, string> = {
+    srt: '.srt',
+    ass: '.ass',
+    ssa: '.ssa',
+    vtt: '.vtt'
+  };
+  return extensions[format] || '.txt';
+}
+
 export async function validateApiKey(provider: LLMProvider, apiKey: string): Promise<{ valid: boolean; error?: string }> {
   if (!apiKey || apiKey.trim() === '') {
     return { valid: false, error: 'API key is empty' };
   }
 
-  // Basic format validation
   switch (provider) {
     case 'openai':
       if (!apiKey.startsWith('sk-')) {
@@ -330,33 +456,4 @@ export async function validateApiKey(provider: LLMProvider, apiKey: string): Pro
   return { valid: true };
 }
 
-// Parse subtitle file content to detect format
-export function detectSubtitleFormat(content: string): 'srt' | 'ass' | 'vtt' | null {
-  const trimmed = content.trim();
-
-  if (trimmed.startsWith('WEBVTT')) {
-    return 'vtt';
-  }
-
-  if (trimmed.startsWith('[Script Info]') || trimmed.includes('[V4+ Styles]')) {
-    return 'ass';
-  }
-
-  // SRT: starts with a number followed by timing
-  if (/^\d+\s*\n\d{2}:\d{2}:\d{2}[,.:]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,.:]\d{3}/.test(trimmed)) {
-    return 'srt';
-  }
-
-  return null;
-}
-
-// Get file extension for format
-export function getSubtitleExtension(format: 'srt' | 'ass' | 'vtt'): string {
-  const extensions: Record<string, string> = {
-    srt: '.srt',
-    ass: '.ass',
-    vtt: '.vtt'
-  };
-  return extensions[format] || '.txt';
-}
 
