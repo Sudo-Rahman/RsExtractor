@@ -513,7 +513,7 @@
   <!-- Center panel: Track management with tabs -->
   <div class="flex-1 flex flex-col overflow-hidden">
     <Tabs.Root value="source" class="flex-1 flex flex-col overflow-hidden">
-      <div class="p-2.5 border-b flex items-center justify-between gap-4">
+      <div class="p-2.5 border-b w-full overflow-scroll flex items-center justify-between gap-4">
         <Tabs.List>
           <Tabs.Trigger value="source" class="flex items-center gap-1.5">
             <Layers class="size-4" />

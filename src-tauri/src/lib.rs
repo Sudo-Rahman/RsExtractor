@@ -446,7 +446,7 @@ pub fn create_main_window(app: tauri::AppHandle) {
     let window = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("".into()))
         .title("")
         .inner_size(1200.0, 600.0)
-        .min_inner_size(1000.0, 600.0)
+        .min_inner_size(1200.0, 600.0)
         .center();
 
     #[cfg(target_os = "macos")]

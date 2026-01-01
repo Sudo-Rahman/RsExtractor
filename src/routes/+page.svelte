@@ -84,7 +84,7 @@
     onNavigate={handleNavigate}
   />
 
-  <Sidebar.Inset class="flex flex-col h-screen">
+  <Sidebar.Inset class="flex flex-col h-screen overflow-scroll w-[calc(100%-var(--sidebar-width))]">
     <!-- Header -->
     <header
       class="flex h-14 shrink-0 items-center gap-2 border-b px-4"

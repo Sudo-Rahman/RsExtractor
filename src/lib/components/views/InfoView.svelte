@@ -647,7 +647,7 @@
                 </Button>
               </Card.Header>
               <Card.Content>
-                <pre class="text-xs bg-muted p-3 rounded-md font-mono">{JSON.stringify(file.rawData, null, 2)}</pre>
+                <pre class="text-xs bg-muted p-3 w-full rounded-md text-wrap font-mono">{JSON.stringify(file.rawData, null, 2)}</pre>
               </Card.Content>
             </Card.Root>
           </Tabs.Content>
