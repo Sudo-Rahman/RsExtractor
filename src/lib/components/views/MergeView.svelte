@@ -14,7 +14,6 @@
   import { scanFile } from '$lib/services/ffprobe';
   import { dndzone } from '$lib/utils/dnd';
   import type { MergeVideoFile, ImportedTrack, MergeTrack, MergeTrackConfig } from '$lib/types';
-  import { extractEpisodeNumber } from '$lib/types/merge';
 
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -108,6 +107,14 @@
       case 'subtitle': return Subtitles;
       default: return FileVideo;
     }
+  }
+
+  function formatSeriesInfo(season?: number, episode?: number) {
+    if (episode === undefined) return null;
+    if (season !== undefined) {
+      return `S${season.toString().padStart(2, '0')}E${episode.toString().padStart(2, '0')}`;
+    }
+    return `EP ${episode.toString().padStart(2, '0')}`;
   }
 
   // File import handlers
@@ -326,9 +333,11 @@
 
         let outputFilename = video.name;
         if (!mergeStore.outputConfig.useSourceFilename) {
+          // Update pattern replacement to use season/episode properly
           outputFilename = mergeStore.outputConfig.outputNamePattern
             .replace('{filename}', video.name.replace(/\.[^.]+$/, ''))
-            .replace('{episode}', video.episodeNumber?.toString() || '');
+            .replace('{episode}', video.episodeNumber?.toString() || '')
+            .replace('{season}', video.seasonNumber?.toString() || '');
         }
         if (!outputFilename.endsWith('.mkv')) {
           outputFilename = outputFilename.replace(/\.[^.]+$/, '') + '.mkv';
@@ -463,6 +472,7 @@
         {@const FileIcon = getFileIcon(video.path)}
         {@const attachedCount = video.attachedTracks.length}
         {@const isSelected = mergeStore.selectedVideoId === video.id}
+        {@const seriesInfo = formatSeriesInfo(video.seasonNumber, video.episodeNumber)}
         <button
           class="w-full flex items-start gap-2 rounded-lg border p-2.5 text-left transition-colors hover:bg-accent {isSelected ? 'border-primary bg-primary/5' : ''}"
           onclick={() => mergeStore.selectVideo(video.id)}
@@ -480,8 +490,8 @@
           <div class="flex-1 min-w-0">
             <p class="text-sm font-medium truncate">{video.name}</p>
             <div class="flex items-center gap-2 mt-1 flex-wrap">
-              {#if video.episodeNumber}
-                <Badge variant="outline" class="text-xs">EP {video.episodeNumber}</Badge>
+              {#if seriesInfo}
+                <Badge variant="outline" class="text-xs">{seriesInfo}</Badge>
               {/if}
               {#if video.tracks.length > 0}
                 <Badge variant="secondary" class="text-xs">{video.tracks.length} tracks</Badge>
@@ -657,6 +667,7 @@
             >
               {#each unassignedItems as track (track.id)}
                 {@const TrackIcon = track.type === 'subtitle' ? Subtitles : FileAudio}
+                {@const seriesInfo = formatSeriesInfo(track.seasonNumber, track.episodeNumber)}
                 <div
                   class="flex items-center gap-2 rounded-md border p-2 bg-card cursor-grab active:cursor-grabbing {getTrackTypeColor(track.type)}"
                   animate:flip={{ duration: FLIP_DURATION_MS }}
@@ -664,8 +675,8 @@
                   <GripVertical class="size-4 text-muted-foreground/50" />
                   <TrackIcon class="size-4" />
                   <span class="flex-1 text-sm truncate">{track.name}</span>
-                  {#if track.episodeNumber}
-                    <Badge variant="outline" class="text-xs">EP {track.episodeNumber}</Badge>
+                  {#if seriesInfo}
+                    <Badge variant="outline" class="text-xs">{seriesInfo}</Badge>
                   {/if}
                   {#if track.config.language}
                     <Badge variant="secondary" class="text-xs">{track.config.language}</Badge>
@@ -790,4 +801,3 @@
     onSave={handleSaveTrackSettings}
   />
 </div>
-

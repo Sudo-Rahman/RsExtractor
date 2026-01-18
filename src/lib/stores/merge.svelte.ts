@@ -7,7 +7,7 @@ import type {
   BatchMergeJob,
   AttachedTrack
 } from '$lib/types';
-import { extractEpisodeNumber } from '$lib/types/merge';
+import { extractSeriesInfo } from '$lib/types/merge';
 
 // State
 let videoFiles = $state<MergeVideoFile[]>([]);
@@ -69,12 +69,13 @@ export const mergeStore = {
   },
 
   // Video file management
-  addVideoFile(file: Omit<MergeVideoFile, 'id' | 'attachedTracks' | 'episodeNumber'>): string {
-    const episodeNumber = extractEpisodeNumber(file.name);
+  addVideoFile(file: Omit<MergeVideoFile, 'id' | 'attachedTracks' | 'episodeNumber' | 'seasonNumber'>): string {
+    const seriesInfo = extractSeriesInfo(file.name);
     const newFile: MergeVideoFile = {
       ...file,
       id: generateId('video'),
-      episodeNumber,
+      seasonNumber: seriesInfo?.season,
+      episodeNumber: seriesInfo?.episode,
       attachedTracks: []
     };
     videoFiles = [...videoFiles, newFile];
@@ -104,12 +105,13 @@ export const mergeStore = {
   },
 
   // Imported track management
-  addImportedTrack(track: Omit<ImportedTrack, 'id' | 'episodeNumber' | 'config'>): string {
-    const episodeNumber = extractEpisodeNumber(track.name);
+  addImportedTrack(track: Omit<ImportedTrack, 'id' | 'episodeNumber' | 'seasonNumber' | 'config'>): string {
+    const seriesInfo = extractSeriesInfo(track.name);
     const newTrack: ImportedTrack = {
       ...track,
       id: generateId('track'),
-      episodeNumber,
+      seasonNumber: seriesInfo?.season,
+      episodeNumber: seriesInfo?.episode,
       config: {
         trackId: '',
         enabled: true,
@@ -235,15 +237,55 @@ export const mergeStore = {
     });
   },
 
-  // Auto-match tracks to videos by episode number
+  // Auto-match tracks to videos by series info (Season/Episode)
   autoMatchByEpisodeNumber() {
-    const tracksWithEpisode = importedTracks.filter(t => t.episodeNumber !== undefined);
-    const videosWithEpisode = videoFiles.filter(v => v.episodeNumber !== undefined);
+    const tracksWithInfo = importedTracks.filter(t => t.episodeNumber !== undefined);
+    const videosWithInfo = videoFiles.filter(v => v.episodeNumber !== undefined);
 
-    for (const track of tracksWithEpisode) {
-      const matchingVideo = videosWithEpisode.find(v => v.episodeNumber === track.episodeNumber);
-      if (matchingVideo) {
-        this.attachTrackToVideo(track.id, matchingVideo.id);
+    for (const track of tracksWithInfo) {
+      // Find ALL valid candidates (both strict and lenient)
+      const candidates = videosWithInfo.filter(v => {
+        // Episode number must match
+        if (v.episodeNumber !== track.episodeNumber) return false;
+
+        // If both have season, season must match
+        if (v.seasonNumber !== undefined && track.seasonNumber !== undefined) {
+          return v.seasonNumber === track.seasonNumber;
+        }
+
+        // If one has season and the other doesn't, allow it
+        return true;
+      });
+
+      if (candidates.length === 0) continue;
+
+      let bestMatch: MergeVideoFile | undefined;
+
+      // If we have multiple candidates, prioritize "Strict Match" (Season matches Season)
+      if (candidates.length > 1) {
+        // Filter for strict matches
+        const strictMatches = candidates.filter(v => 
+          v.seasonNumber !== undefined && 
+          track.seasonNumber !== undefined && 
+          v.seasonNumber === track.seasonNumber
+        );
+
+        if (strictMatches.length === 1) {
+          bestMatch = strictMatches[0];
+        } else if (strictMatches.length === 0) {
+          // No strict matches, but multiple lenient matches. Ambiguous?
+          // If track has NO season, and we have multiple videos (S1E1, S2E1), it's ambiguous. 
+          // We can't safely match.
+          // Unless... maybe there is only one video imported? No, length > 1.
+          bestMatch = undefined;
+        }
+      } else {
+        // Only 1 candidate (either strict or lenient)
+        bestMatch = candidates[0];
+      }
+
+      if (bestMatch) {
+        this.attachTrackToVideo(track.id, bestMatch.id);
       }
     }
   },
@@ -313,4 +355,3 @@ export const mergeStore = {
     error = null;
   }
 };
-
