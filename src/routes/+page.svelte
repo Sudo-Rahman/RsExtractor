@@ -2,16 +2,20 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
-  import { toast } from 'svelte-sonner';
 
   import * as Sidebar from '$lib/components/ui/sidebar';
   import { Separator } from '$lib/components/ui/separator';
+  import { Button } from '$lib/components/ui/button';
   import { Alert, AlertTitle, AlertDescription, ThemeToggle } from '$lib/components';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
   import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView } from '$lib/components/views';
+  import { LogsSheet } from '$lib/components/logs';
   import AlertCircle from 'lucide-svelte/icons/alert-circle';
+  import ScrollText from 'lucide-svelte/icons/scroll-text';
   import { OS } from '$lib/utils';
-  import {useSidebar} from "$lib/components/ui/sidebar";
+  import { useSidebar } from "$lib/components/ui/sidebar";
+  import { logStore } from '$lib/stores/logs.svelte';
+  import { logAndToast } from '$lib/utils/log-toast';
 
   // Current view state
   let currentView = $state<'extract' | 'merge' | 'translate' | 'rename' | 'info' | 'settings'>('extract');
@@ -51,13 +55,19 @@
     try {
       ffmpegAvailable = await invoke<boolean>('check_ffmpeg');
       if (!ffmpegAvailable) {
-        toast.error('FFmpeg not found', {
-          description: 'Please install FFmpeg to use this application.'
+        logAndToast.error({
+          source: 'system',
+          title: 'FFmpeg not found',
+          details: 'FFmpeg is not installed or not found in PATH. Please install FFmpeg to use this application.'
         });
       }
     } catch (e) {
       ffmpegAvailable = false;
-      console.error('Error checking FFmpeg:', e);
+      logAndToast.error({
+        source: 'system',
+        title: 'Error checking FFmpeg',
+        details: e instanceof Error ? e.message : String(e)
+      });
     }
 
     // Listen for drag & drop events from Tauri
@@ -99,6 +109,22 @@
       <div class="flex-1" data-tauri-drag-region={isMacOS}>
         <h1 data-tauri-drag-region={isMacOS} class="text-lg font-semibold">{viewTitles[currentView]}</h1>
       </div>
+
+      <!-- Logs button -->
+      <Button
+        variant="ghost"
+        size="icon"
+        onclick={() => logStore.open()}
+        class="relative"
+        title="View logs"
+      >
+        <ScrollText class="size-4" />
+        {#if logStore.unreadErrorCount > 0}
+          <span class="absolute -top-1 -right-1 size-4 bg-destructive text-destructive-foreground rounded-full text-[10px] font-medium flex items-center justify-center">
+            {logStore.unreadErrorCount > 9 ? '9+' : logStore.unreadErrorCount}
+          </span>
+        {/if}
+      </Button>
     </header>
 
     <!-- FFmpeg warning -->
@@ -130,4 +156,7 @@
     </main>
   </Sidebar.Inset>
 </Sidebar.Provider>
+
+<!-- Logs Sheet (global overlay) -->
+<LogsSheet />
 

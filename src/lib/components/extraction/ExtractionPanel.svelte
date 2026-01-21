@@ -10,7 +10,6 @@
   import FolderOpen from 'lucide-svelte/icons/folder-open';
   import Loader2 from 'lucide-svelte/icons/loader-2';
   import CheckCircle from 'lucide-svelte/icons/check-circle';
-  import AlertCircle from 'lucide-svelte/icons/alert-circle';
 
   interface ExtractionPanelProps {
     outputDir: string;
@@ -103,15 +102,6 @@
           </div>
         {/if}
       </div>
-    {/if}
-
-    <!-- Error message -->
-    {#if progress.error}
-      <Alert.Root variant="destructive">
-        <AlertCircle class="size-4" />
-        <Alert.Title>Error</Alert.Title>
-        <Alert.Description>{progress.error}</Alert.Description>
-      </Alert.Root>
     {/if}
   </Card.Content>
   <Card.Footer class="flex-col gap-2">

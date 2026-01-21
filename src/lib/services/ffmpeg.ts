@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { Track, ExtractionResult } from '$lib/types';
 import { getExtensionForCodec } from '$lib/types/media';
 import { getFileName } from '$lib/utils/format';
+import { log } from '$lib/utils/log-toast';
 
 export interface ExtractTrackParams {
   inputPath: string;
@@ -31,6 +32,8 @@ export function buildOutputPath(
  * Extract a single track from a video file
  */
 export async function extractTrack(params: ExtractTrackParams): Promise<ExtractionResult> {
+  const fileName = getFileName(params.inputPath);
+  
   try {
     await invoke('extract_track', {
       inputPath: params.inputPath,
@@ -40,6 +43,16 @@ export async function extractTrack(params: ExtractTrackParams): Promise<Extracti
       codec: params.codec
     });
 
+    // Log success
+    log('success', 'ffmpeg', `Track ${params.trackIndex} extracted`, 
+      `Successfully extracted ${params.trackType} track ${params.trackIndex} from ${fileName}`,
+      {
+        filePath: params.inputPath,
+        outputPath: params.outputPath,
+        trackIndex: params.trackIndex
+      }
+    );
+
     return {
       filePath: params.inputPath,
       trackId: params.trackIndex,
@@ -47,13 +60,25 @@ export async function extractTrack(params: ExtractTrackParams): Promise<Extracti
       success: true
     };
   } catch (error) {
-    console.error('FFmpeg extraction error:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    
+    // Log error
+    log('error', 'ffmpeg', `Extraction failed: track ${params.trackIndex}`,
+      `Failed to extract ${params.trackType} track ${params.trackIndex} from ${fileName}: ${errorMessage}`,
+      {
+        filePath: params.inputPath,
+        outputPath: params.outputPath,
+        trackIndex: params.trackIndex,
+        command: `ffmpeg -i "${params.inputPath}" -map 0:${params.trackIndex} -c copy "${params.outputPath}"`
+      }
+    );
+
     return {
       filePath: params.inputPath,
       trackId: params.trackIndex,
       outputPath: params.outputPath,
       success: false,
-      error: error instanceof Error ? error.message : String(error)
+      error: errorMessage
     };
   }
 }

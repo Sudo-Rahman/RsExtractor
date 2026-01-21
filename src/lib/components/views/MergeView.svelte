@@ -14,6 +14,7 @@
   import { recentFilesStore } from '$lib/stores/recentFiles.svelte';
   import { scanFile } from '$lib/services/ffprobe';
   import { dndzone } from '$lib/utils/dnd';
+  import { logAndToast } from '$lib/utils/log-toast';
   import type { MergeVideoFile, ImportedTrack, MergeTrack, MergeTrackConfig } from '$lib/types';
 
   import { Button } from '$lib/components/ui/button';
@@ -402,8 +403,13 @@
       
       toast.success(`Successfully merged ${completed} file(s)!`);
     } catch (error) {
-      mergeStore.setError(error instanceof Error ? error.message : String(error));
-      toast.error('Merge failed');
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      mergeStore.setError(errorMsg);
+      logAndToast.error({
+        source: 'merge',
+        title: 'Merge failed',
+        details: errorMsg
+      });
     }
   }
 
@@ -779,7 +785,6 @@
       videosCount={mergeStore.videosReadyForMerge.length}
       status={mergeStore.status}
       progress={mergeStore.progress}
-      error={mergeStore.error}
       onSelectOutputDir={handleSelectOutputDir}
       onOutputNameChange={(name) => mergeStore.setOutputNamePattern(name)}
       onMerge={handleMerge}

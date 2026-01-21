@@ -16,6 +16,7 @@
   import { uiStore } from '$lib/stores/ui.svelte';
   import { scanFile } from '$lib/services/ffprobe';
   import { extractTrack, buildOutputPath } from '$lib/services/ffmpeg';
+  import { logAndToast, log } from '$lib/utils/log-toast';
   import type { VideoFile, Track } from '$lib/types';
 
   import {
@@ -90,8 +91,11 @@
         await handleFileDrop(paths);
       }
     } catch (error) {
-      console.error('Error opening file dialog:', error);
-      toast.error('Error opening file dialog');
+      logAndToast.error({
+        source: 'extraction',
+        title: 'Error opening file dialog',
+        details: error instanceof Error ? error.message : String(error)
+      });
     }
   }
 

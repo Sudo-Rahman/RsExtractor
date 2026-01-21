@@ -17,6 +17,7 @@ import { SUPPORTED_LANGUAGES } from '$lib/types';
 import { settingsStore } from '$lib/stores';
 import { parseSubtitle, detectFormat } from './subtitle-parser';
 import { reconstructSubtitle, validateTranslation } from './subtitle-reconstructor';
+import { log } from '$lib/utils/log-toast';
 
 // ============================================================================
 // SYSTEM PROMPT (for JSON-based translation)
@@ -182,7 +183,12 @@ async function callOpenAI(apiKey: string, model: string, systemPrompt: string, u
 
     if (!response.ok) {
       const error = await response.text();
-      return { content: '', error: `OpenAI API error: ${response.status} - ${error}` };
+      const errorMsg = `OpenAI API error: ${response.status} - ${error}`;
+      log('error', 'translation', 'OpenAI API error', errorMsg, {
+        provider: 'openai',
+        apiError: error
+      });
+      return { content: '', error: errorMsg };
     }
 
     const data = await response.json();
@@ -191,7 +197,12 @@ async function callOpenAI(apiKey: string, model: string, systemPrompt: string, u
     if (error.name === 'AbortError') {
       return { content: '', error: 'Request cancelled' };
     }
-    return { content: '', error: `OpenAI request failed: ${error}` };
+    const errorMsg = `OpenAI request failed: ${error}`;
+    log('error', 'translation', 'OpenAI request failed', errorMsg, {
+      provider: 'openai',
+      apiError: String(error)
+    });
+    return { content: '', error: errorMsg };
   }
 }
 
@@ -216,7 +227,12 @@ async function callAnthropic(apiKey: string, model: string, systemPrompt: string
 
     if (!response.ok) {
       const error = await response.text();
-      return { content: '', error: `Anthropic API error: ${response.status} - ${error}` };
+      const errorMsg = `Anthropic API error: ${response.status} - ${error}`;
+      log('error', 'translation', 'Anthropic API error', errorMsg, {
+        provider: 'anthropic',
+        apiError: error
+      });
+      return { content: '', error: errorMsg };
     }
 
     const data = await response.json();
@@ -225,7 +241,12 @@ async function callAnthropic(apiKey: string, model: string, systemPrompt: string
     if (error.name === 'AbortError') {
       return { content: '', error: 'Request cancelled' };
     }
-    return { content: '', error: `Anthropic request failed: ${error}` };
+    const errorMsg = `Anthropic request failed: ${error}`;
+    log('error', 'translation', 'Anthropic request failed', errorMsg, {
+      provider: 'anthropic',
+      apiError: String(error)
+    });
+    return { content: '', error: errorMsg };
   }
 }
 
@@ -255,7 +276,12 @@ async function callGoogle(apiKey: string, model: string, systemPrompt: string, u
 
     if (!response.ok) {
       const error = await response.text();
-      return { content: '', error: `Google AI API error: ${response.status} - ${error}` };
+      const errorMsg = `Google AI API error: ${response.status} - ${error}`;
+      log('error', 'translation', 'Google AI API error', errorMsg, {
+        provider: 'google',
+        apiError: error
+      });
+      return { content: '', error: errorMsg };
     }
 
     const data = await response.json();
@@ -264,7 +290,12 @@ async function callGoogle(apiKey: string, model: string, systemPrompt: string, u
     if (error.name === 'AbortError') {
       return { content: '', error: 'Request cancelled' };
     }
-    return { content: '', error: `Google AI request failed: ${error}` };
+    const errorMsg = `Google AI request failed: ${error}`;
+    log('error', 'translation', 'Google AI request failed', errorMsg, {
+      provider: 'google',
+      apiError: String(error)
+    });
+    return { content: '', error: errorMsg };
   }
 }
 
@@ -291,7 +322,12 @@ async function callOpenRouter(apiKey: string, model: string, systemPrompt: strin
 
     if (!response.ok) {
       const error = await response.text();
-      return { content: '', error: `OpenRouter API error: ${response.status} - ${error}` };
+      const errorMsg = `OpenRouter API error: ${response.status} - ${error}`;
+      log('error', 'translation', 'OpenRouter API error', errorMsg, {
+        provider: 'openrouter',
+        apiError: error
+      });
+      return { content: '', error: errorMsg };
     }
 
     const data = await response.json();
@@ -300,7 +336,12 @@ async function callOpenRouter(apiKey: string, model: string, systemPrompt: strin
     if (error.name === 'AbortError') {
       return { content: '', error: 'Request cancelled' };
     }
-    return { content: '', error: `OpenRouter request failed: ${error}` };
+    const errorMsg = `OpenRouter request failed: ${error}`;
+    log('error', 'translation', 'OpenRouter request failed', errorMsg, {
+      provider: 'openrouter',
+      apiError: String(error)
+    });
+    return { content: '', error: errorMsg };
   }
 }
 

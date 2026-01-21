@@ -13,7 +13,6 @@
   import Play from 'lucide-svelte/icons/play';
   import Loader2 from 'lucide-svelte/icons/loader-2';
   import CheckCircle from 'lucide-svelte/icons/check-circle';
-  import AlertCircle from 'lucide-svelte/icons/alert-circle';
 
   interface MergeOutputPanelProps {
     outputConfig: MergeOutputConfig;
@@ -21,7 +20,6 @@
     videosCount?: number;
     status: 'idle' | 'processing' | 'completed' | 'error';
     progress: number;
-    error: string | null;
     onSelectOutputDir?: () => void;
     onOutputNameChange?: (name: string) => void;
     onMerge?: () => void;
@@ -35,7 +33,6 @@
     videosCount = 0,
     status,
     progress,
-    error,
     onSelectOutputDir,
     onOutputNameChange,
     onMerge,
@@ -125,15 +122,6 @@
           </div>
         {/if}
       </div>
-    {/if}
-
-    <!-- Error message -->
-    {#if error}
-      <Alert.Root variant="destructive">
-        <AlertCircle class="size-4" />
-        <Alert.Title>Error</Alert.Title>
-        <Alert.Description>{error}</Alert.Description>
-      </Alert.Root>
     {/if}
   </Card.Content>
   <Card.Footer class="flex flex-col gap-2">

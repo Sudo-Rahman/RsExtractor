@@ -13,6 +13,7 @@
   import { recentFilesStore } from '$lib/stores/recentFiles.svelte';
   import { uiStore } from '$lib/stores/ui.svelte';
   import { createRenameFile, buildNewPath } from '$lib/services/rename';
+  import { logAndToast } from '$lib/utils/log-toast';
   import type { RuleType, RuleConfig, RenameMode } from '$lib/types/rename';
 
   import { Button } from '$lib/components/ui/button';
@@ -99,8 +100,11 @@
         await handleFileDrop(paths);
       }
     } catch (error) {
-      console.error('Error opening file dialog:', error);
-      toast.error('Error opening file dialog');
+      logAndToast.error({
+        source: 'rename',
+        title: 'Error opening file dialog',
+        details: error instanceof Error ? error.message : String(error)
+      });
     }
   }
 

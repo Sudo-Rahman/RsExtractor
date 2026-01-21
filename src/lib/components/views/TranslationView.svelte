@@ -12,6 +12,7 @@
 
   import { translationStore, settingsStore } from '$lib/stores';
   import { translateSubtitle, detectSubtitleFormat, getSubtitleExtension, type BatchProgressInfo } from '$lib/services/translation';
+  import { logAndToast } from '$lib/utils/log-toast';
   import type { SubtitleFile, TranslationJob } from '$lib/types';
 
   import { Button } from '$lib/components/ui/button';
@@ -76,7 +77,12 @@
       const format = detectSubtitleFormat(content);
 
       if (!format) {
-        toast.error('Could not detect subtitle format');
+        logAndToast.error({
+          source: 'translation',
+          title: 'Could not detect subtitle format',
+          details: `Unable to detect format for file: ${path}`,
+          context: { filePath: path }
+        });
         return;
       }
 
@@ -93,8 +99,12 @@
       translationStore.addFile(subtitleFile);
       toast.success(`Loaded: ${name}`);
     } catch (error) {
-      console.error('Error loading subtitle file:', error);
-      toast.error('Failed to load subtitle file');
+      logAndToast.error({
+        source: 'translation',
+        title: 'Failed to load subtitle file',
+        details: error instanceof Error ? error.message : String(error),
+        context: { filePath: path }
+      });
     }
   }
 
@@ -117,8 +127,11 @@
         }
       }
     } catch (error) {
-      console.error('Error opening file dialog:', error);
-      toast.error('Error opening file dialog');
+      logAndToast.error({
+        source: 'translation',
+        title: 'Error opening file dialog',
+        details: error instanceof Error ? error.message : String(error)
+      });
     }
   }
 
@@ -183,12 +196,17 @@
         toast.error(result.error || 'Translation failed');
       }
     } catch (error) {
-      console.error('Translation error:', error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
       translationStore.updateJob(job.id, {
         status: 'error',
-        error: error instanceof Error ? error.message : String(error)
+        error: errorMsg
       });
-      toast.error('Translation failed');
+      logAndToast.error({
+        source: 'translation',
+        title: 'Translation failed',
+        details: errorMsg,
+        context: { filePath: job.file.path }
+      });
     }
   }
 
@@ -228,8 +246,11 @@
       
       toast.success(`Saved ${savedCount} files`);
     } catch (e) {
-      console.error('Download all error:', e);
-      toast.error('Failed to save files');
+      logAndToast.error({
+        source: 'translation',
+        title: 'Failed to save files',
+        details: e instanceof Error ? e.message : String(e)
+      });
     }
   }
 
@@ -327,8 +348,12 @@
         toast.success('File saved successfully');
       }
     } catch (error) {
-      console.error('Error saving file:', error);
-      toast.error('Failed to save file');
+      logAndToast.error({
+        source: 'translation',
+        title: 'Failed to save file',
+        details: error instanceof Error ? error.message : String(error),
+        context: { filePath: job.file.path }
+      });
     }
   }
 

@@ -4,3 +4,4 @@ export { uiStore } from './ui.svelte';
 export { mergeStore } from './merge.svelte';
 export { settingsStore } from './settings.svelte';
 export { translationStore } from './translation.svelte';
+export { logStore } from './logs.svelte';

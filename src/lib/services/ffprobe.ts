@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { VideoFile, Track, FFprobeOutput, FFprobeStream } from '$lib/types';
 import { getFileName } from '$lib/utils/format';
+import { log } from '$lib/utils/log-toast';
 
 /**
  * Parse FFprobe output and convert to our Track format
@@ -94,14 +95,24 @@ export async function scanFile(filePath: string): Promise<VideoFile & { rawData?
       bitrate
     };
   } catch (error) {
-    console.error('FFprobe error:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    
+    // Log error
+    log('error', 'ffprobe', `Failed to scan: ${name}`,
+      `FFprobe failed to analyze file ${name}: ${errorMessage}`,
+      {
+        filePath,
+        command: `ffprobe -v quiet -print_format json -show_format -show_streams "${filePath}"`
+      }
+    );
+
     return {
       path: filePath,
       name,
       size: 0,
       tracks: [],
       status: 'error',
-      error: error instanceof Error ? error.message : String(error)
+      error: errorMessage
     };
   }
 }
