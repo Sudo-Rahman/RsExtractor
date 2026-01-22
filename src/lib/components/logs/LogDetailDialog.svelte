@@ -90,7 +90,7 @@
 </script>
 
 <Dialog.Root bind:open onOpenChange={(isOpen) => { if (!isOpen) onClose?.(); }}>
-  <Dialog.Content class="max-w-2xl max-h-[85vh] flex flex-col">
+  <Dialog.Content class="max-w-2xl max-h-[85vh] overflow-scroll flex flex-col">
     {#if log}
       {@const Icon = getLevelIcon(log.level)}
       

@@ -69,7 +69,7 @@
       <p class="text-sm">Logs will appear here as operations are performed</p>
     </div>
   {:else}
-    <ScrollArea class="flex-1">
+    <div class="flex-1 overflow-scroll">
       <div class="space-y-1 p-2">
         {#each logs as log (log.id)}
           {@const Icon = getLevelIcon(log.level)}
@@ -114,6 +114,6 @@
           </button>
         {/each}
       </div>
-    </ScrollArea>
+    </div>
   {/if}
 </div>

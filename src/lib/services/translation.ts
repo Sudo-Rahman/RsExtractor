@@ -116,8 +116,19 @@ ${JSON.stringify(request, null, 2)}`;
 
 /**
  * Parse LLM response to extract translated cues
+ * @param responseText - Raw response text from the LLM
+ * @param provider - Name of the LLM provider for logging context
  */
-function parseTranslationResponse(responseText: string): TranslationResponse | null {
+function parseTranslationResponse(responseText: string, provider: string = 'unknown'): TranslationResponse | null {
+  // Check for empty or whitespace-only response
+  if (!responseText || !responseText.trim()) {
+    log('error', 'translation', 'Empty AI response', 
+      'The AI provider returned an empty response. This may indicate a rate limit, content filter, or API issue.', 
+      { provider }
+    );
+    return null;
+  }
+
   try {
     // Try to extract JSON from response (in case LLM adds extra text)
     let jsonStr = responseText.trim();
@@ -126,15 +137,46 @@ function parseTranslationResponse(responseText: string): TranslationResponse | n
     const startIndex = jsonStr.indexOf('{');
     const endIndex = jsonStr.lastIndexOf('}');
 
-    if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
-      jsonStr = jsonStr.substring(startIndex, endIndex + 1);
+    if (startIndex === -1 || endIndex === -1 || endIndex <= startIndex) {
+      // No valid JSON object found
+      const preview = responseText.length > 300 ? responseText.slice(0, 300) + '...' : responseText;
+      log('error', 'translation', 'Invalid JSON format', 
+        `Could not find a valid JSON object in the AI response. The AI may have returned plain text instead of JSON.\n\nResponse preview:\n${preview}`,
+        { provider }
+      );
+      return null;
     }
 
-    const parsed = JSON.parse(jsonStr);
+    jsonStr = jsonStr.substring(startIndex, endIndex + 1);
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (parseError) {
+      const preview = jsonStr.length > 300 ? jsonStr.slice(0, 300) + '...' : jsonStr;
+      log('error', 'translation', 'JSON parse error', 
+        `Failed to parse the AI response as JSON. The response may contain malformed JSON.\n\nError: ${parseError}\n\nJSON preview:\n${preview}`,
+        { provider, apiError: String(parseError) }
+      );
+      return null;
+    }
 
     // Validate structure
     if (!parsed.cues || !Array.isArray(parsed.cues)) {
-      console.error('Invalid response structure: missing cues array');
+      const preview = jsonStr.length > 300 ? jsonStr.slice(0, 300) + '...' : jsonStr;
+      log('error', 'translation', 'Invalid JSON structure', 
+        `The AI response JSON is missing the required "cues" array. The AI may have returned a different format.\n\nJSON preview:\n${preview}`,
+        { provider }
+      );
+      return null;
+    }
+
+    // Check for empty cues array
+    if (parsed.cues.length === 0) {
+      log('warning', 'translation', 'Empty cues array', 
+        'The AI returned a valid JSON but with an empty "cues" array. No translations were provided.',
+        { provider }
+      );
       return null;
     }
 
@@ -144,8 +186,22 @@ function parseTranslationResponse(responseText: string): TranslationResponse | n
       translatedText: cue.translatedText || cue.translated_text || cue.text || ''
     }));
 
+    // Validate that cues have required fields
+    const invalidCues = cues.filter(cue => !cue.id || !cue.translatedText);
+    if (invalidCues.length > 0) {
+      log('warning', 'translation', 'Incomplete cue data', 
+        `${invalidCues.length} cue(s) are missing "id" or "translatedText" fields. Translation may be incomplete.`,
+        { provider }
+      );
+    }
+
     return { cues };
   } catch (error) {
+    const preview = responseText.length > 300 ? responseText.slice(0, 300) + '...' : responseText;
+    log('error', 'translation', 'Unexpected parsing error', 
+      `An unexpected error occurred while parsing the AI response.\n\nError: ${error}\n\nResponse preview:\n${preview}`,
+      { provider, apiError: String(error) }
+    );
     console.error('Failed to parse translation response:', error);
     console.error('Response text:', responseText);
     return null;
@@ -501,11 +557,21 @@ export async function translateSubtitle(
       return { batchIndex, cues: [], error: `Batch ${batchIndex + 1}/${totalBatches} failed: ${llmResponse.error}` };
     }
 
-    // Parse LLM response
-    const translationResponse = parseTranslationResponse(llmResponse.content);
+    // Check for empty content before parsing
+    if (!llmResponse.content || !llmResponse.content.trim()) {
+      const errorMsg = `Batch ${batchIndex + 1}/${totalBatches}: ${provider} returned empty content`;
+      log('error', 'translation', 'Empty response from AI', 
+        `The translation request succeeded but ${provider} returned no content. This may be caused by rate limits, content filtering, or API issues.`,
+        { provider }
+      );
+      return { batchIndex, cues: [], error: errorMsg };
+    }
+
+    // Parse LLM response with provider context for better error logging
+    const translationResponse = parseTranslationResponse(llmResponse.content, provider);
 
     if (!translationResponse) {
-      return { batchIndex, cues: [], error: `Batch ${batchIndex + 1}/${totalBatches}: Failed to parse translation response` };
+      return { batchIndex, cues: [], error: `Batch ${batchIndex + 1}/${totalBatches}: Failed to parse ${provider} response (check Logs for details)` };
     }
 
     return { batchIndex, cues: translationResponse.cues };
