@@ -606,8 +606,9 @@
           <!-- Original Content -->
           <Resizable.Pane defaultSize={50} minSize={20}>
             <div class="h-full flex flex-col">
-              <div class="p-2 bg-muted/30 border-b">
+              <div class="p-2 bg-muted/30 border-b flex items-center justify-between">
                 <span class="text-sm font-medium">Original</span>
+                <span class="text-xs text-muted-foreground">{selectedJob.file.content.split('\n').length} lines</span>
               </div>
               <div class="flex-1 overflow-y-scroll">
                 <pre class="p-4 text-sm whitespace-pre-wrap font-mono">{selectedJob.file.content}</pre>
@@ -620,8 +621,11 @@
           <!-- Translated Content -->
           <Resizable.Pane defaultSize={50} minSize={20}>
             <div class="h-full flex flex-col">
-              <div class="p-2 bg-muted/30 border-b">
+              <div class="p-2 bg-muted/30 border-b flex items-center justify-between">
                 <span class="text-sm font-medium">Translation</span>
+                {#if selectedJob.result?.translatedContent}
+                  <span class="text-xs text-muted-foreground">{selectedJob.result.translatedContent.split('\n').length} lines</span>
+                {/if}
               </div>
               <div class="flex-1 overflow-y-scroll">
                 {#if selectedJob.status === 'translating'}
