@@ -9,61 +9,36 @@
   import { toast } from 'svelte-sonner';
 
   import { fileListStore } from '$lib/stores/files.svelte';
-  import { mergeStore } from '$lib/stores';
+  import { mergeStore, infoStore } from '$lib/stores';
   import { scanFile } from '$lib/services/ffprobe';
-  import type { VideoFile, Track } from '$lib/types';
+  import type { Track } from '$lib/types';
+  import type { FileInfo } from '$lib/stores/info.svelte';
 
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Separator } from '$lib/components/ui/separator';
   import * as Card from '$lib/components/ui/card';
   import * as Tabs from '$lib/components/ui/tabs';
-  import * as Select from '$lib/components/ui/select';
 
   import FileVideo from 'lucide-svelte/icons/file-video';
-  import FileAudio from 'lucide-svelte/icons/file-audio';
   import Subtitles from 'lucide-svelte/icons/subtitles';
   import Video from 'lucide-svelte/icons/video';
   import Volume2 from 'lucide-svelte/icons/volume-2';
-  import HardDrive from 'lucide-svelte/icons/hard-drive';
   import Clock from 'lucide-svelte/icons/clock';
   import Film from 'lucide-svelte/icons/film';
   import Plus from 'lucide-svelte/icons/plus';
   import Trash2 from 'lucide-svelte/icons/trash-2';
   import Loader2 from 'lucide-svelte/icons/loader-2';
   import XCircle from 'lucide-svelte/icons/x-circle';
+  import X from 'lucide-svelte/icons/x';
   import Import from 'lucide-svelte/icons/import';
-  import Languages from 'lucide-svelte/icons/languages';
   import Layers from 'lucide-svelte/icons/layers';
   import Copy from 'lucide-svelte/icons/copy';
   import Check from 'lucide-svelte/icons/check';
 
   const SUPPORTED_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
 
-  interface FileInfo {
-    id: string;
-    path: string;
-    name: string;
-    size: number;
-    duration?: number;
-    bitrate?: number;
-    format?: string;
-    tracks: Track[];
-    status: 'scanning' | 'ready' | 'error';
-    error?: string;
-    rawData?: any; // Raw ffprobe data
-  }
-
-  let files = $state<FileInfo[]>([]);
-  let selectedFileId = $state<string | null>(null);
   let copiedField = $state<string | null>(null);
-
-  const selectedFile = $derived(() => files.find(f => f.id === selectedFileId));
-
-  let idCounter = 0;
-  function generateId(): string {
-    return `info-${Date.now()}-${++idCounter}`;
-  }
 
   export async function handleFileDrop(paths: string[]) {
     const supportedPaths = paths.filter(p => {
@@ -100,13 +75,13 @@
 
     for (const path of paths) {
       // Check duplicates
-      if (files.some(f => f.path === path)) {
+      if (infoStore.hasFile(path)) {
         skipped++;
         continue;
       }
 
       const name = path.split('/').pop() || path.split('\\').pop() || path;
-      const fileId = generateId();
+      const fileId = infoStore.generateId();
 
       const newFile: FileInfo = {
         id: fileId,
@@ -117,17 +92,12 @@
         status: 'scanning'
       };
 
-      files = [...files, newFile];
-
-      if (!selectedFileId) {
-        selectedFileId = fileId;
-      }
+      infoStore.addFile(newFile);
 
       try {
         const scanned = await scanFile(path);
 
-        files = files.map(f => f.id === fileId ? {
-          ...f,
+        infoStore.updateFile(fileId, {
           size: scanned.size,
           duration: scanned.duration,
           bitrate: scanned.bitrate,
@@ -135,15 +105,14 @@
           tracks: scanned.tracks,
           status: 'ready' as const,
           rawData: scanned.rawData
-        } : f);
+        });
 
         added++;
       } catch (error) {
-        files = files.map(f => f.id === fileId ? {
-          ...f,
+        infoStore.updateFile(fileId, {
           status: 'error' as const,
           error: error instanceof Error ? error.message : String(error)
-        } : f);
+        });
       }
     }
 
@@ -179,15 +148,11 @@
   }
 
   function handleRemoveFile(fileId: string) {
-    files = files.filter(f => f.id !== fileId);
-    if (selectedFileId === fileId) {
-      selectedFileId = files.length > 0 ? files[0].id : null;
-    }
+    infoStore.removeFile(fileId);
   }
 
   function handleClearAll() {
-    files = [];
-    selectedFileId = null;
+    infoStore.clear();
   }
 
   function copyToClipboard(text: string, fieldName: string) {
@@ -251,7 +216,6 @@
   }
 
   // Count files by status
-  const readyFilesCount = $derived(files.filter(f => f.status === 'ready').length);
   const extractionFilesCount = $derived(fileListStore.files.filter(f => f.status === 'ready').length);
   const mergeFilesCount = $derived(mergeStore.videoFiles.filter(f => f.status === 'ready').length);
 </script>
@@ -260,9 +224,9 @@
   <!-- Left panel: File list -->
   <div class="w-80 border-r flex flex-col overflow-hidden">
     <div class="p-3 border-b flex items-center justify-between">
-      <span class="text-sm font-semibold">Files ({files.length})</span>
+      <span class="text-sm font-semibold">Files ({infoStore.files.length})</span>
       <div class="flex gap-1">
-        {#if files.length > 0}
+        {#if infoStore.files.length > 0}
           <Button variant="ghost" size="icon-sm" onclick={handleClearAll} class="text-muted-foreground hover:text-destructive">
             <Trash2 class="size-4" />
           </Button>
@@ -273,12 +237,95 @@
         </Button>
       </div>
     </div>
+
+    <!-- File list -->
+    <div class="flex-1 overflow-y-auto">
+      {#if infoStore.files.length === 0}
+        <div class="p-8 text-center">
+          <Film class="size-12 text-muted-foreground/30 mx-auto mb-3" />
+          <p class="text-sm text-muted-foreground mb-4">Drop files here or click Add</p>
+          
+          <!-- Import buttons -->
+          {#if extractionFilesCount > 0 || mergeFilesCount > 0}
+            <div class="space-y-2">
+              {#if extractionFilesCount > 0}
+                <Button variant="outline" size="sm" class="w-full" onclick={handleImportFromExtraction}>
+                  <Import class="size-4 mr-2" />
+                  Import from Extract ({extractionFilesCount})
+                </Button>
+              {/if}
+              {#if mergeFilesCount > 0}
+                <Button variant="outline" size="sm" class="w-full" onclick={handleImportFromMerge}>
+                  <Import class="size-4 mr-2" />
+                  Import from Merge ({mergeFilesCount})
+                </Button>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {:else}
+        {#each infoStore.files as file (file.id)}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <div
+            role="button"
+            tabindex="0"
+            class="w-full p-3 text-left hover:bg-muted/50 border-b transition-colors group relative cursor-pointer
+                   {infoStore.selectedFileId === file.id ? 'bg-muted' : ''}"
+            onclick={() => infoStore.selectFile(file.id)}
+          >
+            <div class="flex items-center gap-2">
+              {#if file.status === 'scanning'}
+                <Loader2 class="size-4 animate-spin text-muted-foreground shrink-0" />
+              {:else if file.status === 'error'}
+                <XCircle class="size-4 text-destructive shrink-0" />
+              {:else}
+                <FileVideo class="size-4 text-muted-foreground shrink-0" />
+              {/if}
+              <span class="truncate text-sm flex-1">{file.name}</span>
+              <button
+                class="opacity-0 group-hover:opacity-100 p-1 hover:bg-destructive/10 rounded transition-opacity"
+                onclick={(e) => { e.stopPropagation(); handleRemoveFile(file.id); }}
+              >
+                <X class="size-3 text-muted-foreground hover:text-destructive" />
+              </button>
+            </div>
+            {#if file.status === 'ready'}
+              <div class="text-xs text-muted-foreground mt-1 pl-6">
+                {formatFileSize(file.size)} • {file.tracks.length} tracks
+              </div>
+            {:else if file.status === 'error'}
+              <div class="text-xs text-destructive mt-1 pl-6 truncate">{file.error}</div>
+            {:else}
+              <div class="text-xs text-muted-foreground mt-1 pl-6">Scanning...</div>
+            {/if}
+          </div>
+        {/each}
+
+        <!-- Import buttons when files exist -->
+        {#if extractionFilesCount > 0 || mergeFilesCount > 0}
+          <div class="p-3 border-t space-y-2">
+            {#if extractionFilesCount > 0}
+              <Button variant="ghost" size="sm" class="w-full justify-start" onclick={handleImportFromExtraction}>
+                <Import class="size-4 mr-2" />
+                Import from Extract ({extractionFilesCount})
+              </Button>
+            {/if}
+            {#if mergeFilesCount > 0}
+              <Button variant="ghost" size="sm" class="w-full justify-start" onclick={handleImportFromMerge}>
+                <Import class="size-4 mr-2" />
+                Import from Merge ({mergeFilesCount})
+              </Button>
+            {/if}
+          </div>
+        {/if}
+      {/if}
+    </div>
   </div>
 
   <!-- Right panel: File details -->
   <div class="flex-1 flex flex-col overflow-hidden">
-    {#if selectedFile()}
-      {@const file = selectedFile()!}
+    {#if infoStore.selectedFile}
+      {@const file = infoStore.selectedFile}
       {@const groups = groupTracksByType(file.tracks)}
 
       <div class="p-4 border-b">
@@ -640,4 +687,3 @@
     {/if}
   </div>
 </div>
-
