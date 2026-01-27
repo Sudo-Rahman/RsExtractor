@@ -242,12 +242,22 @@
         );
         toast.success(`Translation completed: ${job.file.name}`);
       } else {
-        log('error', 'translation',
-          `Translation failed: ${job.file.name}`,
-          result.error || 'Unknown error',
-          { filePath: job.file.path, provider: translationStore.config.provider }
-        );
-        toast.error(result.error || 'Translation failed');
+        const isCancelled = result.error?.toLowerCase().includes('cancel');
+        if (isCancelled) {
+          log('warning', 'translation',
+            `Translation cancelled: ${job.file.name}`,
+            'Cancelled by user',
+            { filePath: job.file.path, provider: translationStore.config.provider }
+          );
+          // Toast already shown by handleCancelJob/handleCancelAll
+        } else {
+          log('error', 'translation',
+            `Translation failed: ${job.file.name}`,
+            result.error || 'Unknown error',
+            { filePath: job.file.path, provider: translationStore.config.provider }
+          );
+          toast.error(result.error || 'Translation failed');
+        }
       }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
