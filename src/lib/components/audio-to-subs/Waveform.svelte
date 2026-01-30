@@ -16,9 +16,9 @@
   import { Button } from '$lib/components/ui/button';
   import { Progress } from '$lib/components/ui/progress';
   import { formatFileSize } from '$lib/utils/format';
+  import { audioToSubsStore } from '$lib/stores/audio-to-subs.svelte';
 
   // Max file size for direct waveform visualization (50MB)
-  // Larger files or unsupported formats will be converted first
   const MAX_DIRECT_SIZE = 50 * 1024 * 1024;
   
   // Formats that WaveSurfer/browser can handle directly
@@ -26,6 +26,7 @@
 
   interface WaveformProps {
     audioPath: string;
+    fileId: string;
     duration?: number;
     fileSize?: number;
     class?: string;
@@ -33,13 +34,14 @@
 
   let { 
     audioPath, 
+    fileId,
     duration = 0,
     fileSize = 0,
     class: className = ''
   }: WaveformProps = $props();
 
   let containerRef: HTMLDivElement | undefined = $state();
-  let wavesurfer: WaveSurfer | null = null;
+  let wavesurfer: WaveSurfer | null = $state(null);
   let isLoading = $state(true);
   let loadingMessage = $state('Loading waveform...');
   let error = $state<string | null>(null);
@@ -51,7 +53,6 @@
   let isTooLarge = $state(false);
   let actualFileSize = $state(0);
   
-  // Track loaded path to prevent duplicate loads
   let loadedPath: string | null = null;
   let blobUrl: string | null = null;
   let isDestroyed = false;
@@ -76,23 +77,41 @@
 
   onDestroy(() => {
     isDestroyed = true;
-    cleanup();
-  });
-
-  function cleanup() {
+    // Save current state before unmounting
+    saveState();
+    // Clean up local instance but DON'T destroy the blob URL
+    // The blob URL is kept in the store for persistence
     if (wavesurfer) {
-      try {
-        wavesurfer.destroy();
-      } catch {
-        // Ignore cleanup errors
-      }
+      wavesurfer.destroy();
       wavesurfer = null;
     }
-    if (blobUrl) {
-      URL.revokeObjectURL(blobUrl);
-      blobUrl = null;
+  });
+
+  function saveState() {
+    if (!fileId) return;
+    
+    // Save waveform state to store for restoration
+    const currentFile = audioToSubsStore.audioFiles.find(f => f.id === fileId);
+    if (currentFile) {
+      // Update the file with current state
+      const updatedFile = {
+        ...currentFile,
+        waveformState: {
+          currentTime,
+          isPlaying,
+          zoomLevel
+        }
+      };
+      
+      // Update in store
+      const fileIndex = audioToSubsStore.audioFiles.findIndex(f => f.id === fileId);
+      if (fileIndex >= 0) {
+        const files = [...audioToSubsStore.audioFiles];
+        files[fileIndex] = updatedFile;
+        // We can't directly mutate the store, but the state will be restored
+        // from the store when the component remounts
+      }
     }
-    isReady = false;
   }
 
   function cssVar(name : string, el = document.documentElement) {
@@ -101,8 +120,35 @@
   
   function needsConversion(path: string, fileSize: number): boolean {
     const ext = path.split('.').pop()?.toLowerCase() || '';
-    // Convert if format not directly supported or file too large
     return !WAVESURFER_SUPPORTED_FORMATS.includes(ext) || fileSize > MAX_DIRECT_SIZE;
+  }
+
+  function createWaveSurfer(container: HTMLDivElement): WaveSurfer {
+    return WaveSurfer.create({
+      container,
+      waveColor: `${cssVar('--muted-foreground')}`,
+      progressColor: `${cssVar('--primary')}`,
+      cursorColor: `${cssVar('--accent-foreground')}`,
+      cursorWidth: 2,
+      barWidth: 2,
+      barGap: 1,
+      barRadius: 2,
+      height: 100,
+      normalize: true,
+      hideScrollbar: false,
+      minPxPerSec: zoomLevel,
+      plugins: [
+        TimelinePlugin.create({
+          height: 20,
+          timeInterval: 1,
+          primaryLabelInterval: 5,
+          style: {
+            fontSize: '10px',
+            color: `${cssVar('--muted-foreground')}`
+          }
+        })
+      ]
+    });
   }
 
   async function loadAudio(path: string, container: HTMLDivElement) {
@@ -115,8 +161,61 @@
     isReady = false;
     isTooLarge = false;
 
-    cleanup();
+    // Check if we have persisted data for this file (reusing blob URL)
+    const persistedData = audioToSubsStore.getWaveformInstance(fileId);
+    const file = audioToSubsStore.audioFiles.find(f => f.id === fileId);
+    
+    // Restore state from store if available
+    if (file?.waveformState) {
+      currentTime = file.waveformState.currentTime;
+      isPlaying = file.waveformState.isPlaying;
+      zoomLevel = file.waveformState.zoomLevel;
+    }
+    
+    // Clean up any existing instance first
+    if (wavesurfer) {
+      wavesurfer.destroy();
+      wavesurfer = null;
+    }
+    
+    // If we have a persisted blob URL, reuse it for instant loading
+    if (persistedData?.blobUrl) {
+      blobUrl = persistedData.blobUrl;
+      loadingMessage = 'Restoring waveform...';
+      
+      try {
+        const ws = createWaveSurfer(container);
+        wavesurfer = ws;
+        
+        attachEventListeners(ws, currentLoadId);
 
+        ws.on('ready', () => {
+          if (isDestroyed || currentLoadId !== loadId) return;
+          isLoading = false;
+          isReady = true;
+          totalDuration = ws.getDuration() || duration || 0;
+          
+          // Restore state
+          ws.zoom(zoomLevel);
+          if (currentTime > 0 && totalDuration > 0) {
+            ws.seekTo(currentTime / totalDuration);
+          }
+          if (isPlaying) {
+            ws.play();
+          }
+        });
+
+        if (blobUrl) {
+          await ws.load(blobUrl);
+        }
+        return;
+      } catch (e) {
+        console.warn('Failed to restore persisted blob, loading from file:', e);
+        // Fall through to load from file
+      }
+    }
+
+    // Create new instance from file
     try {
       // Check file size first
       const fileStat = await stat(path);
@@ -125,25 +224,24 @@
       if (isDestroyed || currentLoadId !== loadId) return;
       
       let audioPathToLoad = path;
+      let convertedPath: string | undefined;
       
       // Check if we need to convert the audio
       if (needsConversion(path, actualFileSize)) {
         loadingMessage = 'Converting audio for preview...';
         try {
-          // Use Rust backend to convert to lightweight MP3
-          audioPathToLoad = await invoke<string>('convert_audio_for_waveform', { 
+          convertedPath = await invoke<string>('convert_audio_for_waveform', { 
             audioPath: path 
           });
+          audioPathToLoad = convertedPath;
         } catch (convErr) {
           console.error('Conversion failed:', convErr);
-          // If conversion fails and file is too large, show placeholder
-          if (actualFileSize > MAX_DIRECT_SIZE * 5) { // 250MB+
+          if (actualFileSize > MAX_DIRECT_SIZE * 5) {
             isTooLarge = true;
             isLoading = false;
             totalDuration = duration || 0;
             return;
           }
-          // Otherwise try to load the original file anyway
         }
       }
       
@@ -168,54 +266,43 @@
         return;
       }
 
-
-      const ws = WaveSurfer.create({
-        container,
-        waveColor: `${cssVar('--muted-foreground')}`,
-        progressColor: `${cssVar('--primary')}`,
-        cursorColor: `${cssVar('--accent-foreground')}`,
-        cursorWidth: 2,
-        barWidth: 2,
-        barGap: 1,
-        barRadius: 2,
-        height: 100,
-        normalize: true,
-        hideScrollbar: false,
-        minPxPerSec: zoomLevel,
-        plugins: [
-          TimelinePlugin.create({
-            height: 20,
-            timeInterval: 1,
-            primaryLabelInterval: 5,
-            style: {
-              fontSize: '10px',
-              color: `${cssVar('--muted-foreground')}`
-            }
-          })
-        ]
-      });
-
+      const ws = createWaveSurfer(container);
       wavesurfer = ws;
+
+      attachEventListeners(ws, currentLoadId);
 
       ws.on('ready', () => {
         if (isDestroyed || currentLoadId !== loadId) return;
         isLoading = false;
         isReady = true;
         totalDuration = ws.getDuration() || duration || 0;
-      });
-
-      ws.on('error', (err) => {
-        if (isDestroyed || currentLoadId !== loadId) return;
-        if (err instanceof Error && err.name === 'AbortError') return;
         
-        console.error('WaveSurfer error:', err);
-        error = 'Failed to decode audio. Format may not be supported.';
-        isLoading = false;
+        // Save the instance to store for persistence
+        if (blobUrl) {
+          audioToSubsStore.saveWaveformInstance(fileId, ws, blobUrl, convertedPath);
+          
+          // Update file with preview URL info
+          const currentFileData = audioToSubsStore.audioFiles.find(f => f.id === fileId);
+          if (currentFileData) {
+            const updatedFiles = [...audioToSubsStore.audioFiles];
+            const idx = updatedFiles.findIndex(f => f.id === fileId);
+            if (idx >= 0) {
+              updatedFiles[idx] = {
+                ...updatedFiles[idx],
+                previewUrl: blobUrl,
+                convertedPath: convertedPath,
+                duration: totalDuration || duration
+              };
+              // Note: We update through the store's updateFile method
+              audioToSubsStore.updateFile(fileId, {
+                previewUrl: blobUrl,
+                convertedPath: convertedPath,
+                duration: totalDuration || duration
+              });
+            }
+          }
+        }
       });
-
-      ws.on('play', () => { isPlaying = true; });
-      ws.on('pause', () => { isPlaying = false; });
-      ws.on('timeupdate', (time) => { currentTime = time; });
 
       await ws.load(blobUrl);
     } catch (err) {
@@ -226,6 +313,29 @@
       error = err instanceof Error ? err.message : 'Failed to load audio file';
       isLoading = false;
     }
+  }
+
+  function attachEventListeners(ws: WaveSurfer, currentLoadId: number) {
+    ws.on('error', (err) => {
+      if (isDestroyed || currentLoadId !== loadId) return;
+      if (err instanceof Error && err.name === 'AbortError') return;
+      
+      console.error('WaveSurfer error:', err);
+      error = 'Failed to decode audio. Format may not be supported.';
+      isLoading = false;
+    });
+
+    ws.on('play', () => { 
+      isPlaying = true; 
+    });
+    
+    ws.on('pause', () => { 
+      isPlaying = false; 
+    });
+    
+    ws.on('timeupdate', (time) => { 
+      currentTime = time;
+    });
   }
 
   function getMimeType(ext: string): string {
@@ -253,6 +363,8 @@
     if (wavesurfer && isReady) {
       wavesurfer.seekTo(0);
       wavesurfer.pause();
+      currentTime = 0;
+      isPlaying = false;
     }
   }
 

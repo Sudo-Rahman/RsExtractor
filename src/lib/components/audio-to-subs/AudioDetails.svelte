@@ -10,6 +10,7 @@
   import Volume2 from 'lucide-svelte/icons/volume-2';
   import HardDrive from 'lucide-svelte/icons/hard-drive';
   import Waveform from './Waveform.svelte';
+  import { audioToSubsStore } from '$lib/stores/audio-to-subs.svelte';
 
   interface AudioDetailsProps {
     file: AudioFile | undefined;
@@ -22,6 +23,17 @@
     showWaveform = true,
     class: className = '' 
   }: AudioDetailsProps = $props();
+
+  // Keep track of which files have had their waveform mounted
+  // This ensures we don't remount waveforms when switching between files
+  let mountedWaveforms = $state<Set<string>>(new Set());
+
+  // Add current file to mounted set when it changes
+  $effect(() => {
+    if (file && !mountedWaveforms.has(file.id)) {
+      mountedWaveforms = new Set([...mountedWaveforms, file.id]);
+    }
+  });
 </script>
 
 <div class={cn("h-full flex flex-col overflow-auto", className)}>
@@ -41,13 +53,26 @@
       </div>
     </div>
 
-    <!-- Waveform visualization -->
-    {#if showWaveform && file.path}
-      {#key file.path}
-        <div class="h-fit p-4 border-b">
-          <Waveform audioPath={file.path} duration={file.duration} fileSize={file.size} />
-        </div>
-      {/key}
+    <!-- Waveform visualization - render all mounted waveforms but only show the selected one -->
+    {#if showWaveform}
+      {#each Array.from(mountedWaveforms) as fileId (fileId)}
+        {@const waveformFile = audioToSubsStore.audioFiles.find(f => f.id === fileId)}
+        {#if waveformFile}
+          <div 
+            class={cn(
+              "h-fit p-4 border-b",
+              fileId !== file.id && "hidden"
+            )}
+          >
+            <Waveform 
+              audioPath={waveformFile.path} 
+              duration={waveformFile.duration} 
+              fileSize={waveformFile.size} 
+              fileId={waveformFile.id} 
+            />
+          </div>
+        {/if}
+      {/each}
     {/if}
 
     <!-- Metadata -->

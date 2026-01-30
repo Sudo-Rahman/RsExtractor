@@ -142,23 +142,42 @@
       </Alert>
     {/if}
 
-    <!-- Main content -->
-    <main class="flex-1 overflow-hidden">
-      {#if currentView === 'extract'}
+    <!-- Main content - all views mounted but hidden with display:none for persistence -->
+    <main class="flex-1 overflow-hidden relative">
+      <!-- Extract View -->
+      <div class="absolute inset-0" style="display: {currentView === 'extract' ? 'block' : 'none'}">
         <ExtractView bind:this={extractViewRef} />
-      {:else if currentView === 'merge'}
+      </div>
+      
+      <!-- Merge View -->
+      <div class="absolute inset-0" style="display: {currentView === 'merge' ? 'block' : 'none'}">
         <MergeView bind:this={mergeViewRef} />
-      {:else if currentView === 'audio-to-subs'}
+      </div>
+      
+      <!-- Audio to Subs View - persists when switching views -->
+      <div class="absolute inset-0" style="display: {currentView === 'audio-to-subs' ? 'block' : 'none'}">
         <AudioToSubsView bind:this={audioToSubsViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
-      {:else if currentView === 'translate'}
+      </div>
+      
+      <!-- Translation View -->
+      <div class="absolute inset-0" style="display: {currentView === 'translate' ? 'block' : 'none'}">
         <TranslationView bind:this={translateViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
-      {:else if currentView === 'rename'}
+      </div>
+      
+      <!-- Rename View -->
+      <div class="absolute inset-0" style="display: {currentView === 'rename' ? 'block' : 'none'}">
         <RenameView bind:this={renameViewRef} />
-      {:else if currentView === 'info'}
+      </div>
+      
+      <!-- Info View -->
+      <div class="absolute inset-0" style="display: {currentView === 'info' ? 'block' : 'none'}">
         <InfoView bind:this={infoViewRef} />
-      {:else if currentView === 'settings'}
+      </div>
+      
+      <!-- Settings View -->
+      <div class="absolute inset-0" style="display: {currentView === 'settings' ? 'block' : 'none'}">
         <SettingsView />
-      {/if}
+      </div>
     </main>
   </Sidebar.Inset>
 </Sidebar.Provider>

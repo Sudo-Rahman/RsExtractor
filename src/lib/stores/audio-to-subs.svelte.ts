@@ -3,6 +3,7 @@
  * Manages audio files, transcription config, and progress state
  */
 
+import type WaveSurfer from 'wavesurfer.js';
 import type { 
   AudioFile, 
   TranscriptionConfig, 
@@ -45,6 +46,15 @@ let downloadedModels = $state<Set<WhisperModel>>(new Set());
 let isDownloadingModel = $state(false);
 let downloadingModelId = $state<WhisperModel | null>(null);
 let downloadProgress = $state(0);
+
+// Waveform persistence - stores WaveSurfer instances by fileId
+interface WaveformInstance {
+  wavesurfer: WaveSurfer;
+  blobUrl: string;
+  convertedPath?: string;
+}
+
+const waveformInstances = new Map<string, WaveformInstance>();
 
 // ============================================================================
 // HELPERS
@@ -164,6 +174,13 @@ export const audioToSubsStore = {
   },
 
   // -------------------------------------------------------------------------
+  // Getters - Waveform Persistence
+  // -------------------------------------------------------------------------
+  getWaveformInstance(fileId: string): WaveformInstance | undefined {
+    return waveformInstances.get(fileId);
+  },
+
+  // -------------------------------------------------------------------------
   // Actions - File Management
   // -------------------------------------------------------------------------
   addFiles(files: AudioFile[]) {
@@ -217,6 +234,37 @@ export const audioToSubsStore = {
     audioFiles = audioFiles.map(f =>
       f.id === id ? { ...f, progress } : f
     );
+  },
+
+  // -------------------------------------------------------------------------
+  // Actions - Waveform Persistence
+  // -------------------------------------------------------------------------
+  saveWaveformInstance(
+    fileId: string, 
+    wavesurfer: WaveSurfer, 
+    blobUrl: string, 
+    convertedPath?: string
+  ) {
+    waveformInstances.set(fileId, {
+      wavesurfer,
+      blobUrl,
+      convertedPath
+    });
+  },
+
+  removeWaveformInstance(fileId: string) {
+    const instance = waveformInstances.get(fileId);
+    if (instance) {
+      // Destroy the WaveSurfer instance
+      try {
+        instance.wavesurfer.destroy();
+      } catch {
+        // Ignore cleanup errors
+      }
+      // Note: We don't revoke the blob URL here as per user request
+      // The converted file also stays on disk
+      waveformInstances.delete(fileId);
+    }
   },
 
   // -------------------------------------------------------------------------

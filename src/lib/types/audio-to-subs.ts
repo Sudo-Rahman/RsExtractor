@@ -21,6 +21,15 @@ export interface AudioFile {
   error?: string;
   progress?: number;         // 0-100 during transcription
   outputPath?: string;       // Path to generated subtitle file
+
+  // Waveform persistence fields
+  previewUrl?: string;       // URL blob for converted audio preview
+  convertedPath?: string;    // Path to converted temp file
+  waveformState?: {
+    currentTime: number;
+    isPlaying: boolean;
+    zoomLevel: number;
+  };
 }
 
 export type AudioFileStatus = 
