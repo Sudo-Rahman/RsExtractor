@@ -113,7 +113,11 @@ export interface FFprobeOutput {
   format: FFprobeFormat;
 }
 
-// Codec to extension mapping
+// ============================================================================
+// CODEC TO EXTENSION MAPPING
+// Source unique de vérité pour tous les mappings codec/extension
+// ============================================================================
+
 export const codecExtensions: Record<string, string> = {
   // Subtitles
   ass: '.ass',
@@ -125,18 +129,49 @@ export const codecExtensions: Record<string, string> = {
   dvd_subtitle: '.sub',
   hdmv_pgs_subtitle: '.sup',
   pgs: '.sup',
+  
   // Audio
   aac: '.aac',
   ac3: '.ac3',
   eac3: '.eac3',
   dts: '.dts',
   mp3: '.mp3',
+  mp2: '.mp2',
   flac: '.flac',
   opus: '.opus',
   vorbis: '.ogg',
+  truehd: '.thd',
+  alac: '.m4a',
+  wavpack: '.wv',
+  mlp: '.mlp',
+  
+  // PCM variants - all map to .wav
   pcm_s16le: '.wav',
   pcm_s24le: '.wav',
-  truehd: '.thd',
+  pcm_s32le: '.wav',
+  pcm_s16be: '.wav',
+  pcm_s24be: '.wav',
+  pcm_s32be: '.wav',
+  pcm_u8: '.wav',
+  pcm_u16le: '.wav',
+  pcm_u24le: '.wav',
+  pcm_u32le: '.wav',
+  pcm_u16be: '.wav',
+  pcm_u24be: '.wav',
+  pcm_u32be: '.wav',
+  
+  // ADPCM variants
+  adpcm_ima_wav: '.wav',
+  adpcm_ms: '.wav',
+  adpcm_yamaha: '.wav',
+  
+  // Windows Media Audio (tous map vers .wma)
+  wma: '.wma',
+  wmav1: '.wma',
+  wmav2: '.wma',
+  wmapro: '.wma',
+  wmavoice: '.wma',
+  
   // Video
   h264: '.mp4',
   hevc: '.mp4',
@@ -144,9 +179,60 @@ export const codecExtensions: Record<string, string> = {
   vp9: '.webm',
   av1: '.mp4',
   mpeg4: '.mp4',
+  mpeg2video: '.mpg',
+  mpeg1video: '.mpg',
 };
 
+/**
+ * Récupère l'extension de fichier pour un codec donné
+ * Fallback: si le codec n'est pas mappé, retourne .{codec}
+ */
 export function getExtensionForCodec(codec: string): string {
   return codecExtensions[codec.toLowerCase()] || `.${codec}`;
+}
+
+// ============================================================================
+// INVERSE MAPPING: Extension vers codec (pour l'import de pistes)
+// ============================================================================
+
+export const extensionToCodec: Record<string, string> = {
+  // Subtitles
+  '.ass': 'ass',
+  '.ssa': 'ssa',
+  '.srt': 'subrip',
+  '.sub': 'dvd_subtitle',
+  '.vtt': 'webvtt',
+  '.sup': 'hdmv_pgs_subtitle',
+  
+  // Audio
+  '.aac': 'aac',
+  '.ac3': 'ac3',
+  '.eac3': 'eac3',
+  '.dts': 'dts',
+  '.mp3': 'mp3',
+  '.mp2': 'mp2',
+  '.flac': 'flac',
+  '.opus': 'opus',
+  '.ogg': 'vorbis',
+  '.wav': 'pcm_s16le', // Défaut vers le plus commun
+  '.thd': 'truehd',
+  '.m4a': 'alac',
+  '.wv': 'wavpack',
+  '.mlp': 'mlp',
+  '.wma': 'wma',
+  
+  // Video
+  '.mp4': 'h264',
+  '.webm': 'vp9',
+  '.mpg': 'mpeg2video',
+};
+
+/**
+ * Récupère le codec à partir de l'extension de fichier
+ * Fallback: si l'extension n'est pas mappée, retourne l'extension sans le point
+ */
+export function getCodecFromExtension(ext: string): string {
+  const normalized = ext.toLowerCase();
+  return extensionToCodec[normalized] || normalized.replace(/^\./, '');
 }
 

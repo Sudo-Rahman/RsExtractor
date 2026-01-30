@@ -1,3 +1,5 @@
+import { getExtensionForCodec } from '$lib/types/media';
+
 /**
  * Formatage du bitrate pour affichage
  */
@@ -131,6 +133,7 @@ export function getFileExtension(path: string): string {
 
 /**
  * Construire le nom de fichier de sortie pour l'extraction
+ * Utilise le mapping centralisé depuis $lib/types/media
  */
 export function buildOutputFileName(
   inputPath: string,
@@ -143,34 +146,8 @@ export function buildOutputFileName(
   const langSuffix = language ? `.${language}` : '';
   const trackSuffix = `.track${trackId}`;
 
-  // Import dynamique de getExtensionForCodec
-  const codecExtensions: Record<string, string> = {
-    ass: '.ass',
-    ssa: '.ssa',
-    subrip: '.srt',
-    srt: '.srt',
-    webvtt: '.vtt',
-    mov_text: '.srt',
-    dvd_subtitle: '.sub',
-    hdmv_pgs_subtitle: '.sup',
-    pgs: '.sup',
-    aac: '.aac',
-    ac3: '.ac3',
-    eac3: '.eac3',
-    dts: '.dts',
-    mp3: '.mp3',
-    flac: '.flac',
-    opus: '.opus',
-    vorbis: '.ogg',
-    truehd: '.thd',
-    h264: '.mp4',
-    hevc: '.mp4',
-    h265: '.mp4',
-    vp9: '.webm',
-    av1: '.mp4',
-  };
-
-  const extension = codecExtensions[codec.toLowerCase()] || `.${codec}`;
+  // Import depuis le mapping centralisé
+  const extension = getExtensionForCodec(codec);
 
   return `${baseName}${langSuffix}${trackSuffix}${extension}`;
 }

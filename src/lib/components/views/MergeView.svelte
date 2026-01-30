@@ -15,7 +15,8 @@
   import { scanFiles } from '$lib/services/ffprobe';
   import { dndzone } from '$lib/utils/dnd';
   import { logAndToast } from '$lib/utils/log-toast';
-  import type { MergeVideoFile, ImportedTrack, MergeTrack, MergeTrackConfig } from '$lib/types';
+
+  import { getCodecFromExtension, type ImportedTrack, type MergeTrack, type MergeTrackConfig } from '$lib/types';
 
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -259,14 +260,7 @@
     }
   }
 
-  function getCodecFromExtension(ext: string): string {
-    const map: Record<string, string> = {
-      '.ass': 'ass', '.ssa': 'ssa', '.srt': 'subrip', '.sub': 'sub', '.vtt': 'webvtt',
-      '.aac': 'aac', '.ac3': 'ac3', '.dts': 'dts', '.flac': 'flac',
-      '.mp3': 'mp3', '.ogg': 'vorbis', '.wav': 'pcm', '.eac3': 'eac3', '.opus': 'opus'
-    };
-    return map[ext] || ext.slice(1);
-  }
+
 
   function handleAutoMatch() {
     mergeStore.autoMatchByEpisodeNumber();
