@@ -151,6 +151,24 @@
     });
   }
 
+  /**
+   * Read audio file and create a blob URL
+   * Isolated in a separate function so fileData can be garbage collected
+   * immediately after the blob is created, reducing memory usage
+   */
+  async function createAudioBlobUrl(audioPath: string): Promise<string | null> {
+    try {
+      const fileData = await readFile(audioPath);
+      const ext = audioPath.split('.').pop()?.toLowerCase() || '';
+      const mimeType = getMimeType(ext);
+      const blob = new Blob([fileData], { type: mimeType });
+      return URL.createObjectURL(blob);
+    } catch (err) {
+      console.error('Failed to create audio blob URL:', err);
+      return null;
+    }
+  }
+
   async function loadAudio(path: string, container: HTMLDivElement) {
     const currentLoadId = ++loadId;
     
@@ -249,16 +267,13 @@
       
       loadingMessage = 'Generating waveform...';
 
-      // Read file using Tauri fs plugin
-      const fileData = await readFile(audioPathToLoad);
+      // Create blob URL using isolated function to minimize memory usage
+      // The function allows fileData to be garbage collected immediately after blob creation
+      blobUrl = await createAudioBlobUrl(audioPathToLoad);
       
-      if (isDestroyed || currentLoadId !== loadId) return;
-      
-      const ext = audioPathToLoad.split('.').pop()?.toLowerCase() || '';
-      const mimeType = getMimeType(ext);
-      
-      const blob = new Blob([fileData], { type: mimeType });
-      blobUrl = URL.createObjectURL(blob);
+      if (!blobUrl) {
+        throw new Error('Failed to load audio file');
+      }
       
       if (isDestroyed || currentLoadId !== loadId) {
         URL.revokeObjectURL(blobUrl);

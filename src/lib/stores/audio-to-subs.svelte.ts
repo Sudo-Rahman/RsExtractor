@@ -206,6 +206,9 @@ export const audioToSubsStore = {
   },
 
   removeFile(id: string) {
+    // Clean up waveform instance and blob URL for this file
+    this.removeWaveformInstance(id);
+    
     audioFiles = audioFiles.filter(f => f.id !== id);
     if (selectedFileId === id) {
       selectedFileId = audioFiles[0]?.id ?? null;
@@ -261,8 +264,10 @@ export const audioToSubsStore = {
       } catch {
         // Ignore cleanup errors
       }
-      // Note: We don't revoke the blob URL here as per user request
-      // The converted file also stays on disk
+      // Revoke blob URL to free memory
+      if (instance.blobUrl) {
+        URL.revokeObjectURL(instance.blobUrl);
+      }
       waveformInstances.delete(fileId);
     }
   },
@@ -399,6 +404,19 @@ export const audioToSubsStore = {
   // Actions - Reset
   // -------------------------------------------------------------------------
   clear() {
+    // Clean up all waveform instances and blob URLs
+    for (const [id, instance] of waveformInstances) {
+      try {
+        instance.wavesurfer.destroy();
+      } catch {
+        // Ignore cleanup errors
+      }
+      if (instance.blobUrl) {
+        URL.revokeObjectURL(instance.blobUrl);
+      }
+    }
+    waveformInstances.clear();
+    
     audioFiles = [];
     selectedFileId = null;
     isTranscribing = false;
