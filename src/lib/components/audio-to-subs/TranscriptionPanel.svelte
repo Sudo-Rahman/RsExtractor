@@ -1,116 +1,177 @@
 <script lang="ts">
   import { open } from '@tauri-apps/plugin-dialog';
-  import type { TranscriptionConfig, WhisperModel } from '$lib/types';
+  import { writeTextFile } from '@tauri-apps/plugin-fs';
+  import { join } from '@tauri-apps/api/path';
+  import type { TranscriptionConfig, DeepgramConfig, AudioFile, TranscriptionOutputFormat } from '$lib/types';
+  import { formatToSRT, formatToVTT, formatToJSON } from '$lib/services/deepgram';
   import { cn } from '$lib/utils';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
   import { Label } from '$lib/components/ui/label';
   import { Switch } from '$lib/components/ui/switch';
-  import { Input } from '$lib/components/ui/input';
-  import * as Select from '$lib/components/ui/select';
-  import { Badge } from '$lib/components/ui/badge';
+  import { Slider } from '$lib/components/ui/slider';
   import { Separator } from '$lib/components/ui/separator';
-  import { Progress } from '$lib/components/ui/progress';
   import * as Alert from '$lib/components/ui/alert';
+  import * as Select from '$lib/components/ui/select';
+  import { Input } from '$lib/components/ui/input';
+  import { toast } from 'svelte-sonner';
   import ModelSelector from './ModelSelector.svelte';
   import LanguageSelector from './LanguageSelector.svelte';
   import Play from 'lucide-svelte/icons/play';
   import Loader2 from 'lucide-svelte/icons/loader-2';
-  import FolderOpen from 'lucide-svelte/icons/folder-open';
+  import Settings2 from 'lucide-svelte/icons/settings-2';
+  import Users from 'lucide-svelte/icons/users';
+  import Key from 'lucide-svelte/icons/key';
   import Download from 'lucide-svelte/icons/download';
-  import AlertCircle from 'lucide-svelte/icons/alert-circle';
+  import FolderOpen from 'lucide-svelte/icons/folder-open';
   import CheckCircle from 'lucide-svelte/icons/check-circle';
-  import Languages from 'lucide-svelte/icons/languages';
-  import FileText from 'lucide-svelte/icons/file-text';
-  import Captions from 'lucide-svelte/icons/captions';
 
   interface TranscriptionPanelProps {
     config: TranscriptionConfig;
-    outputDir: string;
-    downloadedModels: Set<WhisperModel>;
-    whisperInstalled: boolean | null;
+    apiKeyConfigured: boolean;
     isTranscribing: boolean;
-    isDownloadingModel: boolean;
-    downloadProgress: number;
+    isTranscoding: boolean;
     readyFilesCount: number;
     completedFilesCount: number;
     totalFilesCount: number;
-    onConfigChange: (updates: Partial<TranscriptionConfig>) => void;
-    onOutputDirChange: (dir: string) => void;
-    onTranscribe: () => void;
+    transcodingCount: number;
+    completedFiles: AudioFile[];
+    allFilesCompleted: boolean;
+    onDeepgramConfigChange: (updates: Partial<DeepgramConfig>) => void;
     onTranscribeAll: () => void;
-    onDownloadModel: (model: WhisperModel) => void;
     onNavigateToSettings?: () => void;
     class?: string;
   }
 
   let {
     config,
-    outputDir,
-    downloadedModels,
-    whisperInstalled,
+    apiKeyConfigured,
     isTranscribing,
-    isDownloadingModel,
-    downloadProgress,
+    isTranscoding,
     readyFilesCount,
     completedFilesCount,
     totalFilesCount,
-    onConfigChange,
-    onOutputDirChange,
-    onTranscribe,
+    transcodingCount,
+    completedFiles,
+    allFilesCompleted,
+    onDeepgramConfigChange,
     onTranscribeAll,
-    onDownloadModel,
     onNavigateToSettings,
     class: className = ''
   }: TranscriptionPanelProps = $props();
 
-  const isModelDownloaded = $derived(downloadedModels.has(config.model));
-  
   const canTranscribe = $derived(
     readyFilesCount > 0 && 
     !isTranscribing && 
-    outputDir.length > 0 &&
-    whisperInstalled === true &&
-    isModelDownloaded
+    !isTranscoding &&
+    apiKeyConfigured
   );
 
-  const outputFormats = [
-    { value: 'srt', label: 'SRT', description: 'SubRip subtitle format' },
-    { value: 'vtt', label: 'VTT', description: 'WebVTT format' },
-    { value: 'json', label: 'JSON', description: 'Word-level timestamps' },
-  ] as const;
+  // Export All state
+  let exportFormat = $state<TranscriptionOutputFormat>('srt');
+  let outputDir = $state('');
+  let isExporting = $state(false);
+
+  const filesWithVersions = $derived(
+    completedFiles.filter(f => f.transcriptionVersions.length > 0)
+  );
+
+  const canExport = $derived(filesWithVersions.length > 0 && outputDir.length > 0 && !isExporting);
+
+  const totalVersions = $derived(
+    filesWithVersions.reduce((sum, f) => sum + f.transcriptionVersions.length, 0)
+  );
 
   async function handleBrowseOutput() {
     const selected = await open({
       directory: true,
       multiple: false,
-      title: 'Select output directory'
+      title: 'Select output folder'
     });
     if (selected && typeof selected === 'string') {
-      onOutputDirChange(selected);
+      outputDir = selected;
+    }
+  }
+
+  function sanitizeVersionName(name: string): string {
+    return name
+      .replace(/[^a-zA-Z0-9\s-]/g, '')
+      .replace(/\s+/g, '_')
+      .trim();
+  }
+
+  async function handleExportAll() {
+    if (!canExport) return;
+
+    isExporting = true;
+    let successCount = 0;
+    let failCount = 0;
+
+    const extensions: Record<TranscriptionOutputFormat, string> = {
+      srt: 'srt',
+      vtt: 'vtt',
+      json: 'json'
+    };
+    const ext = extensions[exportFormat];
+
+    try {
+      for (const file of filesWithVersions) {
+        const baseName = file.name.replace(/\.[^/.]+$/, '');
+
+        for (const version of file.transcriptionVersions) {
+          try {
+            let content: string;
+            switch (exportFormat) {
+              case 'srt':
+                content = formatToSRT(version.result);
+                break;
+              case 'vtt':
+                content = formatToVTT(version.result);
+                break;
+              case 'json':
+                content = JSON.stringify(formatToJSON(version.result), null, 2);
+                break;
+            }
+
+            const versionSuffix = sanitizeVersionName(version.name);
+            const fileName = `${baseName}_${versionSuffix}.${ext}`;
+            const filePath = await join(outputDir, fileName);
+
+            await writeTextFile(filePath, content);
+            successCount++;
+          } catch (error) {
+            console.error(`Failed to export ${file.name} - ${version.name}:`, error);
+            failCount++;
+          }
+        }
+      }
+
+      if (successCount > 0) {
+        toast.success(`${successCount} file(s) exported`);
+      }
+      if (failCount > 0) {
+        toast.error(`${failCount} file(s) failed`);
+      }
+    } finally {
+      isExporting = false;
     }
   }
 </script>
 
 <div class={cn("h-full flex flex-col overflow-auto", className)}>
-  <!-- Whisper Status -->
-  {#if whisperInstalled === false}
+  <!-- API Key Status -->
+  {#if !apiKeyConfigured}
     <div class="p-4">
       <Alert.Root variant="destructive" class="shrink-0">
-        <AlertCircle class="size-4" />
-        <Alert.Title>Whisper not installed</Alert.Title>
+        <Key class="size-4" />
+        <Alert.Title>Deepgram API Key Required</Alert.Title>
         <Alert.Description>
-          Please install whisper.cpp to use this feature.
+          Please configure your Deepgram API key to use this feature.
           <Button variant="link" class="p-0 h-auto" onclick={onNavigateToSettings}>
-            See Settings
+            Go to Settings
           </Button>
         </Alert.Description>
       </Alert.Root>
-    </div>
-  {:else if whisperInstalled === null}
-    <div class="p-4 flex items-center gap-2 text-muted-foreground">
-      <Loader2 class="size-4 animate-spin" />
-      <span class="text-sm">Checking whisper installation...</span>
     </div>
   {/if}
 
@@ -118,39 +179,14 @@
     <!-- Model Selection -->
     <Card.Root>
       <Card.Header class="pb-3">
-        <Card.Title class="text-sm">Whisper Model</Card.Title>
+        <Card.Title class="text-sm">Model</Card.Title>
       </Card.Header>
-      <Card.Content class="space-y-4">
+      <Card.Content>
         <ModelSelector
-          value={config.model}
-          {downloadedModels}
-          onValueChange={(model) => onConfigChange({ model })}
+          value={config.deepgramConfig.model}
+          onValueChange={(model) => onDeepgramConfigChange({ model })}
           disabled={isTranscribing}
         />
-
-        {#if !isModelDownloaded}
-          <div class="space-y-2">
-            {#if isDownloadingModel}
-              <div class="space-y-2">
-                <Progress value={downloadProgress} class="h-2" />
-                <p class="text-xs text-muted-foreground text-center">
-                  Downloading... {downloadProgress}%
-                </p>
-              </div>
-            {:else}
-              <Button
-                variant="outline"
-                size="sm"
-                class="w-full"
-                onclick={() => onDownloadModel(config.model)}
-                disabled={isTranscribing}
-              >
-                <Download class="size-4 mr-2" />
-                Download {config.model} model
-              </Button>
-            {/if}
-          </div>
-        {/if}
       </Card.Content>
     </Card.Root>
 
@@ -159,105 +195,187 @@
       <Card.Header class="pb-3">
         <Card.Title class="text-sm">Language</Card.Title>
       </Card.Header>
-      <Card.Content class="space-y-4">
+      <Card.Content>
         <LanguageSelector
-          value={config.language}
-          onValueChange={(language) => onConfigChange({ language })}
+          value={config.deepgramConfig.language}
+          onValueChange={(language) => onDeepgramConfigChange({ language })}
           disabled={isTranscribing}
         />
+      </Card.Content>
+    </Card.Root>
 
-        <!-- Translate to English -->
+    <!-- Deepgram Options -->
+    <Card.Root>
+      <Card.Header class="pb-3">
+        <Card.Title class="text-sm flex items-center gap-2">
+          <Settings2 class="size-4" />
+          Deepgram Options
+        </Card.Title>
+      </Card.Header>
+      <Card.Content class="space-y-4">
+        <!-- Punctuation -->
         <div class="flex items-center justify-between">
           <div class="space-y-0.5">
-            <Label class="text-sm">Translate to English</Label>
+            <Label class="text-sm">Auto Punctuation</Label>
             <p class="text-xs text-muted-foreground">
-              Translate non-English audio to English
+              Add punctuation to text
             </p>
           </div>
           <Switch
-            checked={config.translate}
-            onCheckedChange={(checked) => onConfigChange({ translate: checked })}
-            disabled={isTranscribing || config.language === 'en'}
+            checked={config.deepgramConfig.punctuate}
+            onCheckedChange={(checked) => onDeepgramConfigChange({ punctuate: checked })}
+            disabled={isTranscribing}
           />
         </div>
-      </Card.Content>
-    </Card.Root>
 
-    <!-- Output Format -->
-    <Card.Root>
-      <Card.Header class="pb-3">
-        <Card.Title class="text-sm">Output</Card.Title>
-      </Card.Header>
-      <Card.Content class="space-y-4">
-        <!-- Format -->
-        <div class="space-y-2">
-          <Label class="text-sm">Format</Label>
-          <Select.Root
-            type="single"
-            value={config.outputFormat}
-            onValueChange={(v) => v && onConfigChange({ outputFormat: v as TranscriptionConfig['outputFormat'] })}
+        <!-- Smart Format -->
+        <div class="flex items-center justify-between">
+          <div class="space-y-0.5">
+            <Label class="text-sm">Smart Format</Label>
+            <p class="text-xs text-muted-foreground">
+              Format numbers, dates, currencies
+            </p>
+          </div>
+          <Switch
+            checked={config.deepgramConfig.smartFormat}
+            onCheckedChange={(checked) => onDeepgramConfigChange({ smartFormat: checked })}
             disabled={isTranscribing}
-          >
-            <Select.Trigger class="w-full">
-              <div class="flex items-center gap-2">
-                <Captions class="size-4 text-muted-foreground" />
-                <span>{config.outputFormat.toUpperCase()}</span>
-              </div>
-            </Select.Trigger>
-            <Select.Content>
-              {#each outputFormats as format (format.value)}
-                <Select.Item value={format.value} label={format.label}>
-                  <div class="flex items-center justify-between w-full">
-                    <span>{format.label}</span>
-                    <span class="text-xs text-muted-foreground">{format.description}</span>
-                  </div>
-                </Select.Item>
-              {/each}
-            </Select.Content>
-          </Select.Root>
+          />
         </div>
 
-        <!-- Word timestamps -->
-        {#if config.outputFormat === 'json'}
-          <div class="flex items-center justify-between">
-            <div class="space-y-0.5">
-              <Label class="text-sm">Word-level timestamps</Label>
-              <p class="text-xs text-muted-foreground">
-                Get timing for each word
-              </p>
-            </div>
-            <Switch
-              checked={config.wordTimestamps}
-              onCheckedChange={(checked) => onConfigChange({ wordTimestamps: checked })}
-              disabled={isTranscribing}
-            />
+        <!-- Paragraphs -->
+        <div class="flex items-center justify-between">
+          <div class="space-y-0.5">
+            <Label class="text-sm">Paragraphs</Label>
+            <p class="text-xs text-muted-foreground">
+              Detect paragraph changes
+            </p>
           </div>
-        {/if}
+          <Switch
+            checked={config.deepgramConfig.paragraphs}
+            onCheckedChange={(checked) => onDeepgramConfigChange({ paragraphs: checked })}
+            disabled={isTranscribing}
+          />
+        </div>
 
         <Separator />
 
-        <!-- Output directory -->
-        <div class="space-y-2">
-          <Label class="text-sm">Output Directory</Label>
-          <div class="flex gap-2">
-            <Input
-              value={outputDir}
-              placeholder="Select output directory"
-              readonly
-              class="flex-1"
-            />
-            <Button 
-              variant="outline" 
-              size="icon"
-              onclick={handleBrowseOutput}
-              disabled={isTranscribing}
-            >
-              <FolderOpen class="size-4" />
-            </Button>
+        <!-- Diarization -->
+        <div class="flex items-center justify-between">
+          <div class="space-y-0.5">
+            <Label class="text-sm flex items-center gap-2">
+              <Users class="size-4" />
+              Diarization
+            </Label>
+            <p class="text-xs text-muted-foreground">
+              Identify different speakers
+            </p>
+          </div>
+          <Switch
+            checked={config.deepgramConfig.diarize}
+            onCheckedChange={(checked) => onDeepgramConfigChange({ diarize: checked })}
+            disabled={isTranscribing}
+          />
+        </div>
+
+        <Separator />
+
+        <!-- Utterance Split -->
+        <div class="space-y-3">
+          <div class="space-y-0.5">
+            <Label class="text-sm">Pause Threshold</Label>
+            <p class="text-xs text-muted-foreground">
+              Silence duration to split phrases ({config.deepgramConfig.uttSplit.toFixed(1)}s)
+            </p>
+          </div>
+          <Slider
+            type="multiple"
+            value={[config.deepgramConfig.uttSplit]}
+            onValueChange={(values: number[]) => onDeepgramConfigChange({ uttSplit: values[0] })}
+            min={0.5}
+            max={2.0}
+            step={0.1}
+            disabled={isTranscribing}
+          />
+          <div class="flex justify-between text-xs text-muted-foreground">
+            <span>0.5s (short phrases)</span>
+            <span>2.0s (long phrases)</span>
           </div>
         </div>
       </Card.Content>
     </Card.Root>
+
+    <!-- Export All Section - only when all files are completed -->
+    {#if allFilesCompleted && filesWithVersions.length > 0}
+      <Card.Root>
+        <Card.Header class="pb-3">
+          <Card.Title class="text-sm flex items-center gap-2">
+            <CheckCircle class="size-4 text-green-500" />
+            Export All
+          </Card.Title>
+          <Card.Description class="text-xs">
+            {filesWithVersions.length} file(s), {totalVersions} version(s)
+          </Card.Description>
+        </Card.Header>
+        <Card.Content class="space-y-4">
+          <!-- Format -->
+          <div class="space-y-2">
+            <Label class="text-sm">Format</Label>
+            <Select.Root
+              type="single"
+              value={exportFormat}
+              onValueChange={(v) => v && (exportFormat = v as TranscriptionOutputFormat)}
+              disabled={isExporting}
+            >
+              <Select.Trigger class="w-full">
+                <span>{exportFormat.toUpperCase()}</span>
+              </Select.Trigger>
+              <Select.Content>
+                <Select.Item value="srt" label="SRT">SRT - SubRip</Select.Item>
+                <Select.Item value="vtt" label="VTT">VTT - WebVTT</Select.Item>
+                <Select.Item value="json" label="JSON">JSON - Structured data</Select.Item>
+              </Select.Content>
+            </Select.Root>
+          </div>
+
+          <!-- Output directory -->
+          <div class="space-y-2">
+            <Label class="text-sm">Output folder</Label>
+            <div class="flex gap-2">
+              <Input
+                value={outputDir}
+                placeholder="Select..."
+                readonly
+                class="flex-1 text-xs"
+              />
+              <Button 
+                variant="outline" 
+                size="icon"
+                onclick={handleBrowseOutput}
+                disabled={isExporting}
+              >
+                <FolderOpen class="size-4" />
+              </Button>
+            </div>
+          </div>
+
+          <!-- Export button -->
+          <Button
+            class="w-full"
+            disabled={!canExport}
+            onclick={handleExportAll}
+          >
+            {#if isExporting}
+              <Loader2 class="size-4 mr-2 animate-spin" />
+              Exporting...
+            {:else}
+              <Download class="size-4 mr-2" />
+              Export ({totalVersions})
+            {/if}
+          </Button>
+        </Card.Content>
+      </Card.Root>
+    {/if}
   </div>
 
   <!-- Actions -->
@@ -265,14 +383,20 @@
     <!-- Status summary -->
     {#if totalFilesCount > 0}
       <div class="flex items-center justify-between text-sm text-muted-foreground">
-        <span>{readyFilesCount} ready</span>
+        <span>
+          {#if transcodingCount > 0}
+            {transcodingCount} converting...
+          {:else}
+            {readyFilesCount} ready
+          {/if}
+        </span>
         {#if completedFilesCount > 0}
           <span class="text-green-500">{completedFilesCount} completed</span>
         {/if}
       </div>
     {/if}
 
-    <!-- Transcribe buttons -->
+    <!-- Transcribe button -->
     <Button
       class="w-full"
       disabled={!canTranscribe}
@@ -281,22 +405,21 @@
       {#if isTranscribing}
         <Loader2 class="size-4 mr-2 animate-spin" />
         Transcribing...
+      {:else if isTranscoding}
+        <Loader2 class="size-4 mr-2 animate-spin" />
+        Converting...
       {:else}
         <Play class="size-4 mr-2" />
         Transcribe All ({readyFilesCount})
       {/if}
     </Button>
 
-    {#if !canTranscribe && !isTranscribing}
+    {#if !canTranscribe && !isTranscribing && !isTranscoding}
       <p class="text-xs text-muted-foreground text-center">
-        {#if !whisperInstalled}
-          Install whisper.cpp to continue
-        {:else if !isModelDownloaded}
-          Download the model first
+        {#if !apiKeyConfigured}
+          Configure your Deepgram API key
         {:else if readyFilesCount === 0}
           Add audio files to transcribe
-        {:else if !outputDir}
-          Select an output directory
         {/if}
       </p>
     {/if}

@@ -1,15 +1,17 @@
 /**
  * Store for Audio to Subs transcription feature
- * Manages audio files, transcription config, and progress state
+ * Manages audio files, Deepgram transcription config, and progress state
  */
 
 import type WaveSurfer from 'wavesurfer.js';
 import type { 
   AudioFile, 
-  TranscriptionConfig, 
-  WhisperModel,
-  DEFAULT_TRANSCRIPTION_CONFIG 
+  TranscriptionConfig,
+  DeepgramConfig,
+  DeepgramModel,
+  TranscriptionVersion
 } from '$lib/types';
+import { DEFAULT_DEEPGRAM_CONFIG } from '$lib/types';
 
 // ============================================================================
 // STATE
@@ -21,12 +23,8 @@ let selectedFileId = $state<string | null>(null);
 
 // Transcription configuration
 let config = $state<TranscriptionConfig>({
-  model: 'large-v3',
-  language: 'auto',
+  deepgramConfig: { ...DEFAULT_DEEPGRAM_CONFIG },
   outputFormat: 'srt',
-  wordTimestamps: false,
-  translate: false,
-  maxSegmentLength: 50
 });
 
 let outputDir = $state<string>('');
@@ -37,15 +35,9 @@ let currentTranscribingId = $state<string | null>(null);
 let cancelledFileIds = $state<Set<string>>(new Set());
 let isCancelling = $state(false);
 
-// Whisper installation state
-let whisperInstalled = $state<boolean | null>(null);
-let whisperVersion = $state<string | null>(null);
-
-// Downloaded models
-let downloadedModels = $state<Set<WhisperModel>>(new Set());
-let isDownloadingModel = $state(false);
-let downloadingModelId = $state<WhisperModel | null>(null);
-let downloadProgress = $state(0);
+// Transcoding state
+let isTranscoding = $state(false);
+let transcodingFileIds = $state<Set<string>>(new Set());
 
 // Waveform persistence - stores WaveSurfer instances by fileId
 interface WaveformInstance {
@@ -66,6 +58,17 @@ function generateId(): string {
 
 function getFileName(path: string): string {
   return path.split('/').pop() || path.split('\\').pop() || path;
+}
+
+function createEmptyAudioFile(path: string, id?: string): AudioFile {
+  return {
+    id: id ?? generateId(),
+    path,
+    name: getFileName(path),
+    size: 0,
+    status: 'pending',
+    transcriptionVersions: [],
+  };
 }
 
 // ============================================================================
@@ -89,7 +92,7 @@ export const audioToSubsStore = {
   },
   
   get readyFiles(): AudioFile[] {
-    return audioFiles.filter(f => f.status === 'ready');
+    return audioFiles.filter(f => f.status === 'ready' || f.status === 'completed');
   },
   
   get completedFiles(): AudioFile[] {
@@ -100,11 +103,23 @@ export const audioToSubsStore = {
     return audioFiles.length > 0;
   },
 
+  get pendingTranscodeFiles(): AudioFile[] {
+    return audioFiles.filter(f => f.status === 'pending' || f.status === 'scanning');
+  },
+
+  get transcodingFiles(): AudioFile[] {
+    return audioFiles.filter(f => f.status === 'transcoding');
+  },
+
   // -------------------------------------------------------------------------
   // Getters - Config
   // -------------------------------------------------------------------------
   get config() { 
     return config; 
+  },
+
+  get deepgramConfig(): DeepgramConfig {
+    return config.deepgramConfig;
   },
   
   get outputDir() { 
@@ -123,11 +138,12 @@ export const audioToSubsStore = {
   },
   
   get canTranscribe(): boolean {
-    return audioFiles.some(f => f.status === 'ready') && 
+    // Can transcribe if we have ready files, not currently transcribing,
+    // output dir is set, and no files are still transcoding
+    return audioFiles.some(f => f.status === 'ready' || f.status === 'completed') && 
            !isTranscribing && 
            outputDir.length > 0 &&
-           whisperInstalled === true &&
-           downloadedModels.has(config.model);
+           !audioFiles.some(f => f.status === 'transcoding');
   },
   
   get isCancelling() {
@@ -143,34 +159,18 @@ export const audioToSubsStore = {
   },
 
   // -------------------------------------------------------------------------
-  // Getters - Whisper State
+  // Getters - Transcoding State
   // -------------------------------------------------------------------------
-  get whisperInstalled() {
-    return whisperInstalled;
+  get isTranscoding() {
+    return isTranscoding;
   },
-  
-  get whisperVersion() {
-    return whisperVersion;
+
+  get transcodingFileIds() {
+    return transcodingFileIds;
   },
-  
-  get downloadedModels() { 
-    return downloadedModels; 
-  },
-  
-  get isDownloadingModel() { 
-    return isDownloadingModel; 
-  },
-  
-  get downloadingModelId() {
-    return downloadingModelId;
-  },
-  
-  get downloadProgress() { 
-    return downloadProgress; 
-  },
-  
-  get isModelDownloaded(): boolean {
-    return downloadedModels.has(config.model);
+
+  get hasFilesTranscoding(): boolean {
+    return audioFiles.some(f => f.status === 'transcoding');
   },
 
   // -------------------------------------------------------------------------
@@ -194,13 +194,7 @@ export const audioToSubsStore = {
   },
 
   addFilesFromPaths(paths: string[]) {
-    const newFiles: AudioFile[] = paths.map(path => ({
-      id: generateId(),
-      path,
-      name: getFileName(path),
-      size: 0,
-      status: 'pending' as const
-    }));
+    const newFiles: AudioFile[] = paths.map(path => createEmptyAudioFile(path));
     this.addFiles(newFiles);
     return newFiles;
   },
@@ -237,6 +231,42 @@ export const audioToSubsStore = {
     audioFiles = audioFiles.map(f =>
       f.id === id ? { ...f, progress } : f
     );
+  },
+
+  // -------------------------------------------------------------------------
+  // Actions - Transcription Versions
+  // -------------------------------------------------------------------------
+  addTranscriptionVersion(fileId: string, version: TranscriptionVersion) {
+    audioFiles = audioFiles.map(f => {
+      if (f.id === fileId) {
+        return {
+          ...f,
+          transcriptionVersions: [...f.transcriptionVersions, version],
+          status: 'completed' as const,
+        };
+      }
+      return f;
+    });
+  },
+
+  removeTranscriptionVersion(fileId: string, versionId: string) {
+    audioFiles = audioFiles.map(f => {
+      if (f.id === fileId) {
+        const updatedVersions = f.transcriptionVersions.filter(v => v.id !== versionId);
+        return {
+          ...f,
+          transcriptionVersions: updatedVersions,
+          // If no more versions, set back to ready
+          status: updatedVersions.length > 0 ? 'completed' as const : 'ready' as const,
+        };
+      }
+      return f;
+    });
+  },
+
+  getTranscriptionVersionCount(fileId: string): number {
+    const file = audioFiles.find(f => f.id === fileId);
+    return file?.transcriptionVersions.length ?? 0;
   },
 
   // -------------------------------------------------------------------------
@@ -279,12 +309,25 @@ export const audioToSubsStore = {
     config = { ...config, ...updates };
   },
 
-  setModel(model: WhisperModel) {
-    config = { ...config, model };
+  updateDeepgramConfig(updates: Partial<DeepgramConfig>) {
+    config = { 
+      ...config, 
+      deepgramConfig: { ...config.deepgramConfig, ...updates } 
+    };
+  },
+
+  setModel(model: DeepgramModel) {
+    config = { 
+      ...config, 
+      deepgramConfig: { ...config.deepgramConfig, model } 
+    };
   },
 
   setLanguage(language: string) {
-    config = { ...config, language };
+    config = { 
+      ...config, 
+      deepgramConfig: { ...config.deepgramConfig, language } 
+    };
   },
 
   setOutputFormat(format: TranscriptionConfig['outputFormat']) {
@@ -295,12 +338,39 @@ export const audioToSubsStore = {
     outputDir = dir;
   },
 
-  toggleWordTimestamps() {
-    config = { ...config, wordTimestamps: !config.wordTimestamps };
+  setUttSplit(value: number) {
+    config = {
+      ...config,
+      deepgramConfig: { ...config.deepgramConfig, uttSplit: value }
+    };
   },
 
-  toggleTranslate() {
-    config = { ...config, translate: !config.translate };
+  togglePunctuate() {
+    config = {
+      ...config,
+      deepgramConfig: { ...config.deepgramConfig, punctuate: !config.deepgramConfig.punctuate }
+    };
+  },
+
+  toggleSmartFormat() {
+    config = {
+      ...config,
+      deepgramConfig: { ...config.deepgramConfig, smartFormat: !config.deepgramConfig.smartFormat }
+    };
+  },
+
+  toggleParagraphs() {
+    config = {
+      ...config,
+      deepgramConfig: { ...config.deepgramConfig, paragraphs: !config.deepgramConfig.paragraphs }
+    };
+  },
+
+  toggleDiarize() {
+    config = {
+      ...config,
+      deepgramConfig: { ...config.deepgramConfig, diarize: !config.deepgramConfig.diarize }
+    };
   },
 
   // -------------------------------------------------------------------------
@@ -320,82 +390,105 @@ export const audioToSubsStore = {
   
   cancelFile(id: string) {
     cancelledFileIds = new Set([...cancelledFileIds, id]);
-    // Update file status to cancelled
-    audioFiles = audioFiles.map(f =>
-      f.id === id && f.status === 'transcribing' 
-        ? { ...f, status: 'error' as const, error: 'Cancelled by user' } 
-        : f
-    );
+    // Update file status - keep versions if they exist
+    audioFiles = audioFiles.map(f => {
+      if (f.id === id && f.status === 'transcribing') {
+        return { 
+          ...f, 
+          status: f.transcriptionVersions.length > 0 ? 'completed' as const : 'ready' as const,
+          error: undefined
+        };
+      }
+      return f;
+    });
   },
   
   cancelAll() {
     isCancelling = true;
-    // Mark all pending/ready files as needing to be skipped
-    for (const file of audioFiles) {
-      if (file.status === 'ready' || file.status === 'pending') {
-        cancelledFileIds = new Set([...cancelledFileIds, file.id]);
+    // Mark all transcribing files as cancelled and reset to appropriate status
+    audioFiles = audioFiles.map(f => {
+      if (f.status === 'transcribing') {
+        cancelledFileIds = new Set([...cancelledFileIds, f.id]);
+        return {
+          ...f,
+          status: f.transcriptionVersions.length > 0 ? 'completed' as const : 'ready' as const,
+          error: undefined
+        };
       }
-    }
+      if (f.status === 'ready' || f.status === 'pending') {
+        cancelledFileIds = new Set([...cancelledFileIds, f.id]);
+      }
+      return f;
+    });
   },
 
-  completeFile(id: string, outputPath: string) {
+  completeFile(id: string) {
     audioFiles = audioFiles.map(f =>
-      f.id === id ? { ...f, status: 'completed', progress: 100, outputPath } : f
+      f.id === id ? { ...f, status: 'completed' as const, progress: 100 } : f
     );
   },
 
   failFile(id: string, error: string) {
     audioFiles = audioFiles.map(f =>
-      f.id === id ? { ...f, status: 'error', error } : f
+      f.id === id ? { ...f, status: 'error' as const, error } : f
     );
   },
 
   // -------------------------------------------------------------------------
-  // Actions - Whisper State
+  // Actions - Transcoding State
   // -------------------------------------------------------------------------
-  setWhisperInstalled(installed: boolean, version?: string | null) {
-    whisperInstalled = installed;
-    whisperVersion = version ?? null;
+  startTranscoding(fileId: string) {
+    transcodingFileIds = new Set([...transcodingFileIds, fileId]);
+    isTranscoding = transcodingFileIds.size > 0;
+    audioFiles = audioFiles.map(f =>
+      f.id === fileId ? { ...f, status: 'transcoding' as const, isTranscoding: true, transcodingProgress: 0 } : f
+    );
   },
 
-  setDownloadedModels(models: WhisperModel[]) {
-    downloadedModels = new Set(models);
+  updateTranscodingProgress(fileId: string, progress: number) {
+    audioFiles = audioFiles.map(f =>
+      f.id === fileId ? { ...f, transcodingProgress: progress } : f
+    );
   },
 
-  addDownloadedModel(model: WhisperModel) {
-    downloadedModels = new Set([...downloadedModels, model]);
+  finishTranscoding(fileId: string, opusPath: string) {
+    audioFiles = audioFiles.map(f =>
+      f.id === fileId ? { 
+        ...f, 
+        status: 'ready' as const, 
+        isTranscoding: false, 
+        transcodingProgress: 100,
+        opusPath 
+      } : f
+    );
+    
+    // Remove from transcoding set
+    transcodingFileIds = new Set([...transcodingFileIds].filter(id => id !== fileId));
+    isTranscoding = transcodingFileIds.size > 0;
   },
 
-  startModelDownload(model: WhisperModel) {
-    isDownloadingModel = true;
-    downloadingModelId = model;
-    downloadProgress = 0;
-  },
-
-  setDownloadProgress(progress: number) {
-    downloadProgress = progress;
-  },
-
-  finishModelDownload(model: WhisperModel, success: boolean) {
-    isDownloadingModel = false;
-    downloadingModelId = null;
-    downloadProgress = 0;
-    if (success) {
-      this.addDownloadedModel(model);
-    }
+  failTranscoding(fileId: string, error: string) {
+    audioFiles = audioFiles.map(f =>
+      f.id === fileId ? { 
+        ...f, 
+        status: 'error' as const, 
+        isTranscoding: false,
+        error 
+      } : f
+    );
+    
+    // Remove from transcoding set
+    transcodingFileIds = new Set([...transcodingFileIds].filter(id => id !== fileId));
+    isTranscoding = transcodingFileIds.size > 0;
   },
 
   // -------------------------------------------------------------------------
   // Actions - Import from Extraction
   // -------------------------------------------------------------------------
   importFromExtraction(files: { path: string; name: string }[]) {
-    const newFiles: AudioFile[] = files.map((f, i) => ({
-      id: `imported-${Date.now()}-${i}`,
-      path: f.path,
-      name: f.name,
-      size: 0,
-      status: 'pending' as const
-    }));
+    const newFiles: AudioFile[] = files.map((f, i) => 
+      createEmptyAudioFile(f.path, `imported-${Date.now()}-${i}`)
+    );
     this.addFiles(newFiles);
     return newFiles;
   },
@@ -405,7 +498,7 @@ export const audioToSubsStore = {
   // -------------------------------------------------------------------------
   clear() {
     // Clean up all waveform instances and blob URLs
-    for (const [id, instance] of waveformInstances) {
+    for (const [, instance] of waveformInstances) {
       try {
         instance.wavesurfer.destroy();
       } catch {
@@ -423,17 +516,15 @@ export const audioToSubsStore = {
     currentTranscribingId = null;
     cancelledFileIds = new Set();
     isCancelling = false;
+    isTranscoding = false;
+    transcodingFileIds = new Set();
   },
 
   reset() {
     this.clear();
     config = {
-      model: 'large-v3',
-      language: 'auto',
+      deepgramConfig: { ...DEFAULT_DEEPGRAM_CONFIG },
       outputFormat: 'srt',
-      wordTimestamps: false,
-      translate: false,
-      maxSegmentLength: 50
     };
     outputDir = '';
   }

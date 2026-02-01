@@ -29,6 +29,7 @@
     fileId: string;
     duration?: number;
     fileSize?: number;
+    selectedTrackIndex?: number;
     class?: string;
   }
 
@@ -37,6 +38,7 @@
     fileId,
     duration = 0,
     fileSize = 0,
+    selectedTrackIndex = 0,
     class: className = ''
   }: WaveformProps = $props();
 
@@ -53,7 +55,7 @@
   let isTooLarge = $state(false);
   let actualFileSize = $state(0);
   
-  let loadedPath: string | null = null;
+  let loadedKey: string | null = null;
   let blobUrl: string | null = null;
   let isDestroyed = false;
   let loadId = 0;
@@ -63,14 +65,25 @@
     totalDuration > 0 ? (currentTime / totalDuration) * 100 : 0
   );
 
-  // Load audio when path changes
+  // Create a unique key combining path and track index
+  function getLoadKey(path: string, trackIdx: number): string {
+    return `${path}::track${trackIdx}`;
+  }
+
+  // Load audio when path or track index changes
   $effect(() => {
     const path = audioPath;
+    const trackIdx = selectedTrackIndex;
     const container = containerRef;
     
-    const currentLoadedPath = untrack(() => loadedPath);
+    const currentKey = getLoadKey(path, trackIdx);
+    const currentLoadedKey = untrack(() => loadedKey);
     
-    if (path && container && path !== currentLoadedPath) {
+    if (path && container && currentKey !== currentLoadedKey) {
+      // Clear persisted blob when track changes
+      if (currentLoadedKey && currentLoadedKey !== currentKey) {
+        audioToSubsStore.removeWaveformInstance(fileId);
+      }
       loadAudio(path, container);
     }
   });
@@ -172,7 +185,7 @@
   async function loadAudio(path: string, container: HTMLDivElement) {
     const currentLoadId = ++loadId;
     
-    loadedPath = path;
+    loadedKey = getLoadKey(path, selectedTrackIndex);
     isLoading = true;
     loadingMessage = 'Loading waveform...';
     error = null;
@@ -249,7 +262,8 @@
         loadingMessage = 'Converting audio for preview...';
         try {
           convertedPath = await invoke<string>('convert_audio_for_waveform', { 
-            audioPath: path 
+            audioPath: path,
+            trackIndex: selectedTrackIndex
           });
           audioPathToLoad = convertedPath;
         } catch (convErr) {

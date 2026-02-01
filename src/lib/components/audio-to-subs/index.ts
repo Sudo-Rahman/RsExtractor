@@ -6,3 +6,6 @@ export { default as ModelSelector } from './ModelSelector.svelte';
 export { default as LanguageSelector } from './LanguageSelector.svelte';
 export { default as TranscriptionPanel } from './TranscriptionPanel.svelte';
 export { default as TranscriptionResultDialog } from './TranscriptionResultDialog.svelte';
+export { default as RetranscribeDialog } from './RetranscribeDialog.svelte';
+export { default as AudioTrackSelectDialog } from './AudioTrackSelectDialog.svelte';
+export { default as BatchTrackSelectDialog } from './BatchTrackSelectDialog.svelte';

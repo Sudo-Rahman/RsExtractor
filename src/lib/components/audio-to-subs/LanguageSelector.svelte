@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { WHISPER_LANGUAGES, type WhisperLanguage } from '$lib/types';
+  import { DEEPGRAM_LANGUAGES, type DeepgramLanguageCode } from '$lib/types';
   import { cn } from '$lib/utils';
   import * as Select from '$lib/components/ui/select';
   import { Label } from '$lib/components/ui/label';
   import Languages from 'lucide-svelte/icons/languages';
-  import Sparkles from 'lucide-svelte/icons/sparkles';
+  import Globe from 'lucide-svelte/icons/globe';
 
   interface LanguageSelectorProps {
     value: string;
@@ -20,11 +20,11 @@
     class: className = ''
   }: LanguageSelectorProps = $props();
 
-  const selectedLanguage = $derived(WHISPER_LANGUAGES.find((l: WhisperLanguage) => l.code === value));
+  const selectedLanguage = $derived(DEEPGRAM_LANGUAGES.find(l => l.code === value));
 </script>
 
 <div class={cn("space-y-2", className)}>
-  <Label class="text-sm font-medium">Source Language</Label>
+  <Label class="text-sm font-medium">Langue source</Label>
   
   <Select.Root 
     type="single"
@@ -34,24 +34,31 @@
   >
     <Select.Trigger class="w-full">
       <div class="flex items-center gap-2">
-        {#if value === 'auto'}
-          <Sparkles class="size-4 text-primary" />
+        {#if value === 'multi'}
+          <Globe class="size-4 text-primary" />
         {:else}
           <Languages class="size-4 text-muted-foreground" />
         {/if}
-        <span>{selectedLanguage?.name ?? value}</span>
+        <span>
+          {#if selectedLanguage?.flag}
+            {selectedLanguage.flag}
+          {/if}
+          {selectedLanguage?.name ?? value}
+        </span>
       </div>
     </Select.Trigger>
     <Select.Content class="max-h-[300px]">
-      {#each WHISPER_LANGUAGES as lang (lang.code)}
+      {#each DEEPGRAM_LANGUAGES as lang (lang.code)}
         <Select.Item value={lang.code} label={lang.name}>
           <div class="flex items-center gap-2">
-            {#if lang.code === 'auto'}
-              <Sparkles class="size-4 text-primary" />
+            {#if lang.code === 'multi'}
+              <Globe class="size-4 text-primary" />
+            {:else if lang.flag}
+              <span>{lang.flag}</span>
             {/if}
             <span>{lang.name}</span>
-            {#if lang.code !== 'auto'}
-              <span class="text-xs text-muted-foreground ml-auto">{lang.code}</span>
+            {#if lang.code !== 'multi'}
+              <span class="text-xs text-muted-foreground ml-auto uppercase">{lang.code}</span>
             {/if}
           </div>
         </Select.Item>
@@ -59,9 +66,9 @@
     </Select.Content>
   </Select.Root>
 
-  {#if value === 'auto'}
+  {#if value === 'multi'}
     <p class="text-xs text-muted-foreground">
-      Whisper will automatically detect the spoken language
+      Deepgram detectera automatiquement la langue
     </p>
   {/if}
 </div>

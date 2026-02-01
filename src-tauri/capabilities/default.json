@@ -22,6 +22,24 @@
         { "path": "$TEMP/**" }
       ]
     },
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [
+        { "path": "$TEMP/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [
+        { "path": "$TEMP/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-remove",
+      "allow": [
+        { "path": "$TEMP/**" }
+      ]
+    },
     "shell:default",
     "store:default",
     "http:default",

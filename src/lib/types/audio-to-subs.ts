@@ -1,7 +1,35 @@
 /**
  * Types for Audio to Subs transcription feature
- * Uses whisper.cpp for local speech-to-text transcription
+ * Uses Deepgram Nova API for cloud-based speech-to-text transcription
  */
+
+import type { 
+  DeepgramConfig, 
+  DeepgramResult, 
+  TranscriptionVersion,
+  TranscriptionOutputFormat 
+} from './deepgram';
+
+// Re-export Deepgram types for convenience
+export type { 
+  DeepgramConfig, 
+  DeepgramResult, 
+  TranscriptionVersion,
+  TranscriptionOutputFormat,
+  DeepgramModel,
+  DeepgramLanguage,
+  DeepgramLanguageCode,
+  TranscriptionPhrase,
+  TranscriptionData,
+  TranscriptionJSONOutput
+} from './deepgram';
+
+export { 
+  DEEPGRAM_MODELS, 
+  DEEPGRAM_LANGUAGES,
+  DEFAULT_DEEPGRAM_CONFIG,
+  DEFAULT_DEEPGRAM_MODEL
+} from './deepgram';
 
 // ============================================================================
 // AUDIO FILE TYPES
@@ -12,19 +40,32 @@ export interface AudioFile {
   path: string;
   name: string;
   size: number;
-  duration?: number;         // in seconds
-  format?: string;           // mp3, wav, aac, etc.
-  sampleRate?: number;       // 44100, 48000, etc.
-  channels?: number;         // 1 = mono, 2 = stereo
+  duration?: number;           // in seconds
+  format?: string;             // mp3, wav, aac, opus, etc.
+  sampleRate?: number;         // 44100, 48000, etc.
+  channels?: number;           // 1 = mono, 2 = stereo
   bitrate?: number;
   status: AudioFileStatus;
   error?: string;
-  progress?: number;         // 0-100 during transcription
-  outputPath?: string;       // Path to generated subtitle file
+  progress?: number;           // 0-100 during transcription
+
+  // Transcoding fields
+  isTranscoding?: boolean;     // OPUS transcoding in progress
+  transcodingProgress?: number;// 0-100
+  opusPath?: string;           // Path to transcoded OPUS file (mono 96kbps)
+
+  // Selected audio track info (for multi-track files)
+  selectedTrackIndex?: number;      // Which audio track was selected
+  audioTrackLanguage?: string;      // Language of selected track
+  audioTrackTitle?: string;         // Title of selected track
+  audioTrackCount?: number;         // Total number of audio tracks in source file
+
+  // Transcription versions
+  transcriptionVersions: TranscriptionVersion[];
 
   // Waveform persistence fields
-  previewUrl?: string;       // URL blob for converted audio preview
-  convertedPath?: string;    // Path to converted temp file
+  previewUrl?: string;         // URL blob for converted audio preview
+  convertedPath?: string;      // Path to converted temp file
   waveformState?: {
     currentTime: number;
     isPlaying: boolean;
@@ -33,137 +74,36 @@ export interface AudioFile {
 }
 
 export type AudioFileStatus = 
-  | 'pending' 
-  | 'scanning' 
-  | 'ready' 
-  | 'transcribing' 
-  | 'completed' 
-  | 'error';
+  | 'pending'        // Just added, not probed yet
+  | 'scanning'       // FFprobe in progress
+  | 'transcoding'    // Converting to OPUS
+  | 'ready'          // Ready for transcription
+  | 'transcribing'   // Transcription in progress
+  | 'completed'      // Has at least one transcription
+  | 'error';         // Error occurred
 
 // ============================================================================
-// TRANSCRIPTION CONFIG
+// TRANSCRIPTION CONFIG (Application-level)
 // ============================================================================
 
 export interface TranscriptionConfig {
-  model: WhisperModel;
-  language: string;          // 'auto' or ISO code (fr, en, es...)
+  deepgramConfig: DeepgramConfig;
   outputFormat: TranscriptionOutputFormat;
-  wordTimestamps: boolean;   // For word-level timing
-  translate: boolean;        // Translate to English
-  maxSegmentLength: number;  // Max characters per subtitle segment (0 = no limit)
 }
-
-export type TranscriptionOutputFormat = 'srt' | 'vtt' | 'json';
 
 export const DEFAULT_TRANSCRIPTION_CONFIG: TranscriptionConfig = {
-  model: 'large-v3',
-  language: 'auto',
+  deepgramConfig: {
+    model: 'nova-3',
+    language: 'multi',
+    punctuate: true,
+    paragraphs: true,
+    smartFormat: true,
+    utterances: true,
+    uttSplit: 0.8,
+    diarize: false,
+  },
   outputFormat: 'srt',
-  wordTimestamps: false,
-  translate: false,
-  maxSegmentLength: 50  // ~2-3 lines of text for readable subtitles
 };
-
-// ============================================================================
-// WHISPER MODELS
-// ============================================================================
-
-export type WhisperModel = 
-  | 'tiny' 
-  | 'tiny.en'
-  | 'base' 
-  | 'base.en'
-  | 'small' 
-  | 'small.en'
-  | 'medium' 
-  | 'medium.en'
-  | 'large-v1'
-  | 'large-v2' 
-  | 'large-v3' 
-  | 'large-v3-turbo';
-
-export type ModelSpeed = 'Très rapide' | 'Rapide' | 'Moyen' | 'Lent';
-export type ModelAccuracy = 'Faible' | 'Correct' | 'Bon' | 'Très bon' | 'Excellent';
-
-export interface WhisperModelInfo {
-  id: WhisperModel;
-  name: string;
-  size: string;
-  speed: ModelSpeed;
-  accuracy: ModelAccuracy;
-  vram: string;
-  englishOnly: boolean;
-}
-
-export const WHISPER_MODELS: WhisperModelInfo[] = [
-  { id: 'tiny',           name: 'Tiny',           size: '~75 MB',   speed: 'Très rapide', accuracy: 'Faible',    vram: '~1 GB',  englishOnly: false },
-  { id: 'tiny.en',        name: 'Tiny (EN)',      size: '~75 MB',   speed: 'Très rapide', accuracy: 'Correct',   vram: '~1 GB',  englishOnly: true },
-  { id: 'base',           name: 'Base',           size: '~140 MB',  speed: 'Rapide',      accuracy: 'Correct',   vram: '~1 GB',  englishOnly: false },
-  { id: 'base.en',        name: 'Base (EN)',      size: '~140 MB',  speed: 'Rapide',      accuracy: 'Bon',       vram: '~1 GB',  englishOnly: true },
-  { id: 'small',          name: 'Small',          size: '~460 MB',  speed: 'Moyen',       accuracy: 'Bon',       vram: '~2 GB',  englishOnly: false },
-  { id: 'small.en',       name: 'Small (EN)',     size: '~460 MB',  speed: 'Moyen',       accuracy: 'Très bon',  vram: '~2 GB',  englishOnly: true },
-  { id: 'medium',         name: 'Medium',         size: '~1.5 GB',  speed: 'Lent',        accuracy: 'Très bon',  vram: '~5 GB',  englishOnly: false },
-  { id: 'medium.en',      name: 'Medium (EN)',    size: '~1.5 GB',  speed: 'Lent',        accuracy: 'Excellent', vram: '~5 GB',  englishOnly: true },
-  { id: 'large-v1',       name: 'Large v1',       size: '~3 GB',    speed: 'Lent',        accuracy: 'Excellent', vram: '~10 GB', englishOnly: false },
-  { id: 'large-v2',       name: 'Large v2',       size: '~3 GB',    speed: 'Lent',        accuracy: 'Excellent', vram: '~10 GB', englishOnly: false },
-  { id: 'large-v3',       name: 'Large v3',       size: '~3 GB',    speed: 'Lent',        accuracy: 'Excellent', vram: '~10 GB', englishOnly: false },
-  { id: 'large-v3-turbo', name: 'Large v3 Turbo', size: '~1.5 GB',  speed: 'Rapide',      accuracy: 'Très bon',  vram: '~6 GB',  englishOnly: false },
-];
-
-// ============================================================================
-// LANGUAGES
-// ============================================================================
-
-export interface WhisperLanguage {
-  code: string;
-  name: string;
-}
-
-export const WHISPER_LANGUAGES: WhisperLanguage[] = [
-  { code: 'auto', name: 'Détection automatique' },
-  { code: 'fr', name: 'Français' },
-  { code: 'en', name: 'English' },
-  { code: 'es', name: 'Español' },
-  { code: 'de', name: 'Deutsch' },
-  { code: 'it', name: 'Italiano' },
-  { code: 'pt', name: 'Português' },
-  { code: 'nl', name: 'Nederlands' },
-  { code: 'pl', name: 'Polski' },
-  { code: 'ru', name: 'Русский' },
-  { code: 'uk', name: 'Українська' },
-  { code: 'ja', name: '日本語' },
-  { code: 'zh', name: '中文' },
-  { code: 'ko', name: '한국어' },
-  { code: 'ar', name: 'العربية' },
-  { code: 'hi', name: 'हिन्दी' },
-  { code: 'tr', name: 'Türkçe' },
-  { code: 'vi', name: 'Tiếng Việt' },
-  { code: 'th', name: 'ไทย' },
-  { code: 'id', name: 'Bahasa Indonesia' },
-  { code: 'ms', name: 'Bahasa Melayu' },
-  { code: 'sv', name: 'Svenska' },
-  { code: 'da', name: 'Dansk' },
-  { code: 'no', name: 'Norsk' },
-  { code: 'fi', name: 'Suomi' },
-  { code: 'cs', name: 'Čeština' },
-  { code: 'sk', name: 'Slovenčina' },
-  { code: 'hu', name: 'Magyar' },
-  { code: 'ro', name: 'Română' },
-  { code: 'bg', name: 'Български' },
-  { code: 'el', name: 'Ελληνικά' },
-  { code: 'he', name: 'עברית' },
-  { code: 'fa', name: 'فارسی' },
-  { code: 'ur', name: 'اردو' },
-  { code: 'bn', name: 'বাংলা' },
-  { code: 'ta', name: 'தமிழ்' },
-  { code: 'te', name: 'తెలుగు' },
-  { code: 'ml', name: 'മലയാളം' },
-  { code: 'ca', name: 'Català' },
-  { code: 'eu', name: 'Euskara' },
-  { code: 'gl', name: 'Galego' },
-];
-
-export type WhisperLanguageCode = typeof WHISPER_LANGUAGES[number]['code'];
 
 // ============================================================================
 // SUPPORTED AUDIO FORMATS
@@ -176,6 +116,9 @@ export const AUDIO_EXTENSIONS = [
 
 export type AudioExtension = typeof AUDIO_EXTENSIONS[number];
 
+// Formats that don't need transcoding
+export const OPUS_COMPATIBLE_FORMATS = ['opus'] as const;
+
 // ============================================================================
 // TRANSCRIPTION PROGRESS
 // ============================================================================
@@ -183,13 +126,39 @@ export type AudioExtension = typeof AUDIO_EXTENSIONS[number];
 export interface TranscriptionProgress {
   fileId: string;
   progress: number;  // 0-100
-  currentSegment?: string;  // Current text being transcribed
+  phase: 'uploading' | 'processing' | 'done';
   estimatedTimeRemaining?: number;  // in seconds
 }
 
 export interface TranscriptionResult {
   success: boolean;
-  outputPath?: string;
+  versionId?: string;
   error?: string;
   duration?: number;  // Processing time in seconds
 }
+
+// ============================================================================
+// AUDIO TRACK SELECTION (for video files)
+// ============================================================================
+
+export interface AudioTrackInfo {
+  index: number;
+  codec: string;
+  channels: number;
+  sampleRate: number;
+  bitrate?: number;
+  language?: string;
+  title?: string;
+  isDefault?: boolean;
+}
+
+// ============================================================================
+// BATCH TRACK SELECTION STRATEGY
+// ============================================================================
+
+export type BatchTrackStrategy = 
+  | { type: 'default' }                    // Use track marked as default, or first
+  | { type: 'language'; language: string } // Filter by language code
+  | { type: 'first' }                      // Always use first track (index 0)
+  | { type: 'index'; index: number }       // Use specific track index
+  | { type: 'individual' };                // Select for each file individually

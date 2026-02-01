@@ -13,6 +13,7 @@
   import Clock from 'lucide-svelte/icons/clock';
   import FileAudio from 'lucide-svelte/icons/file-audio';
   import FileText from 'lucide-svelte/icons/file-text';
+  import RotateCw from 'lucide-svelte/icons/rotate-cw';
   import X from 'lucide-svelte/icons/x';
 
   interface AudioFileListProps {
@@ -22,6 +23,8 @@
     onRemove: (id: string) => void;
     onCancel?: (id: string) => void;
     onViewResult?: (file: AudioFile) => void;
+    onRetranscribe?: (file: AudioFile) => void;
+    onRetry?: (file: AudioFile) => void;
     disabled?: boolean;
   }
 
@@ -32,6 +35,8 @@
     onRemove,
     onCancel,
     onViewResult,
+    onRetranscribe,
+    onRetry,
     disabled = false 
   }: AudioFileListProps = $props();
 
@@ -39,6 +44,8 @@
     switch (status) {
       case 'transcribing':
         return { icon: Loader2, class: 'animate-spin text-primary' };
+      case 'transcoding':
+        return { icon: Loader2, class: 'animate-spin text-orange-500' };
       case 'completed':
         return { icon: CheckCircle, class: 'text-green-500' };
       case 'error':
@@ -56,6 +63,8 @@
     {@const isSelected = file.id === selectedId}
     {@const statusInfo = getStatusIcon(file.status)}
     {@const isTranscribing = file.status === 'transcribing'}
+    {@const isTranscoding = file.status === 'transcoding'}
+    {@const versionCount = file.transcriptionVersions?.length ?? 0}
     <button
       class={cn(
         "w-full text-left p-3 rounded-lg border transition-colors",
@@ -70,6 +79,8 @@
             <CheckCircle class="size-5 text-green-500" />
           {:else if file.status === 'transcribing'}
             <Loader2 class="size-5 animate-spin text-primary" />
+          {:else if file.status === 'transcoding'}
+            <Loader2 class="size-5 animate-spin text-orange-500" />
           {:else if file.status === 'error'}
             <AlertCircle class="size-5 text-destructive" />
           {:else}
@@ -108,7 +119,15 @@
           {#if file.status === 'transcribing' && file.progress !== undefined}
             <div class="mt-2">
               <Progress value={file.progress} class="h-1.5" />
-              <p class="text-xs text-muted-foreground mt-1">{file.progress}%</p>
+              <p class="text-xs text-muted-foreground mt-1">Transcribing {file.progress}%</p>
+            </div>
+          {/if}
+
+          <!-- Progress bar during transcoding -->
+          {#if file.status === 'transcoding' && file.transcodingProgress !== undefined}
+            <div class="mt-2">
+              <Progress value={file.transcodingProgress} class="h-1.5 [&>div]:bg-orange-500" />
+              <p class="text-xs text-orange-600 mt-1">Converting to OPUS {file.transcodingProgress}%</p>
             </div>
           {/if}
           
@@ -118,58 +137,97 @@
               {file.error}
             </p>
           {/if}
-          
-          <!-- Output path on completion -->
-          {#if file.status === 'completed' && file.outputPath}
-            <p class="text-xs text-green-600 mt-1 truncate" title={file.outputPath}>
-              Output: {file.outputPath.split('/').pop()}
-            </p>
-          {/if}
         </div>
         
-        <!-- Actions -->
-        <div class="shrink-0 flex items-center gap-1">
-          {#if file.status === 'completed' && file.outputPath && onViewResult}
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              class="size-7 text-primary hover:text-primary"
-              onclick={(e) => { 
-                e.stopPropagation(); 
-                onViewResult(file); 
-              }}
-              title="View result"
-            >
-              <FileText class="size-3.5" />
-            </Button>
-          {/if}
+        <!-- Actions column -->
+        <div class="shrink-0 flex flex-col items-end gap-1">
+          <!-- Action buttons row -->
+          <div class="flex items-center gap-1">
+            <!-- View results button - show if file has versions (even if in error) -->
+            {#if versionCount > 0 && onViewResult}
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                class="size-7 text-primary hover:text-primary"
+                onclick={(e: MouseEvent) => { 
+                  e.stopPropagation(); 
+                  onViewResult(file); 
+                }}
+                title="View results"
+              >
+                <FileText class="size-3.5" />
+              </Button>
+            {/if}
+
+            <!-- Retry button for error status -->
+            {#if file.status === 'error' && onRetry}
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                class="size-7 text-orange-500 hover:text-orange-600 hover:bg-orange-500/10"
+                onclick={(e: MouseEvent) => { 
+                  e.stopPropagation(); 
+                  onRetry(file); 
+                }}
+                title="Retry"
+              >
+                <RotateCw class="size-3.5" />
+              </Button>
+            {/if}
+
+            <!-- Retranscribe button for completed status -->
+            {#if file.status === 'completed' && onRetranscribe}
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                class="size-7 text-muted-foreground hover:text-primary"
+                onclick={(e: MouseEvent) => { 
+                  e.stopPropagation(); 
+                  onRetranscribe(file); 
+                }}
+                title="New transcription"
+              >
+                <RotateCw class="size-3.5" />
+              </Button>
+            {/if}
+            
+            <!-- Cancel button during transcription/transcoding -->
+            {#if (isTranscribing || isTranscoding) && onCancel}
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                class="size-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                onclick={(e: MouseEvent) => { 
+                  e.stopPropagation(); 
+                  onCancel(file.id); 
+                }}
+                title="Cancel"
+              >
+                <X class="size-3.5" />
+              </Button>
+            {:else if !isTranscribing && !isTranscoding}
+              <!-- Delete button -->
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                class="size-7"
+                onclick={(e: MouseEvent) => { 
+                  e.stopPropagation(); 
+                  onRemove(file.id); 
+                }}
+                disabled={disabled}
+                title="Remove"
+              >
+                <Trash2 class="size-3.5" />
+              </Button>
+            {/if}
+          </div>
           
-          {#if isTranscribing && onCancel}
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              class="size-7 text-destructive hover:text-destructive hover:bg-destructive/10"
-              onclick={(e) => { 
-                e.stopPropagation(); 
-                onCancel(file.id); 
-              }}
-              title="Cancel transcription"
-            >
-              <X class="size-3.5" />
-            </Button>
-          {:else}
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              class="size-7"
-              onclick={(e) => { 
-                e.stopPropagation(); 
-                onRemove(file.id); 
-              }}
-              disabled={disabled && !isTranscribing}
-            >
-              <Trash2 class="size-3.5" />
-            </Button>
+          <!-- Version badge below action buttons -->
+          {#if versionCount > 0}
+            <Badge variant="secondary" class="text-[10px] px-1.5 py-0">
+              {versionCount} version{versionCount > 1 ? 's' : ''}
+            </Badge>
           {/if}
         </div>
       </div>

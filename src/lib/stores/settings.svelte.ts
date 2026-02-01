@@ -10,6 +10,7 @@ export interface AppSettings {
   llmApiKeys: LLMApiKeys;
   translationSettings: TranslationSettings;
   openRouterModels: string[]; // Saved OpenRouter model IDs
+  deepgramApiKey: string;     // Deepgram API key for transcription
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -27,7 +28,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     maxParallelFiles: 1,
     defaultBatchCount: 1
   },
-  openRouterModels: []
+  openRouterModels: [],
+  deepgramApiKey: ''
 };
 
 // Persistent store
@@ -57,6 +59,7 @@ export const settingsStore = {
       const llmApiKeys = await s.get<LLMApiKeys>('llmApiKeys');
       const translationSettings = await s.get<TranslationSettings>('translationSettings');
       const openRouterModels = await s.get<string[]>('openRouterModels');
+      const deepgramApiKey = await s.get<string>('deepgramApiKey');
 
       settings = {
         ffmpegPath: ffmpegPath ?? DEFAULT_SETTINGS.ffmpegPath,
@@ -65,7 +68,8 @@ export const settingsStore = {
         outputPathHistory: outputPathHistory ?? DEFAULT_SETTINGS.outputPathHistory,
         llmApiKeys: llmApiKeys ?? DEFAULT_SETTINGS.llmApiKeys,
         translationSettings: translationSettings ?? DEFAULT_SETTINGS.translationSettings,
-        openRouterModels: openRouterModels ?? DEFAULT_SETTINGS.openRouterModels
+        openRouterModels: openRouterModels ?? DEFAULT_SETTINGS.openRouterModels,
+        deepgramApiKey: deepgramApiKey ?? DEFAULT_SETTINGS.deepgramApiKey
       };
 
       isLoaded = true;
@@ -142,6 +146,21 @@ export const settingsStore = {
     settings = { ...settings, openRouterModels: newModels };
     const s = await getStore();
     await s.set('openRouterModels', newModels);
+  },
+
+  // Deepgram API Key
+  async setDeepgramApiKey(key: string) {
+    settings = { ...settings, deepgramApiKey: key };
+    const s = await getStore();
+    await s.set('deepgramApiKey', key);
+  },
+
+  getDeepgramApiKey(): string {
+    return settings.deepgramApiKey || '';
+  },
+
+  hasDeepgramApiKey(): boolean {
+    return (settings.deepgramApiKey?.length ?? 0) > 0;
   },
 
   async reset() {

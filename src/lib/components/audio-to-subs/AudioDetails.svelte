@@ -3,24 +3,28 @@
   import { cn } from '$lib/utils';
   import { formatDuration, formatFileSize, formatChannels, formatBitrate } from '$lib/utils/format';
   import { Badge } from '$lib/components/ui/badge';
+  import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
   import AudioLines from 'lucide-svelte/icons/audio-lines';
   import Clock from 'lucide-svelte/icons/clock';
   import Radio from 'lucide-svelte/icons/radio';
   import Volume2 from 'lucide-svelte/icons/volume-2';
   import HardDrive from 'lucide-svelte/icons/hard-drive';
+  import Disc3 from 'lucide-svelte/icons/disc-3';
   import Waveform from './Waveform.svelte';
   import { audioToSubsStore } from '$lib/stores/audio-to-subs.svelte';
 
   interface AudioDetailsProps {
     file: AudioFile | undefined;
     showWaveform?: boolean;
+    onChangeTrack?: (file: AudioFile) => void;
     class?: string;
   }
 
   let { 
     file, 
     showWaveform = true,
+    onChangeTrack,
     class: className = '' 
   }: AudioDetailsProps = $props();
 
@@ -34,6 +38,13 @@
       mountedWaveforms = new Set([...mountedWaveforms, file.id]);
     }
   });
+
+  // Check if track change button should be shown
+  const canChangeTrack = $derived(
+    file && 
+    (file.audioTrackCount ?? 0) > 1 &&
+    ['ready', 'completed', 'error'].includes(file.status)
+  );
 </script>
 
 <div class={cn("h-full flex flex-col overflow-auto", className)}>
@@ -68,7 +79,8 @@
               audioPath={waveformFile.path} 
               duration={waveformFile.duration} 
               fileSize={waveformFile.size} 
-              fileId={waveformFile.id} 
+              fileId={waveformFile.id}
+              selectedTrackIndex={waveformFile.selectedTrackIndex ?? 0}
             />
           </div>
         {/if}
@@ -144,6 +156,45 @@
           </p>
         </Card.Root>
       </div>
+
+
+        <Card.Root class="p-3">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div class="flex items-center gap-3">
+              <div class="flex items-center gap-2 text-muted-foreground">
+                <Disc3 class="size-4" />
+                <span class="text-xs font-medium">Audio Track</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-medium">
+                  Track {(file.selectedTrackIndex ?? 0) + 1} of {file.audioTrackCount}
+                </span>
+                {#if file.audioTrackLanguage}
+                  <Badge variant="secondary" class="text-xs">
+                    {file.audioTrackLanguage.toUpperCase()}
+                  </Badge>
+                {/if}
+              </div>
+            </div>
+            <div class="flex items-center gap-3 flex-wrap">
+              <!-- Audio Track Info (for multi-track files) -->
+              {#if canChangeTrack}
+                <Button
+                        variant="outline"
+                        size="sm"
+                        onclick={() => file && onChangeTrack?.(file)}
+                >
+                  Change track
+                </Button>
+              {/if}
+              {#if file.audioTrackTitle}
+                  <span class="text-sm text-muted-foreground truncate max-w-[200px]" title={file.audioTrackTitle}>
+                    {file.audioTrackTitle}
+                  </span>
+              {/if}
+            </div>
+          </div>
+        </Card.Root>
 
     </div>
   {:else}
