@@ -12,6 +12,9 @@
   import { LogsSheet } from '$lib/components/logs';
   import AlertCircle from 'lucide-svelte/icons/alert-circle';
   import ScrollText from 'lucide-svelte/icons/scroll-text';
+  import Home from 'lucide-svelte/icons/home';
+  import LayoutGrid from 'lucide-svelte/icons/layout-grid';
+  import Table from 'lucide-svelte/icons/table';
   import { OS } from '$lib/utils';
   import { useSidebar } from "$lib/components/ui/sidebar";
   import { logStore } from '$lib/stores/logs.svelte';
@@ -21,6 +24,9 @@
   let currentView = $state<'extract' | 'merge' | 'translate' | 'rename' | 'audio-to-subs' | 'info' | 'settings'>('extract');
   let ffmpegAvailable = $state<boolean | null>(null);
   let unlistenDragDrop: (() => void) | null = null;
+
+  // Merge view mode state (only applicable when currentView === 'merge')
+  let mergeViewMode = $state<'home' | 'groups' | 'table'>('home');
 
   // References to views for drag & drop forwarding
   let extractViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
@@ -114,6 +120,40 @@
         <h1 data-tauri-drag-region={isMacOS} class="text-lg font-semibold">{viewTitles[currentView]}</h1>
       </div>
 
+      <!-- Merge view mode buttons (only visible in merge view) -->
+      {#if currentView === 'merge'}
+        <div class="flex items-center gap-1 mr-2">
+          <Button
+            variant={mergeViewMode === 'home' ? 'secondary' : 'ghost'}
+            size="sm"
+            onclick={() => mergeViewMode = 'home'}
+            title="Home view"
+          >
+            <Home class="size-4 mr-1" />
+            Home
+          </Button>
+          <Button
+            variant={mergeViewMode === 'groups' ? 'secondary' : 'ghost'}
+            size="sm"
+            onclick={() => mergeViewMode = 'groups'}
+            title="Groups view"
+          >
+            <LayoutGrid class="size-4 mr-1" />
+            Groups
+          </Button>
+          <Button
+            variant={mergeViewMode === 'table' ? 'secondary' : 'ghost'}
+            size="sm"
+            onclick={() => mergeViewMode = 'table'}
+            title="Table view"
+          >
+            <Table class="size-4 mr-1" />
+            Table
+          </Button>
+        </div>
+        <Separator orientation="vertical" class="h-6 mr-2" />
+      {/if}
+
       <!-- Logs button -->
       <Button
         variant="ghost"
@@ -151,7 +191,7 @@
       
       <!-- Merge View -->
       <div class="absolute inset-0" style="display: {currentView === 'merge' ? 'block' : 'none'}">
-        <MergeView bind:this={mergeViewRef} />
+        <MergeView bind:this={mergeViewRef} viewMode={mergeViewMode} />
       </div>
       
       <!-- Audio to Subs View - persists when switching views -->

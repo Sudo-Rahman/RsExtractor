@@ -5,9 +5,13 @@ import type {
   MergeTrackConfig,
   MergeOutputConfig,
   BatchMergeJob,
-  AttachedTrack
+  AttachedTrack,
+  TrackGroup,
+  TrackPreset,
+  TrackType
 } from '$lib/types';
 import { extractSeriesInfo } from '$lib/types/merge';
+import { LazyStore } from '@tauri-apps/plugin-store';
 
 // State
 let videoFiles = $state<MergeVideoFile[]>([]);
@@ -23,6 +27,45 @@ let batchJobs = $state<BatchMergeJob[]>([]);
 let status = $state<'idle' | 'processing' | 'completed' | 'error'>('idle');
 let progress = $state(0);
 let error = $state<string | null>(null);
+
+// Track groups for bulk editing
+let trackGroups = $state<Map<string, TrackGroup>>(new Map());
+
+// Presets storage
+let trackPresets = $state<TrackPreset[]>([]);
+let presetsLoaded = $state(false);
+
+// Create lazy store instance
+const presetsStore = new LazyStore('merge-presets.json');
+
+// Load presets from Tauri Store on init
+async function loadPresetsFromStore() {
+  if (presetsLoaded) return;
+  
+  try {
+    const saved = await presetsStore.get<string>('presets');
+    if (saved) {
+      trackPresets = JSON.parse(saved);
+    }
+    presetsLoaded = true;
+  } catch (err) {
+    console.error('Failed to load presets from store:', err);
+    trackPresets = [];
+    presetsLoaded = true;
+  }
+}
+
+// Save presets to Tauri Store
+async function savePresetsToStore() {
+  if (!presetsLoaded) return;
+  
+  try {
+    await presetsStore.set('presets', JSON.stringify(trackPresets));
+    await presetsStore.save();
+  } catch (err) {
+    console.error('Failed to save presets to store:', err);
+  }
+}
 
 let idCounter = 0;
 function generateId(prefix: string): string {
@@ -353,5 +396,187 @@ export const mergeStore = {
     status = 'idle';
     progress = 0;
     error = null;
+    trackGroups = new Map();
+  },
+
+  // ========== TRACK GROUPS ==========
+
+  get trackGroups(): TrackGroup[] {
+    return Array.from(trackGroups.values()).sort((a, b) => {
+      // Sort by type first, then by language
+      if (a.type !== b.type) return a.type.localeCompare(b.type);
+      return (a.language || '').localeCompare(b.language || '');
+    });
+  },
+
+  // Generate groups from all tracks (source + imported)
+  generateTrackGroups() {
+    const groups = new Map<string, TrackGroup>();
+
+    // Helper to add track to group
+    const addToGroup = (trackId: string, type: TrackType, language: string | undefined) => {
+      const langKey = language || 'und';
+      const groupId = `${type}-${langKey}`;
+
+      if (!groups.has(groupId)) {
+        groups.set(groupId, {
+          id: groupId,
+          type,
+          language: language || null,
+          trackIds: [],
+          collapsed: true // Default collapsed
+        });
+      }
+
+      const group = groups.get(groupId)!;
+      if (!group.trackIds.includes(trackId)) {
+        group.trackIds.push(trackId);
+      }
+    };
+
+    // Add source tracks
+    videoFiles.forEach(video => {
+      video.tracks.forEach(track => {
+        const config = sourceTrackConfigs.get(track.id);
+        const lang = config?.language ?? track.language;
+        addToGroup(track.id, track.type, lang);
+      });
+    });
+
+    // Add imported tracks
+    importedTracks.forEach(track => {
+      const lang = track.config.language ?? track.language;
+      addToGroup(track.id, track.type, lang);
+    });
+
+    // Preserve collapsed state from existing groups
+    trackGroups.forEach((existingGroup, id) => {
+      if (groups.has(id)) {
+        groups.get(id)!.collapsed = existingGroup.collapsed;
+      }
+    });
+
+    trackGroups = groups;
+  },
+
+  toggleGroupCollapsed(groupId: string) {
+    const group = trackGroups.get(groupId);
+    if (group) {
+      trackGroups = new Map(trackGroups);
+      trackGroups.set(groupId, { ...group, collapsed: !group.collapsed });
+    }
+  },
+
+  expandAllGroups() {
+    trackGroups = new Map(
+      Array.from(trackGroups.entries()).map(([id, group]) => [
+        id,
+        { ...group, collapsed: false }
+      ])
+    );
+  },
+
+  collapseAllGroups() {
+    trackGroups = new Map(
+      Array.from(trackGroups.entries()).map(([id, group]) => [
+        id,
+        { ...group, collapsed: true }
+      ])
+    );
+  },
+
+  // Get track by ID (searches both source and imported)
+  getTrackById(trackId: string): MergeTrack | ImportedTrack | undefined {
+    // Search in source tracks
+    for (const video of videoFiles) {
+      const track = video.tracks.find(t => t.id === trackId);
+      if (track) return track;
+    }
+    // Search in imported tracks
+    return importedTracks.find(t => t.id === trackId);
+  },
+
+  // Apply updates to all tracks in a group
+  applyToGroup(groupId: string, updates: Partial<MergeTrackConfig>) {
+    const group = trackGroups.get(groupId);
+    if (!group) return;
+
+    for (const trackId of group.trackIds) {
+      // Check if it's a source track
+      let isSourceTrack = false;
+      for (const video of videoFiles) {
+        if (video.tracks.some(t => t.id === trackId)) {
+          isSourceTrack = true;
+          break;
+        }
+      }
+
+      if (isSourceTrack) {
+        this.updateSourceTrackConfig(trackId, updates);
+      } else {
+        this.updateTrackConfig(trackId, updates);
+      }
+    }
+  },
+
+  // ========== PRESETS ==========
+
+  get presets(): TrackPreset[] {
+    return trackPresets;
+  },
+
+  async savePreset(preset: Omit<TrackPreset, 'id' | 'createdAt'>) {
+    await loadPresetsFromStore();
+    const newPreset: TrackPreset = {
+      ...preset,
+      id: generateId('preset'),
+      createdAt: Date.now()
+    };
+    trackPresets = [...trackPresets, newPreset];
+    await savePresetsToStore();
+  },
+
+  async deletePreset(presetId: string) {
+    await loadPresetsFromStore();
+    trackPresets = trackPresets.filter(p => p.id !== presetId);
+    await savePresetsToStore();
+  },
+
+  async applyPreset(presetId: string, target?: { type: TrackType; language?: string }) {
+    await loadPresetsFromStore();
+    const preset = trackPresets.find(p => p.id === presetId);
+    if (!preset) return;
+
+    const updates: Partial<MergeTrackConfig> = {
+      language: preset.language,
+      title: preset.title,
+      default: preset.default,
+      forced: preset.forced,
+      delayMs: preset.delayMs
+    };
+
+    // Remove undefined values
+    Object.keys(updates).forEach(key => {
+      if (updates[key as keyof MergeTrackConfig] === undefined) {
+        delete updates[key as keyof MergeTrackConfig];
+      }
+    });
+
+    if (target) {
+      // Apply to specific group
+      const groupId = target.language
+        ? `${target.type}-${target.language}`
+        : `${target.type}-und`;
+      this.applyToGroup(groupId, updates);
+    } else {
+      // Apply to all tracks matching preset type
+      this.trackGroups
+        .filter(g => g.type === preset.type)
+        .forEach(group => this.applyToGroup(group.id, updates));
+    }
+  },
+
+  async loadPresets() {
+    await loadPresetsFromStore();
   }
 };

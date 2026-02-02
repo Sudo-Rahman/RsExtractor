@@ -89,6 +89,31 @@ export interface BatchMergeJob {
   error?: string;
 }
 
+// Groupe de tracks pour l'édition bulk (par langue + type)
+export interface TrackGroup {
+  id: string;
+  type: TrackType;
+  language: string | null;
+  trackIds: string[]; // IDs des tracks dans ce groupe
+  collapsed: boolean;
+}
+
+// Préréglage de propriétés pour les tracks
+export interface TrackPreset {
+  id: string;
+  name: string;
+  type: TrackType;
+  language?: string;
+  title?: string;
+  default?: boolean;
+  forced?: boolean;
+  delayMs?: number;
+  createdAt: number;
+}
+
+// Type union pour les tracks éditables
+export type EditableTrack = MergeTrack | ImportedTrack;
+
 // Languages communes pour le dropdown
 export const COMMON_LANGUAGES = [
   { code: 'und', label: 'Undefined' },

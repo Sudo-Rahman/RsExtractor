@@ -18,13 +18,19 @@
 
   import { getCodecFromExtension, type ImportedTrack, type MergeTrack, type MergeTrackConfig } from '$lib/types';
 
+  interface Props {
+    viewMode?: 'home' | 'groups' | 'table';
+  }
+
+  let { viewMode = 'home' }: Props = $props();
+
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import * as Card from '$lib/components/ui/card';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import * as Tabs from '$lib/components/ui/tabs';
-  import { MergeTrackSettings, MergeOutputPanel } from '$lib/components/merge';
+  import { MergeTrackSettings, MergeOutputPanel, MergeTrackGroups, MergeTrackTable } from '$lib/components/merge';
 
   import FileVideo from 'lucide-svelte/icons/file-video';
   import FileAudio from 'lucide-svelte/icons/file-audio';
@@ -488,294 +494,253 @@
   const groupedSourceTracks = $derived(() => groupTracksByType(selectedVideoTracks()));
 </script>
 
-<div class="h-full flex overflow-hidden">
-  <!-- Left panel: Video files -->
-  <div class="w-80 border-r flex flex-col overflow-hidden">
-    <div class="p-3 border-b shrink-0 flex items-center justify-between">
-      <h2 class="font-semibold">Videos ({mergeStore.videoFiles.length})</h2>
-      <div class="flex gap-1">
-        {#if mergeStore.videoFiles.length > 0}
-          <Button variant="ghost" size="icon-sm" onclick={handleClearAll} class="text-muted-foreground hover:text-destructive hover:bg-destructive/10">
-            <Trash2 class="size-4" />
+{#if viewMode === 'groups'}
+  <!-- Groups View: Full width -->
+  <div class="h-full">
+    <MergeTrackGroups />
+  </div>
+{:else if viewMode === 'table'}
+  <!-- Table View: Full width -->
+  <div class="h-full">
+    <MergeTrackTable />
+  </div>
+{:else}
+  <!-- Home View: Classic layout with left panel, center tabs, right panel -->
+  <div class="h-full flex overflow-hidden">
+    <!-- Left panel: Video files -->
+    <div class="w-80 border-r flex flex-col overflow-hidden">
+      <div class="p-3 border-b shrink-0 flex items-center justify-between">
+        <h2 class="font-semibold">Videos ({mergeStore.videoFiles.length})</h2>
+        <div class="flex gap-1">
+          {#if mergeStore.videoFiles.length > 0}
+            <Button variant="ghost" size="icon-sm" onclick={handleClearAll} class="text-muted-foreground hover:text-destructive hover:bg-destructive/10">
+              <Trash2 class="size-4" />
+            </Button>
+          {/if}
+          <Button size="sm" onclick={handleAddVideoFiles}>
+            <Upload class="size-4 mr-1" />
+            Add
           </Button>
-        {/if}
-        <Button size="sm" onclick={handleAddVideoFiles}>
-          <Upload class="size-4 mr-1" />
-          Add
-        </Button>
+        </div>
       </div>
-    </div>
 
-    <div class="flex-1 min-h-0 overflow-auto p-2 space-y-2">
-      {#each mergeStore.videoFiles as video (video.id)}
-        {@const FileIcon = getFileIcon(video.path)}
-        {@const attachedCount = video.attachedTracks.length}
-        {@const isSelected = mergeStore.selectedVideoId === video.id}
-        {@const seriesInfo = formatSeriesInfo(video.seasonNumber, video.episodeNumber)}
-        {@const counts = getTrackCounts(video.tracks)}
-        <button
-          class="w-full flex items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-accent {isSelected ? 'border-primary bg-primary/5' : ''}"
-          onclick={() => mergeStore.selectVideo(video.id)}
-        >
-          <div class="shrink-0 mt-0.5">
-            {#if video.status === 'scanning'}
-              <Loader2 class="size-5 text-muted-foreground animate-spin" />
-            {:else if video.status === 'error'}
-              <XCircle class="size-5 text-destructive" />
-            {:else}
-              <FileIcon class="size-5 text-primary" />
-            {/if}
-          </div>
-
-          <div class="flex-1 min-w-0">
-            <p class="font-medium truncate">{video.name}</p>
-            <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
-              {#if seriesInfo}
-                <Badge variant="outline" class="text-xs">{seriesInfo}</Badge>
-              {/if}
-              {#if counts.video > 0}
-                <Badge variant="secondary" class="text-xs gap-1">
-                  <Film class="size-3" />
-                  {counts.video}
-                </Badge>
-              {/if}
-              {#if counts.audio > 0}
-                <Badge variant="secondary" class="text-xs gap-1">
-                  <Volume2 class="size-3" />
-                  {counts.audio}
-                </Badge>
-              {/if}
-              {#if counts.subtitle > 0}
-                <Badge variant="secondary" class="text-xs gap-1">
-                  <Subtitles class="size-3" />
-                  {counts.subtitle}
-                </Badge>
-              {/if}
-              {#if attachedCount > 0}
-                <Badge class="text-xs">+{attachedCount}</Badge>
+      <div class="flex-1 min-h-0 overflow-auto p-2 space-y-2">
+        {#each mergeStore.videoFiles as video (video.id)}
+          {@const FileIcon = getFileIcon(video.path)}
+          {@const attachedCount = video.attachedTracks.length}
+          {@const isSelected = mergeStore.selectedVideoId === video.id}
+          {@const seriesInfo = formatSeriesInfo(video.seasonNumber, video.episodeNumber)}
+          {@const counts = getTrackCounts(video.tracks)}
+          <button
+            class="w-full flex items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-accent {isSelected ? 'border-primary bg-primary/5' : ''}"
+            onclick={() => mergeStore.selectVideo(video.id)}
+          >
+            <div class="shrink-0 mt-0.5">
+              {#if video.status === 'scanning'}
+                <Loader2 class="size-5 text-muted-foreground animate-spin" />
+              {:else if video.status === 'error'}
+                <XCircle class="size-5 text-destructive" />
+              {:else}
+                <FileIcon class="size-5 text-primary" />
               {/if}
             </div>
-          </div>
 
-          <Button
-            variant="ghost" size="icon-sm"
-            class="shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-            onclick={(e: MouseEvent) => { e.stopPropagation(); mergeStore.removeVideoFile(video.id); }}
-          >
-            <Trash2 class="size-4" />
-          </Button>
-        </button>
-      {:else}
-        <div class="flex flex-col items-center justify-center py-8 text-center">
-          <FileVideo class="size-10 text-muted-foreground/30 mb-2" />
-          <p class="text-sm text-muted-foreground">No video files</p>
-          <p class="text-xs text-muted-foreground mt-1">Drop videos here or click Add</p>
-        </div>
-      {/each}
-    </div>
-  </div>
+            <div class="flex-1 min-w-0">
+              <p class="font-medium truncate">{video.name}</p>
+              <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                {#if seriesInfo}
+                  <Badge variant="outline" class="text-xs">{seriesInfo}</Badge>
+                {/if}
+                {#if counts.video > 0}
+                  <Badge variant="secondary" class="text-xs gap-1">
+                    <Film class="size-3" />
+                    {counts.video}
+                  </Badge>
+                {/if}
+                {#if counts.audio > 0}
+                  <Badge variant="secondary" class="text-xs gap-1">
+                    <Volume2 class="size-3" />
+                    {counts.audio}
+                  </Badge>
+                {/if}
+                {#if counts.subtitle > 0}
+                  <Badge variant="secondary" class="text-xs gap-1">
+                    <Subtitles class="size-3" />
+                    {counts.subtitle}
+                  </Badge>
+                {/if}
+                {#if attachedCount > 0}
+                  <Badge class="text-xs">+{attachedCount}</Badge>
+                {/if}
+              </div>
+            </div>
 
-  <!-- Center panel: Track management with tabs -->
-  <div class="flex-1 flex flex-col overflow-hidden">
-    <Tabs.Root value="source" class="flex-1 flex flex-col overflow-hidden">
-      <div class="p-2.5 border-b w-full overflow-scroll flex items-center justify-between gap-4">
-        <Tabs.List>
-          <Tabs.Trigger value="source" class="flex items-center gap-1.5">
-            <Layers class="size-4" />
-            Source tracks
-          </Tabs.Trigger>
-          <Tabs.Trigger value="import" class="flex items-center gap-1.5">
-            <Plus class="size-4" />
-            Import tracks
-            {#if mergeStore.unassignedTracks.length > 0}
-              <Badge variant="secondary" class="text-xs ml-1">{mergeStore.unassignedTracks.length}</Badge>
-            {/if}
-          </Tabs.Trigger>
-        </Tabs.List>
-
-        <div class="flex gap-2">
-          {#if mergeStore.importedTracks.length > 0 && mergeStore.videoFiles.length > 0}
-            <Tooltip.Root>
-              <Tooltip.Trigger>
-                <Button variant="outline" size="sm" onclick={handleAutoMatch}>
-                  <Wand2 class="size-4 mr-1" />
-                  Auto-match
-                </Button>
-              </Tooltip.Trigger>
-              <Tooltip.Content>Match tracks to videos by episode number</Tooltip.Content>
-            </Tooltip.Root>
-          {/if}
-        </div>
-      </div>
-
-      <!-- Source Tracks Tab -->
-      <Tabs.Content value="source" class="flex-1 min-h-0 overflow-auto p-4 mt-0">
-        {#if mergeStore.selectedVideo}
-          {@const groups = groupedSourceTracks()}
-          <div class="space-y-4">
-            {#each Object.entries(groups) as [type, tracks]}
-              {#if tracks.length > 0}
-                {@const Icon = getTrackIcon(type)}
-                <Card.Root>
-                  <Card.Header class="py-3">
-                    <div class="flex items-center gap-2">
-                      <Icon class="size-4 text-muted-foreground" />
-                      <Card.Title class="text-sm capitalize">{type} ({tracks.length})</Card.Title>
-                    </div>
-                  </Card.Header>
-                  <Card.Content class="pt-0 space-y-1.5">
-                    {#each tracks as track (track.id)}
-                      {@const config = mergeStore.getSourceTrackConfig(track.id)}
-                      {@const enabled = config?.enabled ?? true}
-                      <div
-                        class="flex items-center gap-2 rounded-md border p-2.5 transition-all {getTrackTypeColor(track.type)} {!enabled ? 'opacity-50' : ''}"
-                      >
-                        <Checkbox
-                          checked={enabled}
-                          onCheckedChange={() => mergeStore.toggleSourceTrack(track.id)}
-                        />
-
-                        <div class="flex-1 min-w-0">
-                          <div class="flex items-center gap-2 flex-wrap">
-                            <Badge variant="outline" class="font-mono text-xs">#{track.originalIndex}</Badge>
-                            <span class="font-medium text-sm">{track.codec.toUpperCase()}</span>
-                            {#if config?.language || track.language}
-                              <Badge variant="secondary" class="text-xs">
-                                {config?.language || track.language}
-                              </Badge>
-                            {/if}
-                            {#if config?.default ?? track.default}
-                              <Badge class="text-xs">Default</Badge>
-                            {/if}
-                            {#if config?.forced ?? track.forced}
-                              <Badge variant="destructive" class="text-xs">Forced</Badge>
-                            {/if}
-                          </div>
-
-                          <div class="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-xs text-muted-foreground">
-                            {#if config?.title || track.title}
-                              <span class="truncate max-w-[200px]">"{config?.title || track.title}"</span>
-                            {/if}
-                            {#if track.type === 'video' && track.width && track.height}
-                              <span>{track.width}x{track.height}</span>
-                            {/if}
-                            {#if track.type === 'audio' && track.channels}
-                              <span>{track.channels}ch</span>
-                            {/if}
-                            {#if config?.delayMs && config.delayMs !== 0}
-                              <span class="flex items-center gap-1 text-orange-500">
-                                <Clock class="size-3" />
-                                {config.delayMs > 0 ? '+' : ''}{config.delayMs}ms
-                              </span>
-                            {/if}
-                          </div>
-                        </div>
-
-                        <Button
-                          variant="ghost" size="icon-sm"
-                          onclick={() => handleEditSourceTrack(track.id)}
-                        >
-                          <Settings2 class="size-4" />
-                        </Button>
-                      </div>
-                    {/each}
-                  </Card.Content>
-                </Card.Root>
-              {/if}
-            {/each}
-          </div>
-        {:else}
-          <div class="flex items-center justify-center py-20 text-muted-foreground">
-            <p>Select a video to view its tracks</p>
-          </div>
-        {/if}
-      </Tabs.Content>
-
-      <!-- Import Tracks Tab -->
-      <Tabs.Content value="import" class="flex-1 min-h-0 overflow-auto p-4 mt-0 space-y-4">
-        <div class="flex justify-end">
-          <Button size="sm" onclick={handleAddTrackFiles}>
-            <Plus class="size-4 mr-1" />
-            Add tracks
-          </Button>
-        </div>
-
-        <!-- Unassigned tracks (droppable) -->
-        <Card.Root>
-          <Card.Header class="py-3">
-            <Card.Title class="text-sm flex items-center gap-2">
-              <Unlink class="size-4 text-muted-foreground" />
-              Unassigned tracks
-            </Card.Title>
-            <Card.Description>Drag tracks to attach them to a video</Card.Description>
-          </Card.Header>
-          <Card.Content class="pt-0">
-            <section
-              class="min-h-[60px] rounded-md border-2 border-dashed p-2 space-y-1"
-              use:dndzone={{
-                items: unassignedItems,
-                flipDurationMs: FLIP_DURATION_MS,
-                type: 'tracks',
-                onConsider: handleUnassignedConsider,
-                onFinalize: handleUnassignedFinalize
-              }}
+            <Button
+              variant="ghost" size="icon-sm"
+              class="shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+              onclick={(e: MouseEvent) => { e.stopPropagation(); mergeStore.removeVideoFile(video.id); }}
             >
-              {#each unassignedItems as track (track.id)}
-                {@const TrackIcon = track.type === 'subtitle' ? Subtitles : FileAudio}
-                {@const seriesInfo = formatSeriesInfo(track.seasonNumber, track.episodeNumber)}
-                <div
-                  class="flex items-center gap-2 rounded-md border p-2 bg-card cursor-grab active:cursor-grabbing {getTrackTypeColor(track.type)}"
-                  animate:flip={{ duration: FLIP_DURATION_MS }}
-                >
-                  <GripVertical class="size-4 text-muted-foreground/50" />
-                  <TrackIcon class="size-4" />
-                  <span class="flex-1 text-sm truncate">{track.name}</span>
-                  {#if seriesInfo}
-                    <Badge variant="outline" class="text-xs">{seriesInfo}</Badge>
-                  {/if}
-                  {#if track.config.language}
-                    <Badge variant="secondary" class="text-xs">{track.config.language}</Badge>
-                  {/if}
-                  <Button variant="ghost" size="icon-sm" onclick={() => handleEditImportedTrack(track.id)}>
-                    <Settings2 class="size-3" />
-                  </Button>
-                  <Button variant="ghost" size="icon-sm" onclick={() => mergeStore.removeImportedTrack(track.id)} class="text-muted-foreground hover:text-destructive">
-                    <Trash2 class="size-3" />
-                  </Button>
-                </div>
-              {:else}
-                <p class="text-sm text-muted-foreground text-center py-4 select-none">
-                  No unassigned tracks. Add tracks or drag here to detach.
-                </p>
-              {/each}
-            </section>
-          </Card.Content>
-        </Card.Root>
+              <Trash2 class="size-4" />
+            </Button>
+          </button>
+        {:else}
+          <div class="flex flex-col items-center justify-center py-8 text-center">
+            <FileVideo class="size-10 text-muted-foreground/30 mb-2" />
+            <p class="text-sm text-muted-foreground">No video files</p>
+            <p class="text-xs text-muted-foreground mt-1">Drop videos here or click Add</p>
+          </div>
+        {/each}
+      </div>
+    </div>
 
-        <!-- Attached tracks for selected video -->
-        {#if mergeStore.selectedVideo}
-          {@const video = mergeStore.selectedVideo}
-          <Card.Root class="border-primary/50">
+    <!-- Center panel: Track management with tabs -->
+    <div class="flex-1 flex flex-col overflow-hidden">
+      <Tabs.Root value="source" class="flex-1 flex flex-col overflow-hidden">
+        <div class="p-2.5 border-b w-full overflow-scroll flex items-center justify-between gap-4">
+          <Tabs.List>
+            <Tabs.Trigger value="source" class="flex items-center gap-1.5">
+              <Layers class="size-4" />
+              Source
+            </Tabs.Trigger>
+            <Tabs.Trigger value="import" class="flex items-center gap-1.5">
+              <Plus class="size-4" />
+              Import
+              {#if mergeStore.unassignedTracks.length > 0}
+                <Badge variant="secondary" class="text-xs ml-1">{mergeStore.unassignedTracks.length}</Badge>
+              {/if}
+            </Tabs.Trigger>
+          </Tabs.List>
+
+          <div class="flex gap-2">
+            {#if mergeStore.importedTracks.length > 0 && mergeStore.videoFiles.length > 0}
+              <Tooltip.Root>
+                <Tooltip.Trigger>
+                  <Button variant="outline" size="sm" onclick={handleAutoMatch}>
+                    <Wand2 class="size-4 mr-1" />
+                    Auto-match
+                  </Button>
+                </Tooltip.Trigger>
+                <Tooltip.Content>Match tracks to videos by episode number</Tooltip.Content>
+              </Tooltip.Root>
+            {/if}
+          </div>
+        </div>
+
+        <!-- Source Tracks Tab -->
+        <Tabs.Content value="source" class="flex-1 min-h-0 overflow-auto p-4 mt-0">
+          {#if mergeStore.selectedVideo}
+            {@const groups = groupedSourceTracks()}
+            <div class="space-y-4">
+              {#each Object.entries(groups) as [type, tracks]}
+                {#if tracks.length > 0}
+                  {@const Icon = getTrackIcon(type)}
+                  <Card.Root>
+                    <Card.Header class="py-3">
+                      <div class="flex items-center gap-2">
+                        <Icon class="size-4 text-muted-foreground" />
+                        <Card.Title class="text-sm capitalize">{type} ({tracks.length})</Card.Title>
+                      </div>
+                    </Card.Header>
+                    <Card.Content class="pt-0 space-y-1.5">
+                      {#each tracks as track (track.id)}
+                        {@const config = mergeStore.getSourceTrackConfig(track.id)}
+                        {@const enabled = config?.enabled ?? true}
+                        <div
+                          class="flex items-center gap-2 rounded-md border p-2.5 transition-all {getTrackTypeColor(track.type)} {!enabled ? 'opacity-50' : ''}"
+                        >
+                          <Checkbox
+                            checked={enabled}
+                            onCheckedChange={() => mergeStore.toggleSourceTrack(track.id)}
+                          />
+
+                          <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2 flex-wrap">
+                              <Badge variant="outline" class="font-mono text-xs">#{track.originalIndex}</Badge>
+                              <span class="font-medium text-sm">{track.codec.toUpperCase()}</span>
+                              {#if config?.language || track.language}
+                                <Badge variant="secondary" class="text-xs">
+                                  {config?.language || track.language}
+                                </Badge>
+                              {/if}
+                              {#if config?.default ?? track.default}
+                                <Badge class="text-xs">Default</Badge>
+                              {/if}
+                              {#if config?.forced ?? track.forced}
+                                <Badge variant="destructive" class="text-xs">Forced</Badge>
+                              {/if}
+                            </div>
+
+                            <div class="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-xs text-muted-foreground">
+                              {#if config?.title || track.title}
+                                <span class="truncate max-w-[200px]">"{config?.title || track.title}"</span>
+                              {/if}
+                              {#if track.type === 'video' && track.width && track.height}
+                                <span>{track.width}x{track.height}</span>
+                              {/if}
+                              {#if track.type === 'audio' && track.channels}
+                                <span>{track.channels}ch</span>
+                              {/if}
+                              {#if config?.delayMs && config.delayMs !== 0}
+                                <span class="flex items-center gap-1 text-orange-500">
+                                  <Clock class="size-3" />
+                                  {config.delayMs > 0 ? '+' : ''}{config.delayMs}ms
+                                </span>
+                              {/if}
+                            </div>
+                          </div>
+
+                          <Button
+                            variant="ghost" size="icon-sm"
+                            onclick={() => handleEditSourceTrack(track.id)}
+                          >
+                            <Settings2 class="size-4" />
+                          </Button>
+                        </div>
+                      {/each}
+                    </Card.Content>
+                  </Card.Root>
+                {/if}
+              {/each}
+            </div>
+          {:else}
+            <div class="flex items-center justify-center py-20 text-muted-foreground">
+              <p>Select a video to view its tracks</p>
+            </div>
+          {/if}
+        </Tabs.Content>
+
+        <!-- Import Tracks Tab -->
+        <Tabs.Content value="import" class="flex-1 min-h-0 overflow-auto p-4 mt-0 space-y-4">
+          <div class="flex justify-end">
+            <Button size="sm" onclick={handleAddTrackFiles}>
+              <Plus class="size-4 mr-1" />
+              Add tracks
+            </Button>
+          </div>
+
+          <!-- Unassigned tracks (droppable) -->
+          <Card.Root>
             <Card.Header class="py-3">
               <Card.Title class="text-sm flex items-center gap-2">
-                <Link class="size-4 text-primary" />
-                <span class="wrap-anywhere">Attached to: {video.name}</span>
+                <Unlink class="size-4 text-muted-foreground" />
+                Unassigned tracks
               </Card.Title>
-              <Card.Description>Drop tracks here to merge with this video</Card.Description>
+              <Card.Description>Drag tracks to attach them to a video</Card.Description>
             </Card.Header>
             <Card.Content class="pt-0">
               <section
-                class="min-h-[80px] rounded-md border-2 border-primary/30 border-dashed p-2 space-y-1 bg-primary/5"
+                class="min-h-[60px] rounded-md border-2 border-dashed p-2 space-y-1"
                 use:dndzone={{
-                  items: attachedItems,
+                  items: unassignedItems,
                   flipDurationMs: FLIP_DURATION_MS,
                   type: 'tracks',
-                  onConsider: handleAttachedConsider,
-                  onFinalize: handleAttachedFinalize
+                  onConsider: handleUnassignedConsider,
+                  onFinalize: handleUnassignedFinalize
                 }}
               >
-                {#each attachedItems as track (track.id)}
+                {#each unassignedItems as track (track.id)}
                   {@const TrackIcon = track.type === 'subtitle' ? Subtitles : FileAudio}
+                  {@const seriesInfo = formatSeriesInfo(track.seasonNumber, track.episodeNumber)}
                   <div
                     class="flex items-center gap-2 rounded-md border p-2 bg-card cursor-grab active:cursor-grabbing {getTrackTypeColor(track.type)}"
                     animate:flip={{ duration: FLIP_DURATION_MS }}
@@ -783,8 +748,8 @@
                     <GripVertical class="size-4 text-muted-foreground/50" />
                     <TrackIcon class="size-4" />
                     <span class="flex-1 text-sm truncate">{track.name}</span>
-                    {#if track.config.delayMs !== 0}
-                      <Badge variant="secondary" class="text-xs">{track.config.delayMs}ms</Badge>
+                    {#if seriesInfo}
+                      <Badge variant="outline" class="text-xs">{seriesInfo}</Badge>
                     {/if}
                     {#if track.config.language}
                       <Badge variant="secondary" class="text-xs">{track.config.language}</Badge>
@@ -792,66 +757,120 @@
                     <Button variant="ghost" size="icon-sm" onclick={() => handleEditImportedTrack(track.id)}>
                       <Settings2 class="size-3" />
                     </Button>
-                    <Button
-                      variant="ghost" size="icon-sm"
-                      onclick={() => mergeStore.detachTrackFromVideo(track.id, video.id)}
-                      class="text-muted-foreground hover:text-orange-500"
-                    >
-                      <Unlink class="size-3" />
+                    <Button variant="ghost" size="icon-sm" onclick={() => mergeStore.removeImportedTrack(track.id)} class="text-muted-foreground hover:text-destructive">
+                      <Trash2 class="size-3" />
                     </Button>
                   </div>
                 {:else}
-                  <p class="text-sm text-muted-foreground text-center py-6">
-                    Drop tracks here to attach to this video
+                  <p class="text-sm text-muted-foreground text-center py-4 select-none">
+                    No unassigned tracks. Add tracks or drag here to detach.
                   </p>
                 {/each}
               </section>
             </Card.Content>
           </Card.Root>
-        {:else if mergeStore.videoFiles.length > 0}
-          <div class="flex items-center justify-center py-8 text-muted-foreground">
-            <p>Select a video to attach tracks</p>
-          </div>
-        {/if}
-      </Tabs.Content>
-    </Tabs.Root>
-  </div>
 
-  <!-- Right panel: Output config -->
-  <div class="w-80 border-l p-4 overflow-auto">
-    <MergeOutputPanel
-      outputConfig={mergeStore.outputConfig}
-      enabledTracksCount={mergeStore.totalTracksToMerge}
-      videosCount={mergeStore.videosReadyForMerge.length}
-      status={mergeStore.status}
-      progress={mergeStore.progress}
-      onSelectOutputDir={handleSelectOutputDir}
-      onOutputNameChange={(name) => mergeStore.setOutputNamePattern(name)}
-      onMerge={handleMerge}
-      onOpenFolder={handleOpenFolder}
+          <!-- Attached tracks for selected video -->
+          {#if mergeStore.selectedVideo}
+            {@const video = mergeStore.selectedVideo}
+            <Card.Root class="border-primary/50">
+              <Card.Header class="py-3">
+                <Card.Title class="text-sm flex items-center gap-2">
+                  <Link class="size-4 text-primary" />
+                  <span class="wrap-anywhere">Attached to: {video.name}</span>
+                </Card.Title>
+                <Card.Description>Drop tracks here to merge with this video</Card.Description>
+              </Card.Header>
+              <Card.Content class="pt-0">
+                <section
+                  class="min-h-[80px] rounded-md border-2 border-primary/30 border-dashed p-2 space-y-1 bg-primary/5"
+                  use:dndzone={{
+                    items: attachedItems,
+                    flipDurationMs: FLIP_DURATION_MS,
+                    type: 'tracks',
+                    onConsider: handleAttachedConsider,
+                    onFinalize: handleAttachedFinalize
+                  }}
+                >
+                  {#each attachedItems as track (track.id)}
+                    {@const TrackIcon = track.type === 'subtitle' ? Subtitles : FileAudio}
+                    <div
+                      class="flex items-center gap-2 rounded-md border p-2 bg-card cursor-grab active:cursor-grabbing {getTrackTypeColor(track.type)}"
+                      animate:flip={{ duration: FLIP_DURATION_MS }}
+                    >
+                      <GripVertical class="size-4 text-muted-foreground/50" />
+                      <TrackIcon class="size-4" />
+                      <span class="flex-1 text-sm truncate">{track.name}</span>
+                      {#if track.config.delayMs !== 0}
+                        <Badge variant="secondary" class="text-xs">{track.config.delayMs}ms</Badge>
+                      {/if}
+                      {#if track.config.language}
+                        <Badge variant="secondary" class="text-xs">{track.config.language}</Badge>
+                      {/if}
+                      <Button variant="ghost" size="icon-sm" onclick={() => handleEditImportedTrack(track.id)}>
+                        <Settings2 class="size-3" />
+                      </Button>
+                      <Button
+                        variant="ghost" size="icon-sm"
+                        onclick={() => mergeStore.detachTrackFromVideo(track.id, video.id)}
+                        class="text-muted-foreground hover:text-orange-500"
+                      >
+                        <Unlink class="size-3" />
+                      </Button>
+                    </div>
+                  {:else}
+                    <p class="text-sm text-muted-foreground text-center py-6">
+                      Drop tracks here to attach to this video
+                    </p>
+                  {/each}
+                </section>
+              </Card.Content>
+            </Card.Root>
+          {:else if mergeStore.videoFiles.length > 0}
+            <div class="flex items-center justify-center py-8 text-muted-foreground">
+              <p>Select a video to attach tracks</p>
+            </div>
+          {/if}
+        </Tabs.Content>
+      </Tabs.Root>
+    </div>
+
+    <!-- Right panel: Output config -->
+    <div class="w-80 border-l p-4 overflow-auto">
+      <MergeOutputPanel
+        outputConfig={mergeStore.outputConfig}
+        enabledTracksCount={mergeStore.totalTracksToMerge}
+        videosCount={mergeStore.videosReadyForMerge.length}
+        status={mergeStore.status}
+        progress={mergeStore.progress}
+        onSelectOutputDir={handleSelectOutputDir}
+        onOutputNameChange={(name) => mergeStore.setOutputNamePattern(name)}
+        onMerge={handleMerge}
+        onOpenFolder={handleOpenFolder}
+      />
+    </div>
+
+    <!-- Track settings dialog -->
+    <MergeTrackSettings
+      open={settingsOpen}
+      track={editingTrackType === 'imported'
+        ? (editingImportedTrack() ? {
+            id: editingImportedTrack()!.id,
+            sourceFileId: '',
+            originalIndex: 0,
+            type: editingImportedTrack()!.type,
+            codec: editingImportedTrack()!.codec,
+            language: editingImportedTrack()!.language,
+            title: editingImportedTrack()!.title
+          } : null)
+        : editingSourceTrack()
+      }
+      config={editingTrackType === 'imported'
+        ? editingImportedTrack()?.config ?? null
+        : (editingSourceTrack() ? mergeStore.getSourceTrackConfig(editingSourceTrack()!.id) ?? null : null)
+      }
+      onClose={handleCloseSettings}
+      onSave={handleSaveTrackSettings}
     />
   </div>
-
-  <!-- Track settings dialog -->
-  <MergeTrackSettings
-    open={settingsOpen}
-    track={editingTrackType === 'imported'
-      ? (editingImportedTrack() ? {
-          id: editingImportedTrack()!.id,
-          sourceFileId: '',
-          originalIndex: 0,
-          type: editingImportedTrack()!.type,
-          codec: editingImportedTrack()!.codec,
-          language: editingImportedTrack()!.language,
-          title: editingImportedTrack()!.title
-        } : null)
-      : editingSourceTrack()
-    }
-    config={editingTrackType === 'imported'
-      ? editingImportedTrack()?.config ?? null
-      : (editingSourceTrack() ? mergeStore.getSourceTrackConfig(editingSourceTrack()!.id) ?? null : null)
-    }
-    onClose={handleCloseSettings}
-    onSave={handleSaveTrackSettings}
-  />
-</div>
+{/if}
