@@ -89,6 +89,7 @@ export type AudioFileStatus =
 export interface TranscriptionConfig {
   deepgramConfig: DeepgramConfig;
   outputFormat: TranscriptionOutputFormat;
+  maxConcurrentTranscriptions: number;
 }
 
 export const DEFAULT_TRANSCRIPTION_CONFIG: TranscriptionConfig = {
@@ -103,6 +104,7 @@ export const DEFAULT_TRANSCRIPTION_CONFIG: TranscriptionConfig = {
     diarize: false,
   },
   outputFormat: 'srt',
+  maxConcurrentTranscriptions: 5,
 };
 
 // ============================================================================

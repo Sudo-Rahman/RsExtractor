@@ -706,46 +706,106 @@
   }
 
   async function handleTranscribeAll() {
-    const readyFiles = audioToSubsStore.readyFiles.filter(f => f.status === 'ready');
+    // Include both ready and completed files for re-transcription
+    const readyFiles = audioToSubsStore.audioFiles.filter(f => 
+      f.status === 'ready' || f.status === 'completed'
+    );
     if (readyFiles.length === 0) return;
 
     audioToSubsStore.startTranscription();
 
+    const maxConcurrent = audioToSubsStore.config.maxConcurrentTranscriptions;
     let successCount = 0;
     let failCount = 0;
     let cancelledCount = 0;
+    let completedCount = 0;
+    const totalFiles = readyFiles.length;
 
-    for (const file of readyFiles) {
-      if (audioToSubsStore.isCancelling || audioToSubsStore.isFileCancelled(file.id)) {
-        // Abort this file's controller if it exists
-        const controller = abortControllers.get(file.id);
-        if (controller) {
-          controller.abort();
-          abortControllers.delete(file.id);
-        }
+    // Create a queue of files to process (maintain order from the list)
+    const queue = [...readyFiles];
+    const activePromises = new Map<string, Promise<void>>();
+
+    // Function to process the next file from the queue
+    const processNext = async (): Promise<void> => {
+      // Check if we should stop
+      if (queue.length === 0) return;
+      if (activePromises.size >= maxConcurrent) return;
+      if (audioToSubsStore.isCancelling) return;
+
+      const file = queue.shift();
+      if (!file) return;
+
+      // Check if this file was cancelled before starting
+      if (audioToSubsStore.isFileCancelled(file.id)) {
         audioToSubsStore.updateFile(file.id, { status: 'ready' });
         cancelledCount++;
-        continue;
+        completedCount++;
+        // Process next file immediately
+        return processNext();
       }
 
       // Create abort controller for this file
       const controller = new AbortController();
       abortControllers.set(file.id, controller);
 
-      const versionName = `Version ${(file.transcriptionVersions?.length ?? 0) + 1}`;
-      const effectiveConfig = getEffectiveConfig(file, audioToSubsStore.deepgramConfig);
-      const success = await transcribeFile(file, versionName, effectiveConfig, controller.signal);
+      // Create the transcription promise
+      const promise = (async () => {
+        const versionName = `Version ${(file.transcriptionVersions?.length ?? 0) + 1}`;
+        const effectiveConfig = getEffectiveConfig(file, audioToSubsStore.deepgramConfig);
+        
+        try {
+          const success = await transcribeFile(file, versionName, effectiveConfig, controller.signal);
+          
+          if (success) {
+            successCount++;
+          } else if (controller.signal.aborted) {
+            cancelledCount++;
+          } else {
+            failCount++;
+          }
+        } catch (error) {
+          console.error(`Transcription error for ${file.name}:`, error);
+          failCount++;
+        } finally {
+          // Clean up controller
+          abortControllers.delete(file.id);
+          completedCount++;
+          
+          // Update progress toast
+          toast.info(`Transcription progress: ${completedCount}/${totalFiles} files`);
+          
+          // Remove from active promises
+          activePromises.delete(file.id);
+          
+          // Immediately start next file if available
+          if (!audioToSubsStore.isCancelling && queue.length > 0) {
+            processNext();
+          }
+        }
+      })();
+
+      activePromises.set(file.id, promise);
       
-      // Clean up controller
-      abortControllers.delete(file.id);
+      // Start processing immediately (don't await here)
+      promise.catch(() => {
+        // Errors are handled inside the promise
+      });
       
-      if (success) {
-        successCount++;
-      } else if (controller.signal.aborted) {
-        cancelledCount++;
-      } else {
-        failCount++;
+      // Try to start more files if we haven't reached the limit
+      if (activePromises.size < maxConcurrent && queue.length > 0 && !audioToSubsStore.isCancelling) {
+        processNext();
       }
+    };
+
+    // Start initial batch (up to maxConcurrent files)
+    const initialBatchSize = Math.min(maxConcurrent, queue.length);
+    for (let i = 0; i < initialBatchSize; i++) {
+      processNext();
+    }
+
+    // Wait for all active transcriptions to complete
+    while (activePromises.size > 0) {
+      await Promise.race(activePromises.values());
     }
 
     // Clean up any remaining controllers
@@ -753,12 +813,13 @@
     
     audioToSubsStore.stopTranscription();
     
+    // Show final summary
     if (successCount > 0 || failCount > 0 || cancelledCount > 0) {
       const parts = [];
       if (successCount > 0) parts.push(`${successCount} completed`);
       if (failCount > 0) parts.push(`${failCount} failed`);
       if (cancelledCount > 0) parts.push(`${cancelledCount} cancelled`);
-      toast.info(`Transcription finished: ${parts.join(', ')}`);
+      toast.success(`Transcription finished: ${parts.join(', ')}`);
     }
   }
 
@@ -1062,6 +1123,7 @@
         completedFiles={audioToSubsStore.completedFiles}
         {allFilesCompleted}
         onDeepgramConfigChange={(updates) => audioToSubsStore.updateDeepgramConfig(updates)}
+        onMaxConcurrentChange={(value) => audioToSubsStore.setMaxConcurrentTranscriptions(value)}
         onTranscribeAll={handleTranscribeAll}
         {onNavigateToSettings}
       />

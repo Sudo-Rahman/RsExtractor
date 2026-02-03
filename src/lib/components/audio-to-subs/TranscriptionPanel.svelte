@@ -39,6 +39,7 @@
     completedFiles: AudioFile[];
     allFilesCompleted: boolean;
     onDeepgramConfigChange: (updates: Partial<DeepgramConfig>) => void;
+    onMaxConcurrentChange: (value: number) => void;
     onTranscribeAll: () => void;
     onNavigateToSettings?: () => void;
     class?: string;
@@ -56,16 +57,27 @@
     completedFiles,
     allFilesCompleted,
     onDeepgramConfigChange,
+    onMaxConcurrentChange,
     onTranscribeAll,
     onNavigateToSettings,
     class: className = ''
   }: TranscriptionPanelProps = $props();
 
+  // Files that can be transcribed (ready or completed for re-transcription)
+  const transcribableFilesCount = $derived(readyFilesCount + completedFilesCount);
+  
   const canTranscribe = $derived(
-    readyFilesCount > 0 && 
+    transcribableFilesCount > 0 && 
     !isTranscribing && 
     !isTranscoding &&
     apiKeyConfigured
+  );
+  
+  // Determine if all files are already completed (for button text)
+  const allFilesHaveVersions = $derived(
+    totalFilesCount > 0 && 
+    completedFilesCount === totalFilesCount &&
+    readyFilesCount === 0
   );
 
   // Export All state
@@ -303,6 +315,31 @@
             <span>2.0s (long phrases)</span>
           </div>
         </div>
+
+        <Separator />
+
+        <!-- Concurrent Transcriptions -->
+        <div class="space-y-3">
+          <div class="space-y-0.5">
+            <Label class="text-sm">Concurrent Transcriptions</Label>
+            <p class="text-xs text-muted-foreground">
+              Number of files to transcribe simultaneously ({config.maxConcurrentTranscriptions})
+            </p>
+          </div>
+          <div class="flex items-center gap-3">
+            <Input
+              type="number"
+              value={config.maxConcurrentTranscriptions}
+              onchange={(e) => onMaxConcurrentChange(parseInt(e.currentTarget.value, 10))}
+              min={1}
+              max={10}
+              step={1}
+              disabled={isTranscribing}
+              class="w-24"
+            />
+            <span class="text-xs text-muted-foreground">files at once (max 10)</span>
+          </div>
+        </div>
       </Card.Content>
     </Card.Root>
 
@@ -409,9 +446,12 @@
       {:else if isTranscoding}
         <Loader2 class="size-4 mr-2 animate-spin" />
         Converting...
+      {:else if allFilesHaveVersions}
+        <Play class="size-4 mr-2" />
+        Transcribe All Again ({transcribableFilesCount})
       {:else}
         <Play class="size-4 mr-2" />
-        Transcribe All ({readyFilesCount})
+        Transcribe All ({transcribableFilesCount})
       {/if}
     </Button>
 
@@ -419,7 +459,7 @@
       <p class="text-xs text-muted-foreground text-center">
         {#if !apiKeyConfigured}
           Configure your Deepgram API key
-        {:else if readyFilesCount === 0}
+        {:else if transcribableFilesCount === 0}
           Add audio files to transcribe
         {/if}
       </p>

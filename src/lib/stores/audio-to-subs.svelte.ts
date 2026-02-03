@@ -25,6 +25,7 @@ let selectedFileId = $state<string | null>(null);
 let config = $state<TranscriptionConfig>({
   deepgramConfig: { ...DEFAULT_DEEPGRAM_CONFIG },
   outputFormat: 'srt',
+  maxConcurrentTranscriptions: 5,
 });
 
 let outputDir = $state<string>('');
@@ -373,6 +374,14 @@ export const audioToSubsStore = {
     };
   },
 
+  setMaxConcurrentTranscriptions(value: number) {
+    const clampedValue = Math.max(1, Math.min(10, value));
+    config = {
+      ...config,
+      maxConcurrentTranscriptions: clampedValue
+    };
+  },
+
   // -------------------------------------------------------------------------
   // Actions - Transcription State
   // -------------------------------------------------------------------------
@@ -525,6 +534,7 @@ export const audioToSubsStore = {
     config = {
       deepgramConfig: { ...DEFAULT_DEEPGRAM_CONFIG },
       outputFormat: 'srt',
+      maxConcurrentTranscriptions: 5,
     };
     outputDir = '';
   }
