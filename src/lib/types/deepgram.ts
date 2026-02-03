@@ -112,7 +112,7 @@ export const DEFAULT_DEEPGRAM_CONFIG: DeepgramConfig = {
   paragraphs: true,
   smartFormat: true,
   utterances: true,
-  uttSplit: 0.8,
+  uttSplit: 0.5,
   diarize: false,
 };
 
@@ -126,6 +126,8 @@ export interface DeepgramWord {
   end: number;                // End time in seconds
   confidence: number;         // 0.0 - 1.0
   punctuated_word?: string;   // Word with punctuation
+  speaker?: number;           // Speaker ID (from diarization)
+  speaker_confidence?: number; // Speaker detection confidence 0.0 - 1.0
 }
 
 export interface DeepgramUtterance {
@@ -136,6 +138,7 @@ export interface DeepgramUtterance {
   channel: number;
   transcript: string;
   words: DeepgramWord[];
+  speaker?: number;
 }
 
 export interface DeepgramAlternative {
