@@ -1377,6 +1377,12 @@ async fn perform_ocr(
 ) -> Result<Vec<OcrFrameResult>, String> {
     validate_directory_path(&frames_dir)?;
     
+    // Register this OCR operation for cancellation support
+    // Use 0 as PID since this is not a subprocess
+    if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
+        guard.insert(file_id.clone(), 0);
+    }
+    
     // Get OCR models directory
     let models_dir = get_ocr_models_dir(&app)?;
     
@@ -1512,6 +1518,11 @@ async fn perform_ocr(
         "total": total_frames,
         "message": "OCR processing complete"
     }));
+    
+    // Clean up cancellation tracking
+    if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
+        guard.remove(&file_id);
+    }
     
     Ok(results)
 }
