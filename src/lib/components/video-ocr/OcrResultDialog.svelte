@@ -1,0 +1,122 @@
+<script lang="ts">
+  import type { OcrSubtitle, OcrOutputFormat } from '$lib/types/video-ocr';
+  import { OCR_OUTPUT_FORMATS } from '$lib/types/video-ocr';
+  import * as Dialog from '$lib/components/ui/dialog';
+  import { Button } from '$lib/components/ui/button';
+  import { ScrollArea } from '$lib/components/ui/scroll-area';
+  import * as Select from '$lib/components/ui/select';
+  import { Copy, Download, X } from '@lucide/svelte';
+  import { toast } from 'svelte-sonner';
+
+  interface OcrResultDialogProps {
+    open: boolean;
+    subtitles: OcrSubtitle[];
+    videoName?: string;
+    onClose: () => void;
+    onExport: (format: OcrOutputFormat) => void;
+  }
+
+  let {
+    open,
+    subtitles,
+    videoName = 'Video',
+    onClose,
+    onExport,
+  }: OcrResultDialogProps = $props();
+
+  let selectedFormat = $state<OcrOutputFormat>('srt');
+
+  function formatTime(ms: number): string {
+    const hours = Math.floor(ms / 3_600_000);
+    const minutes = Math.floor((ms % 3_600_000) / 60_000);
+    const seconds = Math.floor((ms % 60_000) / 1000);
+    const millis = ms % 1000;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(millis).padStart(3, '0')}`;
+  }
+
+  function generateSrt(): string {
+    return subtitles.map((sub, i) => 
+      `${i + 1}\n${formatTime(sub.startTime)} --> ${formatTime(sub.endTime)}\n${sub.text}\n`
+    ).join('\n');
+  }
+
+  async function copyToClipboard() {
+    const text = generateSrt();
+    await navigator.clipboard.writeText(text);
+    toast.success('Copied to clipboard');
+  }
+
+  function handleExport() {
+    onExport(selectedFormat);
+  }
+</script>
+
+<Dialog.Root {open} onOpenChange={(isOpen) => !isOpen && onClose()}>
+  <Dialog.Content class="max-w-2xl max-h-[80vh] flex flex-col">
+    <Dialog.Header>
+      <Dialog.Title>OCR Results - {videoName}</Dialog.Title>
+      <Dialog.Description>
+        {subtitles.length} subtitle{subtitles.length !== 1 ? 's' : ''} detected
+      </Dialog.Description>
+    </Dialog.Header>
+
+    <!-- Subtitle list -->
+    <ScrollArea class="flex-1 max-h-[400px] border rounded-lg">
+      <div class="p-4 space-y-3">
+        {#if subtitles.length === 0}
+          <p class="text-center text-muted-foreground py-8">
+            No subtitles detected in this video
+          </p>
+        {:else}
+          {#each subtitles as sub, i (sub.id)}
+            <div class="flex gap-3 p-2 rounded hover:bg-muted/50">
+              <span class="text-xs text-muted-foreground shrink-0 w-8 pt-1">
+                {i + 1}
+              </span>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm">{sub.text}</p>
+                <p class="text-xs text-muted-foreground mt-1">
+                  {formatTime(sub.startTime)} → {formatTime(sub.endTime)}
+                  <span class="ml-2">({Math.round(sub.confidence * 100)}% confidence)</span>
+                </p>
+              </div>
+            </div>
+          {/each}
+        {/if}
+      </div>
+    </ScrollArea>
+
+    <!-- Actions -->
+    <div class="flex items-center justify-between pt-4 border-t">
+      <div class="flex items-center gap-2">
+        <Select.Root type="single" value={selectedFormat} onValueChange={(v) => selectedFormat = v as OcrOutputFormat}>
+          <Select.Trigger class="w-[140px]">
+            {OCR_OUTPUT_FORMATS.find(f => f.value === selectedFormat)?.label}
+          </Select.Trigger>
+          <Select.Content>
+            {#each OCR_OUTPUT_FORMATS as format}
+              <Select.Item value={format.value}>{format.label}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+        
+        <Button onclick={handleExport} disabled={subtitles.length === 0}>
+          <Download class="size-4 mr-2" />
+          Export
+        </Button>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <Button variant="outline" onclick={copyToClipboard} disabled={subtitles.length === 0}>
+          <Copy class="size-4 mr-2" />
+          Copy SRT
+        </Button>
+        
+        <Button variant="ghost" onclick={onClose}>
+          <X class="size-4 mr-2" />
+          Close
+        </Button>
+      </div>
+    </div>
+  </Dialog.Content>
+</Dialog.Root>

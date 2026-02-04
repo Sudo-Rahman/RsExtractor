@@ -8,7 +8,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Alert, AlertTitle, AlertDescription, ThemeToggle } from '$lib/components';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
-  import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView, AudioToSubsView } from '$lib/components/views';
+  import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView, AudioToSubsView, VideoOcrView } from '$lib/components/views';
   import { LogsSheet } from '$lib/components/logs';
   import { AlertCircle, ScrollText, Home, LayoutGrid, Table } from '@lucide/svelte';
   import { OS } from '$lib/utils';
@@ -17,7 +17,7 @@
   import { logAndToast } from '$lib/utils/log-toast';
 
   // Current view state
-  let currentView = $state<'extract' | 'merge' | 'translate' | 'rename' | 'audio-to-subs' | 'info' | 'settings'>('extract');
+  let currentView = $state<'extract' | 'merge' | 'translate' | 'rename' | 'audio-to-subs' | 'video-ocr' | 'info' | 'settings'>('extract');
   let ffmpegAvailable = $state<boolean | null>(null);
   let unlistenDragDrop: (() => void) | null = null;
 
@@ -31,6 +31,7 @@
   let translateViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let renameViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let audioToSubsViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let videoOcrViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
 
   const isMacOS = OS() === 'MacOS';
 
@@ -38,6 +39,7 @@
     extract: 'Track Extraction',
     merge: 'Track Merge',
     'audio-to-subs': 'Audio to Subs',
+    'video-ocr': 'Video OCR',
     translate: 'AI Translation',
     rename: 'Batch Rename',
     info: 'File Information',
@@ -89,12 +91,14 @@
         await renameViewRef.handleFileDrop(event.payload.paths);
       } else if (currentView === 'audio-to-subs' && audioToSubsViewRef) {
         await audioToSubsViewRef.handleFileDrop(event.payload.paths);
+      } else if (currentView === 'video-ocr' && videoOcrViewRef) {
+        await videoOcrViewRef.handleFileDrop(event.payload.paths);
       }
     });
   }
 
   function handleNavigate(viewId: string) {
-    currentView = viewId as 'extract' | 'merge' | 'translate' | 'rename' | 'audio-to-subs' | 'info' | 'settings';
+    currentView = viewId as 'extract' | 'merge' | 'translate' | 'rename' | 'audio-to-subs' | 'video-ocr' | 'info' | 'settings';
   }
 </script>
 
@@ -193,6 +197,11 @@
       <!-- Audio to Subs View - persists when switching views -->
       <div class="absolute inset-0" style="display: {currentView === 'audio-to-subs' ? 'block' : 'none'}">
         <AudioToSubsView bind:this={audioToSubsViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
+      </div>
+      
+      <!-- Video OCR View - persists when switching views -->
+      <div class="absolute inset-0" style="display: {currentView === 'video-ocr' ? 'block' : 'none'}">
+        <VideoOcrView bind:this={videoOcrViewRef} />
       </div>
       
       <!-- Translation View -->

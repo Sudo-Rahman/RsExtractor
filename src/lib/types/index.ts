@@ -5,3 +5,4 @@ export * from './subtitle';
 export * from './rename';
 export * from './deepgram';
 export * from './audio-to-subs';
+export * from './video-ocr';

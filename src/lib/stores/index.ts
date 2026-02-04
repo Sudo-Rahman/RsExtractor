@@ -7,3 +7,4 @@ export { translationStore } from './translation.svelte';
 export { logStore } from './logs.svelte';
 export { infoStore } from './info.svelte';
 export { audioToSubsStore } from './audio-to-subs.svelte';
+export { videoOcrStore } from './video-ocr.svelte';

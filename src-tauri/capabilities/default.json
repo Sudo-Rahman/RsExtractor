@@ -40,6 +40,12 @@
         { "path": "$TEMP/**" }
       ]
     },
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$TEMP/**" }
+      ]
+    },
     "shell:default",
     "store:default",
     "http:default",

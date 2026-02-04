@@ -864,6 +864,699 @@ fn md5_hash(s: &str) -> u64 {
 }
 
 // ============================================================================
+// VIDEO OCR COMMANDS
+// ============================================================================
+
+/// Store OCR process IDs and output paths for cancellation and cleanup
+static OCR_PROCESS_IDS: LazyLock<Mutex<HashMap<String, u32>>> = 
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Store OCR transcode output paths for cleanup on cancel/error
+static OCR_TRANSCODE_PATHS: LazyLock<Mutex<HashMap<String, String>>> = 
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Timeout for video transcoding for preview (10 minutes)
+const VIDEO_PREVIEW_TRANSCODE_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Timeout for frame extraction (30 minutes for long videos)
+const FRAME_EXTRACTION_TIMEOUT: Duration = Duration::from_secs(1800);
+
+/// OCR region for cropping frames
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OcrRegion {
+    x: f64,      // 0-1 relative position
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+/// OCR frame result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OcrFrameResult {
+    frame_index: u32,
+    time_ms: u64,
+    text: String,
+    confidence: f64,
+}
+
+/// OCR subtitle entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OcrSubtitleEntry {
+    id: String,
+    text: String,
+    start_time: u64,  // ms
+    end_time: u64,    // ms
+    confidence: f64,
+}
+
+/// Transcode video to 480p MP4 for HTML5 preview
+/// Uses H.264 video, AAC audio (mono 96kbps)
+#[tauri::command]
+async fn transcode_for_preview(
+    app: tauri::AppHandle,
+    input_path: String,
+    file_id: String,
+) -> Result<String, String> {
+    validate_media_path(&input_path)?;
+    
+    // Create output path in temp directory
+    let input = Path::new(&input_path);
+    let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("video");
+    let path_hash = format!("{:x}", md5_hash(&input_path));
+    
+    let temp_dir = std::env::temp_dir().join("rsextractor_preview");
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("Failed to create temp directory: {}", e))?;
+    
+    let output_path = temp_dir.join(format!("{}_{}.mp4", stem, &path_hash[..8]));
+    let output_str = output_path.to_str().unwrap().to_string();
+    
+    // Check if already transcoded
+    if output_path.exists() {
+        return Ok(output_str);
+    }
+    
+    // Get duration for progress
+    let duration_us = get_media_duration_us(&input_path).await.unwrap_or(0);
+    
+    // Emit initial progress
+    let _ = app.emit("ocr-progress", serde_json::json!({
+        "fileId": file_id,
+        "phase": "transcoding",
+        "current": 0,
+        "total": 100,
+        "message": "Starting video transcoding..."
+    }));
+    
+    let mut child = tokio::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-i", &input_path,
+            "-vf", "scale=-2:480",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "28",
+            "-c:a", "aac",
+            "-b:a", "96k",
+            "-ac", "1",
+            "-progress", "pipe:1",
+            &output_str,
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to start ffmpeg: {}", e))?;
+    
+    // Store PID for cancellation
+    if let Some(pid) = child.id() {
+        if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
+            guard.insert(file_id.clone(), pid);
+        }
+    }
+    
+    // Store output path for cleanup on cancel/error
+    if let Ok(mut guard) = OCR_TRANSCODE_PATHS.lock() {
+        guard.insert(file_id.clone(), output_str.clone());
+    }
+    
+    // Read stdout for progress
+    let stdout = child.stdout.take();
+    let app_clone = app.clone();
+    let file_id_clone = file_id.clone();
+    
+    if let Some(mut stdout) = stdout {
+        use tokio::io::AsyncBufReadExt;
+        use tokio::io::BufReader;
+        
+        tokio::spawn(async move {
+            let reader = BufReader::new(&mut stdout);
+            let mut lines = reader.lines();
+            
+            while let Ok(Some(line)) = lines.next_line().await {
+                if line.starts_with("out_time_us=") {
+                    if let Ok(time_us) = line.trim_start_matches("out_time_us=").parse::<u64>() {
+                        if duration_us > 0 {
+                            let progress = ((time_us as f64 / duration_us as f64) * 100.0).min(99.0) as i32;
+                            let _ = app_clone.emit("ocr-progress", serde_json::json!({
+                                "fileId": file_id_clone,
+                                "phase": "transcoding",
+                                "current": progress,
+                                "total": 100,
+                                "message": format!("Transcoding video... {}%", progress)
+                            }));
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    // Wait for completion
+    let file_id_for_cleanup = file_id.clone();
+    let output_path_for_cleanup = output_str.clone();
+    let output = timeout(VIDEO_PREVIEW_TRANSCODE_TIMEOUT, child.wait_with_output())
+        .await
+        .map_err(|_| {
+            if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
+                guard.remove(&file_id_for_cleanup);
+            }
+            if let Ok(mut guard) = OCR_TRANSCODE_PATHS.lock() {
+                guard.remove(&file_id_for_cleanup);
+            }
+            // Clean up partial file on timeout
+            let _ = std::fs::remove_file(&output_path_for_cleanup);
+            format!("Video transcoding timeout after {} seconds", VIDEO_PREVIEW_TRANSCODE_TIMEOUT.as_secs())
+        })?
+        .map_err(|e| {
+            if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
+                guard.remove(&file_id_for_cleanup);
+            }
+            if let Ok(mut guard) = OCR_TRANSCODE_PATHS.lock() {
+                guard.remove(&file_id_for_cleanup);
+            }
+            // Clean up partial file on error
+            let _ = std::fs::remove_file(&output_path_for_cleanup);
+            format!("FFmpeg error: {}", e)
+        })?;
+    
+    // Clear PID and path tracking
+    if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
+        guard.remove(&file_id);
+    }
+    if let Ok(mut guard) = OCR_TRANSCODE_PATHS.lock() {
+        guard.remove(&file_id);
+    }
+    
+    // Emit completion
+    let _ = app.emit("ocr-progress", serde_json::json!({
+        "fileId": file_id,
+        "phase": "transcoding",
+        "current": 100,
+        "total": 100,
+        "message": "Transcoding complete"
+    }));
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Clean up partial file on FFmpeg failure
+        let _ = std::fs::remove_file(&output_path);
+        return Err(format!("Video transcoding failed: {}", stderr));
+    }
+    
+    if !output_path.exists() {
+        return Err("Transcoding failed: output file not created".to_string());
+    }
+    
+    Ok(output_str)
+}
+
+/// Extract frames from video at specified FPS
+/// Returns the number of frames extracted
+#[tauri::command]
+async fn extract_ocr_frames(
+    app: tauri::AppHandle,
+    video_path: String,
+    file_id: String,
+    fps: f64,
+    region: Option<OcrRegion>,
+) -> Result<(String, u32), String> {
+    validate_media_path(&video_path)?;
+    
+    // Create output directory
+    let path_hash = format!("{:x}", md5_hash(&video_path));
+    let temp_dir = std::env::temp_dir().join("rsextractor_ocr_frames").join(&path_hash[..12]);
+    
+    // Clean previous extraction if exists
+    if temp_dir.exists() {
+        std::fs::remove_dir_all(&temp_dir)
+            .map_err(|e| format!("Failed to clean temp directory: {}", e))?;
+    }
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("Failed to create temp directory: {}", e))?;
+    
+    let output_pattern = temp_dir.join("frame_%06d.png");
+    let output_pattern_str = output_pattern.to_str().unwrap();
+    
+    // Get video info for frame count estimation
+    let duration_us = get_media_duration_us(&video_path).await.unwrap_or(0);
+    let estimated_frames = if duration_us > 0 {
+        ((duration_us as f64 / 1_000_000.0) * fps) as u32
+    } else {
+        1000 // Fallback
+    };
+    
+    // Build filter chain
+    let mut filters = vec![format!("fps={}", fps)];
+    
+    if let Some(ref r) = region {
+        // Crop filter with relative coordinates
+        // First scale to get dimensions, then crop
+        filters.push(format!(
+            "crop=iw*{}:ih*{}:iw*{}:ih*{}",
+            r.width, r.height, r.x, r.y
+        ));
+    }
+    
+    let filter_str = filters.join(",");
+    
+    // Emit start
+    let _ = app.emit("ocr-progress", serde_json::json!({
+        "fileId": file_id,
+        "phase": "extracting",
+        "current": 0,
+        "total": estimated_frames,
+        "message": "Starting frame extraction..."
+    }));
+    
+    let mut child = tokio::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-i", &video_path,
+            "-vf", &filter_str,
+            "-f", "image2",
+            "-progress", "pipe:1",
+            output_pattern_str,
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to start ffmpeg: {}", e))?;
+    
+    // Store PID
+    if let Some(pid) = child.id() {
+        if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
+            guard.insert(file_id.clone(), pid);
+        }
+    }
+    
+    // Progress tracking
+    let stdout = child.stdout.take();
+    let app_clone = app.clone();
+    let file_id_clone = file_id.clone();
+    
+    if let Some(mut stdout) = stdout {
+        use tokio::io::AsyncBufReadExt;
+        use tokio::io::BufReader;
+        
+        tokio::spawn(async move {
+            let reader = BufReader::new(&mut stdout);
+            let mut lines = reader.lines();
+            let mut frame_count = 0u32;
+            
+            while let Ok(Some(line)) = lines.next_line().await {
+                if line.starts_with("frame=") {
+                    if let Ok(frame) = line.trim_start_matches("frame=").trim().parse::<u32>() {
+                        frame_count = frame;
+                        let _ = app_clone.emit("ocr-progress", serde_json::json!({
+                            "fileId": file_id_clone,
+                            "phase": "extracting",
+                            "current": frame_count,
+                            "total": estimated_frames,
+                            "message": format!("Extracting frame {}...", frame_count)
+                        }));
+                    }
+                }
+            }
+        });
+    }
+    
+    // Wait for completion
+    let file_id_for_cleanup = file_id.clone();
+    let output = timeout(FRAME_EXTRACTION_TIMEOUT, child.wait_with_output())
+        .await
+        .map_err(|_| {
+            if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
+                guard.remove(&file_id_for_cleanup);
+            }
+            format!("Frame extraction timeout after {} seconds", FRAME_EXTRACTION_TIMEOUT.as_secs())
+        })?
+        .map_err(|e| {
+            if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
+                guard.remove(&file_id_for_cleanup);
+            }
+            format!("FFmpeg error: {}", e)
+        })?;
+    
+    // Clear PID
+    if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
+        guard.remove(&file_id);
+    }
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Frame extraction failed: {}", stderr));
+    }
+    
+    // Count extracted frames
+    let frame_count = std::fs::read_dir(&temp_dir)
+        .map_err(|e| format!("Failed to read frames directory: {}", e))?
+        .filter(|entry| {
+            entry.as_ref()
+                .map(|e| e.path().extension().map(|ext| ext == "png").unwrap_or(false))
+                .unwrap_or(false)
+        })
+        .count() as u32;
+    
+    // Emit completion
+    let _ = app.emit("ocr-progress", serde_json::json!({
+        "fileId": file_id,
+        "phase": "extracting",
+        "current": frame_count,
+        "total": frame_count,
+        "message": format!("Extracted {} frames", frame_count)
+    }));
+    
+    Ok((temp_dir.to_string_lossy().to_string(), frame_count))
+}
+
+/// Perform OCR on extracted frames
+/// NOTE: This is a placeholder - actual OCR integration with rust-paddle-ocr
+/// will be added once the library is properly configured
+#[tauri::command]
+async fn perform_ocr(
+    app: tauri::AppHandle,
+    frames_dir: String,
+    file_id: String,
+    language: String,
+    frame_interval_ms: u32,
+) -> Result<Vec<OcrFrameResult>, String> {
+    validate_directory_path(&frames_dir)?;
+    
+    // Get list of frame files
+    let mut frames: Vec<_> = std::fs::read_dir(&frames_dir)
+        .map_err(|e| format!("Failed to read frames directory: {}", e))?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry.path().extension()
+                .map(|ext| ext == "png")
+                .unwrap_or(false)
+        })
+        .collect();
+    
+    // Sort by filename
+    frames.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    
+    let total_frames = frames.len() as u32;
+    
+    // Emit start
+    let _ = app.emit("ocr-progress", serde_json::json!({
+        "fileId": file_id,
+        "phase": "ocr",
+        "current": 0,
+        "total": total_frames,
+        "message": "Starting OCR processing..."
+    }));
+    
+    let mut results = Vec::new();
+    
+    // TODO: Integrate rust-paddle-ocr here
+    // For now, this is a placeholder that simulates OCR processing
+    // The actual implementation would use:
+    // 
+    // let engine = OcrEngine::new(det_path, rec_path, charset_path, Some(config))?;
+    // for (i, frame) in frames.iter().enumerate() {
+    //     let image = image::open(frame.path())?;
+    //     let ocr_results = engine.recognize(&image)?;
+    //     ...
+    // }
+    
+    for (i, frame) in frames.iter().enumerate() {
+        let frame_index = i as u32;
+        let time_ms = (frame_index as u64) * (frame_interval_ms as u64);
+        
+        // Emit progress
+        let _ = app.emit("ocr-progress", serde_json::json!({
+            "fileId": file_id,
+            "phase": "ocr",
+            "current": frame_index + 1,
+            "total": total_frames,
+            "message": format!("Processing frame {}/{}...", frame_index + 1, total_frames)
+        }));
+        
+        // Placeholder: In a real implementation, OCR would happen here
+        // For now, just create empty results
+        results.push(OcrFrameResult {
+            frame_index,
+            time_ms,
+            text: String::new(), // Will be filled by actual OCR
+            confidence: 0.0,
+        });
+        
+        // Check for cancellation
+        if let Ok(guard) = OCR_PROCESS_IDS.lock() {
+            if !guard.contains_key(&file_id) {
+                return Err("OCR cancelled".to_string());
+            }
+        }
+        
+        // Small delay to prevent blocking (remove when real OCR is implemented)
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    
+    // Emit completion
+    let _ = app.emit("ocr-progress", serde_json::json!({
+        "fileId": file_id,
+        "phase": "ocr",
+        "current": total_frames,
+        "total": total_frames,
+        "message": "OCR processing complete"
+    }));
+    
+    Ok(results)
+}
+
+/// Generate subtitles from OCR results with deduplication
+#[tauri::command]
+async fn generate_subtitles_from_ocr(
+    app: tauri::AppHandle,
+    file_id: String,
+    frame_results: Vec<OcrFrameResult>,
+    frame_interval_ms: u32,
+    min_confidence: f64,
+) -> Result<Vec<OcrSubtitleEntry>, String> {
+    // Emit start
+    let _ = app.emit("ocr-progress", serde_json::json!({
+        "fileId": file_id,
+        "phase": "generating",
+        "current": 0,
+        "total": frame_results.len(),
+        "message": "Generating subtitles..."
+    }));
+    
+    let mut subtitles: Vec<OcrSubtitleEntry> = Vec::new();
+    let mut current_text = String::new();
+    let mut start_time: u64 = 0;
+    let mut last_confidence: f64 = 0.0;
+    
+    for (i, frame) in frame_results.iter().enumerate() {
+        // Skip low confidence or empty results
+        if frame.confidence < min_confidence || frame.text.trim().is_empty() {
+            // End current subtitle if exists
+            if !current_text.is_empty() {
+                subtitles.push(OcrSubtitleEntry {
+                    id: format!("sub-{}", subtitles.len() + 1),
+                    text: current_text.clone(),
+                    start_time,
+                    end_time: frame.time_ms,
+                    confidence: last_confidence,
+                });
+                current_text.clear();
+            }
+            continue;
+        }
+        
+        let text = frame.text.trim();
+        
+        // Check if text changed (deduplication)
+        if text != current_text.trim() {
+            // Save previous subtitle if exists
+            if !current_text.is_empty() {
+                subtitles.push(OcrSubtitleEntry {
+                    id: format!("sub-{}", subtitles.len() + 1),
+                    text: current_text.clone(),
+                    start_time,
+                    end_time: frame.time_ms,
+                    confidence: last_confidence,
+                });
+            }
+            
+            // Start new subtitle
+            current_text = text.to_string();
+            start_time = frame.time_ms;
+            last_confidence = frame.confidence;
+        } else {
+            // Update confidence with running average
+            last_confidence = (last_confidence + frame.confidence) / 2.0;
+        }
+        
+        // Emit progress
+        if i % 100 == 0 {
+            let _ = app.emit("ocr-progress", serde_json::json!({
+                "fileId": file_id,
+                "phase": "generating",
+                "current": i,
+                "total": frame_results.len(),
+                "message": format!("Processing frame {}...", i)
+            }));
+        }
+    }
+    
+    // Don't forget the last subtitle
+    if !current_text.is_empty() {
+        let last_time = frame_results.last()
+            .map(|f| f.time_ms + frame_interval_ms as u64)
+            .unwrap_or(0);
+        
+        subtitles.push(OcrSubtitleEntry {
+            id: format!("sub-{}", subtitles.len() + 1),
+            text: current_text,
+            start_time,
+            end_time: last_time,
+            confidence: last_confidence,
+        });
+    }
+    
+    // Emit completion
+    let _ = app.emit("ocr-progress", serde_json::json!({
+        "fileId": file_id,
+        "phase": "generating",
+        "current": frame_results.len(),
+        "total": frame_results.len(),
+        "message": format!("Generated {} subtitles", subtitles.len())
+    }));
+    
+    Ok(subtitles)
+}
+
+/// Export subtitles to file
+#[tauri::command]
+async fn export_ocr_subtitles(
+    subtitles: Vec<OcrSubtitleEntry>,
+    output_path: String,
+    format: String,
+) -> Result<(), String> {
+    validate_output_path(&output_path)?;
+    
+    let content = match format.as_str() {
+        "srt" => format_srt(&subtitles),
+        "vtt" => format_vtt(&subtitles),
+        "txt" => format_txt(&subtitles),
+        _ => return Err(format!("Unsupported format: {}", format)),
+    };
+    
+    std::fs::write(&output_path, content)
+        .map_err(|e| format!("Failed to write subtitle file: {}", e))?;
+    
+    Ok(())
+}
+
+/// Format subtitles as SRT
+fn format_srt(subtitles: &[OcrSubtitleEntry]) -> String {
+    subtitles.iter().enumerate().map(|(i, sub)| {
+        format!(
+            "{}\n{} --> {}\n{}\n",
+            i + 1,
+            format_srt_time(sub.start_time),
+            format_srt_time(sub.end_time),
+            sub.text
+        )
+    }).collect::<Vec<_>>().join("\n")
+}
+
+/// Format subtitles as VTT
+fn format_vtt(subtitles: &[OcrSubtitleEntry]) -> String {
+    let mut output = String::from("WEBVTT\n\n");
+    for sub in subtitles {
+        output.push_str(&format!(
+            "{} --> {}\n{}\n\n",
+            format_vtt_time(sub.start_time),
+            format_vtt_time(sub.end_time),
+            sub.text
+        ));
+    }
+    output
+}
+
+/// Format subtitles as plain text
+fn format_txt(subtitles: &[OcrSubtitleEntry]) -> String {
+    subtitles.iter()
+        .map(|sub| sub.text.clone())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Format time for SRT (00:00:00,000)
+fn format_srt_time(ms: u64) -> String {
+    let hours = ms / 3_600_000;
+    let minutes = (ms % 3_600_000) / 60_000;
+    let seconds = (ms % 60_000) / 1000;
+    let millis = ms % 1000;
+    format!("{:02}:{:02}:{:02},{:03}", hours, minutes, seconds, millis)
+}
+
+/// Format time for VTT (00:00:00.000)
+fn format_vtt_time(ms: u64) -> String {
+    let hours = ms / 3_600_000;
+    let minutes = (ms % 3_600_000) / 60_000;
+    let seconds = (ms % 60_000) / 1000;
+    let millis = ms % 1000;
+    format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
+}
+
+/// Cancel OCR operation for a specific file
+#[tauri::command]
+async fn cancel_ocr_operation(file_id: String) -> Result<(), String> {
+    let pid = {
+        match OCR_PROCESS_IDS.lock() {
+            Ok(mut guard) => guard.remove(&file_id),
+            Err(_) => return Err("Failed to acquire process lock".to_string()),
+        }
+    };
+    
+    // Get and remove the transcode output path for cleanup
+    let transcode_path = {
+        match OCR_TRANSCODE_PATHS.lock() {
+            Ok(mut guard) => guard.remove(&file_id),
+            Err(_) => None,
+        }
+    };
+    
+    if let Some(pid) = pid {
+        #[cfg(unix)]
+        {
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+        }
+        
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/F"])
+                .output();
+        }
+    }
+    
+    // Clean up partial transcode file if it exists
+    if let Some(path) = transcode_path {
+        let _ = std::fs::remove_file(&path);
+    }
+    
+    Ok(())
+}
+
+/// Clean up OCR frames directory
+#[tauri::command]
+async fn cleanup_ocr_frames(frames_dir: String) -> Result<(), String> {
+    let path = Path::new(&frames_dir);
+    if path.exists() && path.is_dir() {
+        std::fs::remove_dir_all(&frames_dir)
+            .map_err(|e| format!("Failed to cleanup frames: {}", e))?;
+    }
+    Ok(())
+}
+
+// ============================================================================
 // FFMPEG MERGE COMMAND
 // ============================================================================
 
@@ -1140,7 +1833,15 @@ pub fn run() {
             save_transcription_data,
             load_transcription_data,
             delete_transcription_data,
-            convert_audio_for_waveform
+            convert_audio_for_waveform,
+            // Video OCR commands
+            transcode_for_preview,
+            extract_ocr_frames,
+            perform_ocr,
+            generate_subtitles_from_ocr,
+            export_ocr_subtitles,
+            cancel_ocr_operation,
+            cleanup_ocr_frames
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
