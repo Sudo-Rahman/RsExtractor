@@ -230,3 +230,15 @@ export interface OcrProgressEvent {
   total: number;
   message?: string;
 }
+
+// ============================================================================
+// OCR MODELS STATUS (from Rust backend)
+// ============================================================================
+
+export interface OcrModelsStatus {
+  installed: boolean;
+  modelsDir: string | null;
+  availableLanguages: string[];
+  missingModels: string[];
+  downloadInstructions: string;
+}

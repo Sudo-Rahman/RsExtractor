@@ -34,6 +34,9 @@ window-vibrancy = "0.7.1"
 image = "0.25"
 tokio-util = "0.7"
 
+# OCR
+ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git", branch = "next", features = ["metal"] }
+
 
 
 [target.'cfg(target_os = "macos")'.dependencies]

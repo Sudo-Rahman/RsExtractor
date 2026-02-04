@@ -12,6 +12,7 @@ import type {
   OcrProgress,
   OcrPhase,
   OcrLogEntry,
+  OcrModelsStatus,
 } from '$lib/types';
 import { DEFAULT_OCR_CONFIG } from '$lib/types';
 
@@ -38,6 +39,10 @@ let currentOperationId = $state<string | null>(null);
 
 // Logs
 let logs = $state<OcrLogEntry[]>([]);
+
+// OCR Models Status
+let modelsStatus = $state<OcrModelsStatus | null>(null);
+let modelsChecked = $state(false);
 
 // ============================================================================
 // HELPERS
@@ -155,6 +160,25 @@ export const videoOcrStore = {
 
   get errorLogs(): OcrLogEntry[] {
     return logs.filter(l => l.level === 'error');
+  },
+
+  // -------------------------------------------------------------------------
+  // Getters - Models Status
+  // -------------------------------------------------------------------------
+  get modelsStatus() {
+    return modelsStatus;
+  },
+
+  get modelsChecked() {
+    return modelsChecked;
+  },
+
+  get modelsInstalled(): boolean {
+    return modelsStatus?.installed ?? false;
+  },
+
+  get availableLanguages(): string[] {
+    return modelsStatus?.availableLanguages ?? [];
   },
 
   // -------------------------------------------------------------------------
@@ -440,6 +464,19 @@ export const videoOcrStore = {
 
   clearLogs() {
     logs = [];
+  },
+
+  // -------------------------------------------------------------------------
+  // Actions - Models Status
+  // -------------------------------------------------------------------------
+  setModelsStatus(status: OcrModelsStatus) {
+    modelsStatus = status;
+    modelsChecked = true;
+  },
+
+  clearModelsStatus() {
+    modelsStatus = null;
+    modelsChecked = false;
   },
 
   // -------------------------------------------------------------------------

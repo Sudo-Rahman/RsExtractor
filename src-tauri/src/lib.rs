@@ -1,13 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tiktoken_rs::o200k_base_singleton;
 use tokio::process::Command;
 use tokio::time::timeout;
 use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+
+// OCR library
+use ocr_rs::{OcrEngine, OcrEngineConfig, Backend};
 
 // ============================================================================
 // GLOBAL STATE FOR PROCESS MANAGEMENT
@@ -881,6 +884,142 @@ const VIDEO_PREVIEW_TRANSCODE_TIMEOUT: Duration = Duration::from_secs(600);
 /// Timeout for frame extraction (30 minutes for long videos)
 const FRAME_EXTRACTION_TIMEOUT: Duration = Duration::from_secs(1800);
 
+/// Global OCR engine storage keyed by language
+/// Using Arc<Mutex<>> for thread-safe lazy initialization
+static OCR_ENGINES: LazyLock<Mutex<HashMap<String, Arc<OcrEngine>>>> = 
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// OCR model paths configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OcrModelPaths {
+    pub models_dir: String,
+}
+
+/// Default OCR models directory (relative to app resources)
+const DEFAULT_OCR_MODELS_DIR: &str = "ocr-models";
+
+/// Model file names for PP-OCRv5
+const OCR_DET_MODEL: &str = "PP-OCRv5_mobile_det.mnn";
+const OCR_CHARSET: &str = "ppocr_keys_v5.txt";
+
+/// Language to recognition model mapping
+fn get_rec_model_for_language(language: &str) -> &'static str {
+    match language {
+        "multi" | "chinese" | "japanese" | "en" => "PP-OCRv5_mobile_rec.mnn",
+        "korean" => "korean_PP-OCRv5_mobile_rec_infer.mnn",
+        "latin" => "latin_PP-OCRv5_mobile_rec_infer.mnn",
+        "cyrillic" => "cyrillic_PP-OCRv5_mobile_rec_infer.mnn",
+        "arabic" => "arabic_PP-OCRv5_mobile_rec_infer.mnn",
+        "devanagari" => "devanagari_PP-OCRv5_mobile_rec_infer.mnn",
+        "thai" => "th_PP-OCRv5_mobile_rec_infer.mnn",
+        "greek" => "el_PP-OCRv5_mobile_rec_infer.mnn",
+        "tamil" => "ta_PP-OCRv5_mobile_rec_infer.mnn",
+        "telugu" => "te_PP-OCRv5_mobile_rec_infer.mnn",
+        _ => "PP-OCRv5_mobile_rec.mnn", // Default to multi-language
+    }
+}
+
+/// Get charset file for language
+fn get_charset_for_language(language: &str) -> &'static str {
+    match language {
+        "korean" => "ppocr_keys_korean.txt",
+        "latin" => "ppocr_keys_latin.txt",
+        "cyrillic" => "ppocr_keys_cyrillic.txt",
+        "arabic" => "ppocr_keys_arabic.txt",
+        "devanagari" => "ppocr_keys_devanagari.txt",
+        "thai" => "ppocr_keys_th.txt",
+        "greek" => "ppocr_keys_el.txt",
+        "tamil" => "ppocr_keys_ta.txt",
+        "telugu" => "ppocr_keys_te.txt",
+        _ => OCR_CHARSET, // Default v5 charset
+    }
+}
+
+/// Get or create an OCR engine for the given language
+fn get_or_create_ocr_engine(
+    models_dir: &Path,
+    language: &str,
+) -> Result<Arc<OcrEngine>, String> {
+    let mut engines = OCR_ENGINES.lock()
+        .map_err(|e| format!("Failed to lock OCR engines: {}", e))?;
+    
+    // Check if engine already exists for this language
+    if let Some(engine) = engines.get(language) {
+        return Ok(Arc::clone(engine));
+    }
+    
+    // Build model paths
+    let det_path = models_dir.join(OCR_DET_MODEL);
+    let rec_model = get_rec_model_for_language(language);
+    let rec_path = models_dir.join(rec_model);
+    let charset_file = get_charset_for_language(language);
+    let charset_path = models_dir.join(charset_file);
+    
+    // Validate model files exist
+    if !det_path.exists() {
+        return Err(format!(
+            "Detection model not found: {}. Please download OCR models.", 
+            det_path.display()
+        ));
+    }
+    if !rec_path.exists() {
+        return Err(format!(
+            "Recognition model not found: {}. Please download OCR models for language '{}'.", 
+            rec_path.display(), language
+        ));
+    }
+    if !charset_path.exists() {
+        return Err(format!(
+            "Charset file not found: {}. Please download OCR models.", 
+            charset_path.display()
+        ));
+    }
+    
+    // Create OCR engine config with GPU acceleration on macOS
+    #[cfg(target_os = "macos")]
+    let config = OcrEngineConfig::new()
+        .with_backend(Backend::Metal)
+        .with_threads(4);
+    
+    #[cfg(not(target_os = "macos"))]
+    let config = OcrEngineConfig::new()
+        .with_threads(4);
+    
+    // Create the engine
+    let engine = OcrEngine::new(
+        det_path.to_str().ok_or("Invalid detection model path")?,
+        rec_path.to_str().ok_or("Invalid recognition model path")?,
+        charset_path.to_str().ok_or("Invalid charset path")?,
+        Some(config),
+    ).map_err(|e| format!("Failed to create OCR engine: {}", e))?;
+    
+    let engine = Arc::new(engine);
+    engines.insert(language.to_string(), Arc::clone(&engine));
+    
+    Ok(engine)
+}
+
+/// Get the OCR models directory, checking app resources first, then user config
+fn get_ocr_models_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    // First, check if models are in app resources
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let models_dir = resource_dir.join(DEFAULT_OCR_MODELS_DIR);
+        if models_dir.exists() && models_dir.is_dir() {
+            return Ok(models_dir);
+        }
+    }
+    
+    // Check app data directory for user-downloaded models
+    if let Ok(app_data) = app.path().app_data_dir() {
+        let models_dir = app_data.join(DEFAULT_OCR_MODELS_DIR);
+        if models_dir.exists() && models_dir.is_dir() {
+            return Ok(models_dir);
+        }
+    }
+    
+    Err("OCR models not found. Please download the PP-OCRv5 models and place them in the app's ocr-models directory.".to_string())
+}
+
 /// OCR region for cropping frames
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrRegion {
@@ -1229,9 +1368,7 @@ async fn extract_ocr_frames(
     Ok((temp_dir.to_string_lossy().to_string(), frame_count))
 }
 
-/// Perform OCR on extracted frames
-/// NOTE: This is a placeholder - actual OCR integration with rust-paddle-ocr
-/// will be added once the library is properly configured
+/// Perform OCR on extracted frames using PP-OCRv5
 #[tauri::command]
 async fn perform_ocr(
     app: tauri::AppHandle,
@@ -1241,6 +1378,9 @@ async fn perform_ocr(
     frame_interval_ms: u32,
 ) -> Result<Vec<OcrFrameResult>, String> {
     validate_directory_path(&frames_dir)?;
+    
+    // Get OCR models directory
+    let models_dir = get_ocr_models_dir(&app)?;
     
     // Get list of frame files
     let mut frames: Vec<_> = std::fs::read_dir(&frames_dir)
@@ -1258,7 +1398,32 @@ async fn perform_ocr(
     
     let total_frames = frames.len() as u32;
     
-    // Emit start
+    if total_frames == 0 {
+        return Ok(Vec::new());
+    }
+    
+    // Emit start - loading engine
+    let _ = app.emit("ocr-progress", serde_json::json!({
+        "fileId": file_id,
+        "phase": "ocr",
+        "current": 0,
+        "total": total_frames,
+        "message": "Loading OCR engine..."
+    }));
+    
+    // Get or create OCR engine for the language
+    // This is done in a blocking context since OcrEngine creation is CPU-intensive
+    let engine = {
+        let models_dir_clone = models_dir.clone();
+        let language_clone = language.clone();
+        tokio::task::spawn_blocking(move || {
+            get_or_create_ocr_engine(&models_dir_clone, &language_clone)
+        })
+        .await
+        .map_err(|e| format!("Failed to spawn OCR engine task: {}", e))??
+    };
+    
+    // Emit start - processing
     let _ = app.emit("ocr-progress", serde_json::json!({
         "fileId": file_id,
         "phase": "ocr",
@@ -1269,20 +1434,17 @@ async fn perform_ocr(
     
     let mut results = Vec::new();
     
-    // TODO: Integrate rust-paddle-ocr here
-    // For now, this is a placeholder that simulates OCR processing
-    // The actual implementation would use:
-    // 
-    // let engine = OcrEngine::new(det_path, rec_path, charset_path, Some(config))?;
-    // for (i, frame) in frames.iter().enumerate() {
-    //     let image = image::open(frame.path())?;
-    //     let ocr_results = engine.recognize(&image)?;
-    //     ...
-    // }
-    
     for (i, frame) in frames.iter().enumerate() {
         let frame_index = i as u32;
         let time_ms = (frame_index as u64) * (frame_interval_ms as u64);
+        let frame_path = frame.path();
+        
+        // Check for cancellation before processing
+        if let Ok(guard) = OCR_PROCESS_IDS.lock() {
+            if !guard.contains_key(&file_id) {
+                return Err("OCR cancelled".to_string());
+            }
+        }
         
         // Emit progress
         let _ = app.emit("ocr-progress", serde_json::json!({
@@ -1293,24 +1455,55 @@ async fn perform_ocr(
             "message": format!("Processing frame {}/{}...", frame_index + 1, total_frames)
         }));
         
-        // Placeholder: In a real implementation, OCR would happen here
-        // For now, just create empty results
+        // Run OCR on this frame in a blocking task
+        let engine_clone = Arc::clone(&engine);
+        let frame_path_clone = frame_path.clone();
+        
+        let ocr_result = tokio::task::spawn_blocking(move || {
+            // Load the image
+            let image = image::open(&frame_path_clone)
+                .map_err(|e| format!("Failed to open frame {}: {}", frame_path_clone.display(), e))?;
+            
+            // Run OCR detection and recognition
+            let ocr_results = engine_clone.recognize(&image)
+                .map_err(|e| format!("OCR failed on frame {}: {}", frame_path_clone.display(), e))?;
+            
+            // Combine all detected text from the frame
+            // Sort results by vertical position (top to bottom) for subtitle ordering
+            let mut sorted_results: Vec<_> = ocr_results.iter().collect();
+            sorted_results.sort_by(|a, b| {
+                let a_top = a.bbox.rect.top();
+                let b_top = b.bbox.rect.top();
+                a_top.partial_cmp(&b_top).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            
+            // Combine text from all detected regions
+            let combined_text: String = sorted_results
+                .iter()
+                .map(|r| r.text.trim())
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            
+            // Calculate average confidence
+            let avg_confidence = if sorted_results.is_empty() {
+                0.0
+            } else {
+                sorted_results.iter().map(|r| r.confidence).sum::<f32>() as f64 
+                    / sorted_results.len() as f64
+            };
+            
+            Ok::<(String, f64), String>((combined_text, avg_confidence))
+        })
+        .await
+        .map_err(|e| format!("OCR task failed: {}", e))??;
+        
         results.push(OcrFrameResult {
             frame_index,
             time_ms,
-            text: String::new(), // Will be filled by actual OCR
-            confidence: 0.0,
+            text: ocr_result.0,
+            confidence: ocr_result.1,
         });
-        
-        // Check for cancellation
-        if let Ok(guard) = OCR_PROCESS_IDS.lock() {
-            if !guard.contains_key(&file_id) {
-                return Err("OCR cancelled".to_string());
-            }
-        }
-        
-        // Small delay to prevent blocking (remove when real OCR is implemented)
-        tokio::time::sleep(Duration::from_millis(1)).await;
     }
     
     // Emit completion
@@ -1554,6 +1747,106 @@ async fn cleanup_ocr_frames(frames_dir: String) -> Result<(), String> {
             .map_err(|e| format!("Failed to cleanup frames: {}", e))?;
     }
     Ok(())
+}
+
+/// OCR models status response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OcrModelsStatus {
+    pub installed: bool,
+    pub models_dir: Option<String>,
+    pub available_languages: Vec<String>,
+    pub missing_models: Vec<String>,
+    pub download_instructions: String,
+}
+
+/// Check if OCR models are installed and return status
+#[tauri::command]
+async fn check_ocr_models(app: tauri::AppHandle) -> Result<OcrModelsStatus, String> {
+    // Define all model files we need to check
+    let required_models = vec![
+        (OCR_DET_MODEL, "detection"),
+        ("PP-OCRv5_mobile_rec.mnn", "multi"),
+    ];
+    
+    let language_models = vec![
+        ("korean_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_korean.txt", "korean"),
+        ("latin_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_latin.txt", "latin"),
+        ("cyrillic_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_cyrillic.txt", "cyrillic"),
+        ("arabic_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_arabic.txt", "arabic"),
+        ("devanagari_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_devanagari.txt", "devanagari"),
+        ("th_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_th.txt", "thai"),
+        ("el_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_el.txt", "greek"),
+        ("ta_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_ta.txt", "tamil"),
+        ("te_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_te.txt", "telugu"),
+    ];
+    
+    // Try to find models directory
+    let models_dir = match get_ocr_models_dir(&app) {
+        Ok(dir) => dir,
+        Err(_) => {
+            // Models not found, check if app data dir exists
+            let app_data = app.path().app_data_dir()
+                .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+            let expected_dir = app_data.join(DEFAULT_OCR_MODELS_DIR);
+            
+            return Ok(OcrModelsStatus {
+                installed: false,
+                models_dir: Some(expected_dir.to_string_lossy().to_string()),
+                available_languages: vec![],
+                missing_models: required_models.iter().map(|(m, _)| m.to_string()).collect(),
+                download_instructions: format!(
+                    "OCR models not found. Please download PP-OCRv5 models and place them in:\n{}\n\n\
+                    Required files:\n\
+                    - {} (detection model)\n\
+                    - PP-OCRv5_mobile_rec.mnn (recognition model)\n\
+                    - ppocr_keys_v5.txt (charset file)\n\n\
+                    Download from: https://github.com/zibo-chen/rust-paddle-ocr/tree/next/models",
+                    expected_dir.display(),
+                    OCR_DET_MODEL
+                ),
+            });
+        }
+    };
+    
+    let mut missing_models = Vec::new();
+    let mut available_languages = Vec::new();
+    
+    // Check required models
+    for (model, name) in &required_models {
+        if !models_dir.join(model).exists() {
+            missing_models.push(format!("{} ({})", model, name));
+        }
+    }
+    
+    // Check charset for multi-language
+    if models_dir.join(OCR_CHARSET).exists() && models_dir.join("PP-OCRv5_mobile_rec.mnn").exists() {
+        available_languages.push("multi".to_string());
+    }
+    
+    // Check language-specific models
+    for (rec_model, charset, lang) in &language_models {
+        if models_dir.join(rec_model).exists() && models_dir.join(charset).exists() {
+            available_languages.push(lang.to_string());
+        }
+    }
+    
+    let installed = missing_models.is_empty() && !available_languages.is_empty();
+    
+    Ok(OcrModelsStatus {
+        installed,
+        models_dir: Some(models_dir.to_string_lossy().to_string()),
+        available_languages,
+        missing_models,
+        download_instructions: if installed {
+            "OCR models are installed and ready to use.".to_string()
+        } else {
+            format!(
+                "Some OCR models are missing. Please download PP-OCRv5 models and place them in:\n{}\n\n\
+                Download from: https://github.com/zibo-chen/rust-paddle-ocr/tree/next/models",
+                models_dir.display()
+            )
+        },
+    })
 }
 
 // ============================================================================
@@ -1841,7 +2134,8 @@ pub fn run() {
             generate_subtitles_from_ocr,
             export_ocr_subtitles,
             cancel_ocr_operation,
-            cleanup_ocr_frames
+            cleanup_ocr_frames,
+            check_ocr_models
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
