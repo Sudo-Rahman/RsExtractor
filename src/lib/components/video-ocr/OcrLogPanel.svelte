@@ -46,22 +46,15 @@
 <div class={cn("border rounded-lg", className)}>
   <!-- Header -->
   <div class="flex items-center justify-between px-3 py-2 border-b bg-muted/50">
-    <button
-      class="flex items-center gap-2 text-sm font-medium hover:text-foreground"
-      onclick={() => isExpanded = !isExpanded}
-    >
-      {#if isExpanded}
-        <ChevronUp class="size-4" />
-      {:else}
-        <ChevronDown class="size-4" />
-      {/if}
+    <div
+      class="flex items-center gap-2 text-sm font-medium hover:text-foreground">
       <span>Activity Log</span>
       {#if errorCount > 0}
         <span class="text-xs bg-destructive text-destructive-foreground px-1.5 py-0.5 rounded-full">
           {errorCount} error{errorCount > 1 ? 's' : ''}
         </span>
       {/if}
-    </button>
+    </div>
     
     {#if logs.length > 0 && onClear}
       <Button
@@ -78,10 +71,8 @@
   
   <!-- Log entries -->
   <div class={cn(
-    "overflow-hidden transition-all",
-    isExpanded ? "max-h-64" : "max-h-32"
+    "overflow-auto h-12 transition-all",
   )}>
-    <div class="h-full overflow-auto">
       <div class="p-2 space-y-1">
         {#if displayLogs.length === 0}
           <p class="text-xs text-muted-foreground text-center py-4">
@@ -106,6 +97,5 @@
           {/each}
         {/if}
       </div>
-    </div>
   </div>
 </div>

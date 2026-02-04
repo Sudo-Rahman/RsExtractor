@@ -51,17 +51,17 @@
   }
 </script>
 
-<Dialog.Root {open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-  <Dialog.Content class="max-w-2xl max-h-[80vh] flex flex-col">
-    <Dialog.Header>
-      <Dialog.Title>OCR Results - {videoName}</Dialog.Title>
+<Dialog.Root bind:open onOpenChange={(isOpen) => !isOpen && onClose()}>
+  <Dialog.Content class="max-w-3xl max-h-[80vh] flex flex-col overflow-hidden">
+    <Dialog.Header class="px-2">
+      <Dialog.Title >OCR Results - {videoName}</Dialog.Title>
       <Dialog.Description>
         {subtitles.length} subtitle{subtitles.length !== 1 ? 's' : ''} detected
       </Dialog.Description>
     </Dialog.Header>
 
     <!-- Subtitle list -->
-    <ScrollArea class="flex-1 max-h-[400px] border rounded-lg">
+    <ScrollArea class="flex-1 h-[calc(80vh-200px)] border rounded-lg">
       <div class="p-4 space-y-3">
         {#if subtitles.length === 0}
           <p class="text-center text-muted-foreground py-8">
@@ -90,7 +90,7 @@
     <div class="flex items-center justify-between pt-4 border-t">
       <div class="flex items-center gap-2">
         <Select.Root type="single" value={selectedFormat} onValueChange={(v) => selectedFormat = v as OcrOutputFormat}>
-          <Select.Trigger class="w-[140px]">
+          <Select.Trigger class="w-35">
             {OCR_OUTPUT_FORMATS.find(f => f.value === selectedFormat)?.label}
           </Select.Trigger>
           <Select.Content>
@@ -106,7 +106,7 @@
         </Button>
       </div>
 
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 pl-2">
         <Button variant="outline" onclick={copyToClipboard} disabled={subtitles.length === 0}>
           <Copy class="size-4 mr-2" />
           Copy SRT

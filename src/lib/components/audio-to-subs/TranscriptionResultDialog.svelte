@@ -12,15 +12,7 @@
   import { Separator } from '$lib/components/ui/separator';
   import { cn } from '$lib/utils';
   import { formatDuration } from '$lib/utils/format';
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
+
   import { toast } from 'svelte-sonner';
 
   interface TranscriptionResultDialogProps {

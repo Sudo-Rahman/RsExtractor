@@ -32,15 +32,19 @@ tokio = { version = "1.48.0", features = ["full"] }
 tiktoken-rs = "0.9"
 window-vibrancy = "0.7.1"
 image = "0.25"
-tokio-util = "0.7"
+rayon = "1.10"
+num_cpus = "1.16"
 
-# OCR
-ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git", branch = "next", features = ["metal"] }
+#windows or linux ocr
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git", branch = "next", features = ["vulkan"] }
 
 
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26.0"
+# OCR
+ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git", branch = "next", features = ["metal"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
