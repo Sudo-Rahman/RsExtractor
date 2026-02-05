@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { FileVideo, FileAudio, Subtitles, Video, Film, Volume2, Trash2, Plus, Upload, Loader2, XCircle, Wand2, Link, Unlink, Settings2, GripVertical, Clock, Layers } from '@lucide/svelte';
+  import { FileVideo, FileAudio, Subtitles, Video, Film, Volume2, Trash2, Plus, Upload, Loader2, XCircle, Wand2, Link, Unlink, Settings2, GripVertical, Clock, Layers, X } from '@lucide/svelte';
   export interface MergeViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -31,6 +31,7 @@
   import * as Card from '$lib/components/ui/card';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import * as Tabs from '$lib/components/ui/tabs';
+  import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
   import { MergeTrackSettings, MergeOutputPanel, MergeTrackGroups, MergeTrackTable } from '$lib/components/merge';
 
   ;
@@ -58,11 +59,18 @@
   const AUDIO_EXTENSIONS = ['.aac', '.ac3', '.dts', '.flac', '.mp3', '.ogg', '.wav', '.eac3', '.opus'];
   const ALL_EXTENSIONS = [...VIDEO_EXTENSIONS, ...SUBTITLE_EXTENSIONS, ...AUDIO_EXTENSIONS];
   const FLIP_DURATION_MS = 200;
+  const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((ext) => ext.slice(1).toUpperCase());
 
   // Track settings dialog
   let settingsOpen = $state(false);
   let editingTrackId = $state<string | null>(null);
   let editingTrackType = $state<'imported' | 'source'>('imported');
+
+  // Merge cancellation state
+  let currentMergingId = $state<string | null>(null);
+  let isCancelling = $state(false);
+  let cancelAllRequested = $state(false);
+  let cancelCurrentFileId = $state<string | null>(null);
 
   // Derived states
   const editingImportedTrack = $derived(() => {
@@ -80,6 +88,11 @@
   });
 
   const selectedVideoTracks = $derived(() => mergeStore.selectedVideo?.tracks || []);
+  const isProcessing = $derived(() => mergeStore.status === 'processing');
+  const currentMergingFileName = $derived(() => {
+    if (!currentMergingId) return '';
+    return mergeStore.videoFiles.find(v => v.id === currentMergingId)?.name || '';
+  });
 
   // DnD items - mutable state required by svelte-dnd-action
   let unassignedItems = $state<(ImportedTrack & { id: string })[]>([]);
@@ -346,62 +359,72 @@
 
     mergeStore.setStatus('processing');
     mergeStore.setProgress(0);
+    currentMergingId = null;
+    isCancelling = false;
+    cancelAllRequested = false;
+    cancelCurrentFileId = null;
 
-    try {
-      let completed = 0;
-      const mergedPaths: string[] = [];
-      
-      for (const video of videosToMerge) {
-        const attachedTracks = mergeStore.getAttachedTracks(video.id);
+    const mergedPaths: string[] = [];
+    let completed = 0;
+    let cancelled = 0;
+    let processed = 0;
+    let mergeError: string | null = null;
 
-        let outputFilename = video.name;
-        if (!mergeStore.outputConfig.useSourceFilename) {
-          // Update pattern replacement to use season/episode properly
-          outputFilename = mergeStore.outputConfig.outputNamePattern
-            .replace('{filename}', video.name.replace(/\.[^.]+$/, ''))
-            .replace('{episode}', video.episodeNumber?.toString() || '')
-            .replace('{season}', video.seasonNumber?.toString() || '');
-        }
-        if (!outputFilename.endsWith('.mkv')) {
-          outputFilename = outputFilename.replace(/\.[^.]+$/, '') + '.mkv';
-        }
+    for (const video of videosToMerge) {
+      if (cancelAllRequested) break;
 
-        let fullOutputPath = `${outputPath}/${outputFilename}`;
+      currentMergingId = video.id;
+      const attachedTracks = mergeStore.getAttachedTracks(video.id);
 
-        // Check if output path is the same as input path (FFmpeg cannot edit files in-place)
-        if (fullOutputPath === video.path) {
-          // Add "_merged" suffix before extension
-          const nameWithoutExt = outputFilename.replace(/\.mkv$/, '');
-          outputFilename = `${nameWithoutExt}_merged.mkv`;
-          fullOutputPath = `${outputPath}/${outputFilename}`;
-        }
+      let outputFilename = video.name;
+      if (!mergeStore.outputConfig.useSourceFilename) {
+        // Update pattern replacement to use season/episode properly
+        outputFilename = mergeStore.outputConfig.outputNamePattern
+          .replace('{filename}', video.name.replace(/\.[^.]+$/, ''))
+          .replace('{episode}', video.episodeNumber?.toString() || '')
+          .replace('{season}', video.seasonNumber?.toString() || '');
+      }
+      if (!outputFilename.endsWith('.mkv')) {
+        outputFilename = outputFilename.replace(/\.[^.]+$/, '') + '.mkv';
+      }
 
-        // Build attached track args (external tracks to add)
-        const trackArgs = attachedTracks.map(track => ({
-          inputPath: track.path,
-          trackIndex: 0,
-          config: track.config
-        }));
+      let fullOutputPath = `${outputPath}/${outputFilename}`;
 
-        // Build source track configs (for metadata modifications and track selection)
-        const sourceTrackConfigs = video.tracks.map(track => {
-          const config = mergeStore.getSourceTrackConfig(track.id);
-          return {
-            originalIndex: track.originalIndex,
-            type: track.type,
-            config: config || {
-              trackId: track.id,
-              enabled: true,
-              language: track.language,
-              title: track.title,
-              default: track.default,
-              forced: track.forced,
-              delayMs: 0,
-              order: 0
-            }
-          };
-        });
+      // Check if output path is the same as input path (FFmpeg cannot edit files in-place)
+      if (fullOutputPath === video.path) {
+        // Add "_merged" suffix before extension
+        const nameWithoutExt = outputFilename.replace(/\.mkv$/, '');
+        outputFilename = `${nameWithoutExt}_merged.mkv`;
+        fullOutputPath = `${outputPath}/${outputFilename}`;
+      }
 
+      // Build attached track args (external tracks to add)
+      const trackArgs = attachedTracks.map(track => ({
+        inputPath: track.path,
+        trackIndex: 0,
+        config: track.config
+      }));
+
+      // Build source track configs (for metadata modifications and track selection)
+      const sourceTrackConfigs = video.tracks.map(track => {
+        const config = mergeStore.getSourceTrackConfig(track.id);
+        return {
+          originalIndex: track.originalIndex,
+          type: track.type,
+          config: config || {
+            trackId: track.id,
+            enabled: true,
+            language: track.language,
+            title: track.title,
+            default: track.default,
+            forced: track.forced,
+            delayMs: 0,
+            order: 0
+          }
+        };
+      });
+
+      try {
         await invoke('merge_tracks', {
           videoPath: video.path,
           tracks: trackArgs,
@@ -411,9 +434,48 @@
 
         mergedPaths.push(fullOutputPath);
         completed++;
-        mergeStore.setProgress((completed / videosToMerge.length) * 100);
+      } catch (error) {
+        if (cancelAllRequested || cancelCurrentFileId === video.id) {
+          cancelled++;
+        } else {
+          mergeError = error instanceof Error ? error.message : String(error);
+          break;
+        }
+      } finally {
+        processed++;
+        mergeStore.setProgress((processed / videosToMerge.length) * 100);
+
+        if (cancelCurrentFileId === video.id) {
+          cancelCurrentFileId = null;
+          if (!cancelAllRequested) {
+            isCancelling = false;
+          }
+        }
+      }
+    }
+
+    currentMergingId = null;
+
+    if (mergeError) {
+      mergeStore.setError(mergeError);
+      logAndToast.error({
+        source: 'merge',
+        title: 'Merge failed',
+        details: mergeError
+      });
+    } else if (cancelAllRequested || cancelled > 0) {
+      mergeStore.setStatus('idle');
+      mergeStore.setProgress(0);
+
+      if (mergedPaths.length > 0) {
+        recentFilesStore.addMergedFiles(mergedPaths);
       }
 
+      const parts = [];
+      if (completed > 0) parts.push(`${completed} completed`);
+      if (cancelled > 0) parts.push(`${cancelled} cancelled`);
+      toast.info(parts.length > 0 ? `Merge finished: ${parts.join(', ')}` : 'Merge cancelled');
+    } else {
       mergeStore.setStatus('completed');
       
       // Add merged files to recent files store for potential import in Rename tool
@@ -422,14 +484,44 @@
       }
       
       toast.success(`Successfully merged ${completed} file(s)!`);
+    }
+
+    isCancelling = false;
+    cancelAllRequested = false;
+    cancelCurrentFileId = null;
+  }
+
+  async function handleCancelFile(fileId: string) {
+    if (!mergeStore.isProcessing) return;
+    if (isCancelling) return;
+    if (currentMergingId !== fileId) return;
+
+    const video = mergeStore.videoFiles.find(v => v.id === fileId);
+    if (!video) return;
+
+    cancelCurrentFileId = fileId;
+    isCancelling = true;
+
+    try {
+      await invoke('cancel_merge_file', { videoPath: video.path });
+      toast.info('Cancelling current file...');
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      mergeStore.setError(errorMsg);
-      logAndToast.error({
-        source: 'merge',
-        title: 'Merge failed',
-        details: errorMsg
-      });
+      console.error('Failed to cancel merge file:', error);
+    }
+  }
+
+  async function handleCancelAll() {
+    if (!mergeStore.isProcessing) return;
+    if (isCancelling) return;
+
+    cancelAllRequested = true;
+    isCancelling = true;
+
+    try {
+      await invoke('cancel_merge');
+      toast.info('Cancelling merge...');
+    } catch (error) {
+      console.error('Failed to cancel merge:', error);
     }
   }
 
@@ -514,22 +606,29 @@
         <h2 class="font-semibold">Videos ({mergeStore.videoFiles.length})</h2>
         <div class="flex gap-1">
           {#if mergeStore.videoFiles.length > 0}
-            <Button variant="ghost" size="icon-sm" onclick={handleClearAll} class="text-muted-foreground hover:text-destructive hover:bg-destructive/10">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onclick={handleClearAll}
+              class="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+              disabled={isProcessing()}
+            >
               <Trash2 class="size-4" />
             </Button>
           {/if}
-          <Button size="sm" onclick={handleAddVideoFiles}>
+          <Button size="sm" onclick={handleAddVideoFiles} disabled={isProcessing()}>
             <Upload class="size-4 mr-1" />
             Add
           </Button>
         </div>
       </div>
 
-      <div class="flex-1 min-h-0 overflow-auto p-2 space-y-2">
+      <div class="flex-1 min-h-0 overflow-auto p-4  space-y-2">
         {#each mergeStore.videoFiles as video (video.id)}
           {@const FileIcon = getFileIcon(video.path)}
           {@const attachedCount = video.attachedTracks.length}
           {@const isSelected = mergeStore.selectedVideoId === video.id}
+          {@const isCurrentMerging = isProcessing() && currentMergingId === video.id}
           {@const seriesInfo = formatSeriesInfo(video.seasonNumber, video.episodeNumber)}
           {@const counts = getTrackCounts(video.tracks)}
           <button
@@ -537,7 +636,9 @@
             onclick={() => mergeStore.selectVideo(video.id)}
           >
             <div class="shrink-0 mt-0.5">
-              {#if video.status === 'scanning'}
+              {#if isCurrentMerging}
+                <Loader2 class="size-5 text-primary animate-spin" />
+              {:else if video.status === 'scanning'}
                 <Loader2 class="size-5 text-muted-foreground animate-spin" />
               {:else if video.status === 'error'}
                 <XCircle class="size-5 text-destructive" />
@@ -576,19 +677,38 @@
               </div>
             </div>
 
-            <Button
-              variant="ghost" size="icon-sm"
-              class="shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-              onclick={(e: MouseEvent) => { e.stopPropagation(); mergeStore.removeVideoFile(video.id); }}
-            >
-              <Trash2 class="size-4" />
-            </Button>
+            {#if isCurrentMerging}
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                class="shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                onclick={(e: MouseEvent) => { e.stopPropagation(); handleCancelFile(video.id); }}
+                disabled={isCancelling}
+                title="Cancel merge"
+              >
+                <X class="size-4" />
+              </Button>
+            {:else}
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                class="shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                onclick={(e: MouseEvent) => { e.stopPropagation(); mergeStore.removeVideoFile(video.id); }}
+                disabled={isProcessing()}
+                title="Remove"
+              >
+                <Trash2 class="size-4" />
+              </Button>
+            {/if}
           </button>
         {:else}
-          <div class="flex flex-col items-center justify-center py-8 text-center">
-            <FileVideo class="size-10 text-muted-foreground/30 mb-2" />
-            <p class="text-sm text-muted-foreground">No video files</p>
-            <p class="text-xs text-muted-foreground mt-1">Drop videos here or click Add</p>
+          <div>
+            <ImportDropZone
+              icon={Video}
+              title="Drop video files here"
+              formats={VIDEO_FORMATS}
+              onBrowse={handleAddVideoFiles}
+            />
           </div>
         {/each}
       </div>
@@ -848,6 +968,9 @@
         onOutputNameChange={(name) => mergeStore.setOutputNamePattern(name)}
         onMerge={handleMerge}
         onOpenFolder={handleOpenFolder}
+        onCancel={handleCancelAll}
+        isCancelling={isCancelling}
+        currentFileName={currentMergingFileName()}
       />
     </div>
 

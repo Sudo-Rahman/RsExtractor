@@ -25,8 +25,9 @@
   import { Label } from '$lib/components/ui/label';
   import * as Resizable from '$lib/components/ui/resizable';
   import * as Tooltip from "$lib/components/ui/tooltip/index.js";
+  import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
 
-  import { SubtitleDropZone, TranslationConfigPanel } from '$lib/components/translation';
+  import { TranslationConfigPanel } from '$lib/components/translation';
 
   ;
   ;
@@ -49,6 +50,9 @@
   }
 
   let { onNavigateToSettings }: TranslationViewProps = $props();
+
+  const SUBTITLE_EXTENSIONS = ['.srt', '.ass', '.vtt', '.ssa'] as const;
+  const SUBTITLE_FORMATS = SUBTITLE_EXTENSIONS.map((ext) => ext.slice(1).toUpperCase());
 
   // Reactive state for API key check - use $derived to react to settings changes
   const hasApiKey = $derived(
@@ -100,9 +104,8 @@
 
   // Expose API for drag & drop from parent
   export async function handleFileDrop(paths: string[]) {
-    const subtitleExtensions = ['.srt', '.ass', '.vtt', '.ssa'];
     const subtitlePaths = paths.filter(p =>
-      subtitleExtensions.some(ext => p.toLowerCase().endsWith(ext))
+      SUBTITLE_EXTENSIONS.some(ext => p.toLowerCase().endsWith(ext))
     );
 
     if (subtitlePaths.length === 0) {
@@ -159,7 +162,7 @@
         multiple: true,
         filters: [{
           name: 'Subtitle files',
-          extensions: ['srt', 'ass', 'vtt', 'ssa']
+          extensions: SUBTITLE_EXTENSIONS.map(ext => ext.slice(1))
         }]
       });
 
@@ -603,7 +606,13 @@
               </div>
             </div>
           {:else}
-            <SubtitleDropZone />
+            <ImportDropZone
+              icon={Languages}
+              title="Drop subtitle files here"
+              formats={SUBTITLE_FORMATS}
+              onBrowse={handleImportClick}
+              disabled={isTranslating}
+            />
           {/if}
         </Card.Content>
       </Card.Root>
@@ -799,4 +808,3 @@
     </div>
   </div>
 </div>
-

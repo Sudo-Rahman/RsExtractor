@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { Upload, Trash2, Search, FolderOpen, Play, Square, RefreshCw, AlertTriangle, X, ChevronDown, FileDown, Combine, ArrowUpDown, ArrowUp, ArrowDown } from '@lucide/svelte';
+  import { Upload, Trash2, Search, FolderOpen, Play, Square, RefreshCw, AlertTriangle, X, ChevronDown, FileDown, Combine, ArrowUpDown, ArrowUp, ArrowDown, FileText } from '@lucide/svelte';
   export interface RenameViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -12,7 +12,6 @@
 
   import { renameStore } from '$lib/stores/rename.svelte';
   import { recentFilesStore } from '$lib/stores/recentFiles.svelte';
-  import { uiStore } from '$lib/stores/ui.svelte';
   import { createRenameFile, buildNewPath } from '$lib/services/rename';
   import { logAndToast, log } from '$lib/utils/log-toast';
   import type { RuleType, RuleConfig, RenameMode } from '$lib/types/rename';
@@ -24,8 +23,8 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { Label } from '$lib/components/ui/label';
   import { Progress } from '$lib/components/ui/progress';
+  import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
   import {
-    RenameDropZone,
     RenameTable,
     RenameRuleEditor,
   } from '$lib/components/rename';
@@ -525,7 +524,13 @@
     <div class="flex-1 min-h-0 overflow-hidden">
       {#if totalCount === 0}
         <div class="h-full p-3">
-          <RenameDropZone isDragging={uiStore.isDragging} class="h-full" />
+          <ImportDropZone
+            icon={FileText}
+            title="Drop files here"
+            formats="All files"
+            onBrowse={handleImportClick}
+            class="h-full"
+          />
         </div>
       {:else}
         <RenameTable

@@ -1,4 +1,3 @@
-export { default as VideoDropZone } from './VideoDropZone.svelte';
 export { default as VideoFileList } from './VideoFileList.svelte';
 export { default as VideoPreview } from './VideoPreview.svelte';
 export { default as RegionSelector } from './RegionSelector.svelte';

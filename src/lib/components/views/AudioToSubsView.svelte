@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { Trash2, Upload, Download, X } from '@lucide/svelte';
+  import { AudioLines, Trash2, Upload, Download, X } from '@lucide/svelte';
   export interface AudioToSubsViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -27,8 +27,8 @@
   import { scanFile } from '$lib/services/ffprobe';
 
   import { Button } from '$lib/components/ui/button';
+  import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
   import { 
-    AudioDropZone, 
     AudioFileList, 
     AudioDetails,
     TranscriptionPanel,
@@ -52,6 +52,7 @@
   // Constants
   const MAX_CONCURRENT_TRANSCODES = 3;
   const OPUS_COMPATIBLE_EXTENSIONS = ['opus'];
+  const AUDIO_FORMATS = 'MP3, WAV, FLAC, AAC, OGG, M4A, OPUS';
 
   // State for result dialog
   let resultDialogOpen = $state(false);
@@ -1028,7 +1029,7 @@
 
 <div class="h-full flex overflow-hidden">
   <!-- Left Panel: File List -->
-  <div class="w-[max(20rem,25vw)] max-w-[32rem] border-r flex flex-col overflow-hidden">
+  <div class="w-[max(20rem,25vw)] max-w-lg border-r flex flex-col overflow-hidden">
     <!-- Header -->
     <div class="p-3 border-b shrink-0 flex items-center justify-between">
       <h2 class="font-semibold">Audio Files ({audioToSubsStore.audioFiles.length})</h2>
@@ -1064,9 +1065,15 @@
     </div>
 
     <!-- Content -->
-    <div class="flex-1 min-h-0 overflow-auto p-2">
+    <div class="flex-1 min-h-0 overflow-auto p-4">
       {#if audioToSubsStore.audioFiles.length === 0}
-        <AudioDropZone disabled={audioToSubsStore.isTranscribing} />
+        <ImportDropZone
+          icon={AudioLines}
+          title="Drop audio files here"
+          formats={AUDIO_FORMATS}
+          onBrowse={handleAddFiles}
+          disabled={audioToSubsStore.isTranscribing}
+        />
       {:else}
         <AudioFileList
           files={audioToSubsStore.audioFiles}

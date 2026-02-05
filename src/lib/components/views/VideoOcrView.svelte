@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { Trash2, Upload } from '@lucide/svelte';
+  import { Trash2, Upload, Video } from '@lucide/svelte';
   export interface VideoOcrViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -20,8 +20,8 @@
   import { scanFile } from '$lib/services/ffprobe';
 
   import { Button } from '$lib/components/ui/button';
+  import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
   import { 
-    VideoDropZone, 
     VideoFileList, 
     VideoPreview,
     OcrOptionsPanel,
@@ -31,6 +31,7 @@
 
   // Constants
   const MAX_CONCURRENT_TRANSCODES = 1; // Sequential for video transcoding
+  const VIDEO_FORMATS = 'MP4, MKV, AVI, MOV';
 
   // State for result dialog
   let resultDialogOpen = $state(false);
@@ -200,7 +201,7 @@
     videoOcrStore.startProcessing(file.id);
     videoOcrStore.setFileStatus(file.id, 'extracting_frames');
     
-    let framesDir = '';
+    let framesDir: string | null = null;
     
     try {
       // Extract frames
@@ -212,8 +213,9 @@
         fps: videoOcrStore.config.frameRate,
         region: file.ocrRegion ?? null,
       });
-      [framesDir] = result;
-      const frameCount = result[1];
+      const [extractedFramesDir, frameCount] = result;
+      const framesDirForOcr = extractedFramesDir;
+      framesDir = extractedFramesDir;
       
       videoOcrStore.addLog('info', `Extracted ${frameCount} frames`, file.id);
       
@@ -222,7 +224,7 @@
       videoOcrStore.setPhase(file.id, 'ocr', 0, frameCount);
       
       const ocrResults = await invoke<Array<{ frameIndex: number; timeMs: number; text: string; confidence: number }>>('perform_ocr', {
-        framesDir,
+        framesDir: framesDirForOcr,
         fileId: file.id,
         language: videoOcrStore.config.language,
         fps: videoOcrStore.config.frameRate,
@@ -257,12 +259,16 @@
       videoOcrStore.addLog('info', formatOcrSubtitleAnalysis(analysis), file.id);
       
       // Clean up frames directory
-      await invoke('cleanup_ocr_frames', { framesDir });
+      if (framesDir) {
+        await invoke('cleanup_ocr_frames', { framesDir });
+      }
       
     } catch (error) {
       // Cleanup on error
       try {
-        await invoke('cleanup_ocr_frames', { framesDir });
+        if (framesDir) {
+          await invoke('cleanup_ocr_frames', { framesDir });
+        }
       } catch {
         // Ignore cleanup errors
       }
@@ -373,9 +379,15 @@
     </div>
 
     <!-- Content -->
-    <div class="flex-1 min-h-0 overflow-auto p-2">
+    <div class="flex-1 min-h-0 overflow-auto p-4">
       {#if videoOcrStore.videoFiles.length === 0}
-        <VideoDropZone disabled={videoOcrStore.isProcessing} />
+        <ImportDropZone
+          icon={Video}
+          title="Drop video files here"
+          formats={VIDEO_FORMATS}
+          onBrowse={handleAddFiles}
+          disabled={videoOcrStore.isProcessing}
+        />
       {:else}
         <VideoFileList
           files={videoOcrStore.videoFiles}
@@ -402,15 +414,15 @@
   </div>
 
   <!-- Center Panel: Video Preview -->
-  <div class="flex-1 flex flex-col overflow-hidden p-4">
+  <div class="flex-1 min-h-0 overflow-hidden p-4 grid grid-rows-[minmax(0,2fr)_minmax(0,1fr)] gap-4">
     <VideoPreview 
       file={videoOcrStore.selectedFile}
       onRegionChange={handleRegionChange}
-      class="shrink-0"
+      class="min-h-0"
     />
     
     <!-- Log Panel at bottom of center -->
-    <div class="pt-4 flex-1 min-h-36 flex flex-col overflow-hidden">
+    <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
       <OcrLogPanel 
         logs={videoOcrStore.logs}
         onClear={() => videoOcrStore.clearLogs()}

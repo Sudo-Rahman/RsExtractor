@@ -8,12 +8,12 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { open } from '@tauri-apps/plugin-dialog';
+  import { FileVideo, Trash2, Upload } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
 
   import { fileListStore } from '$lib/stores/files.svelte';
   import { extractionStore } from '$lib/stores/extraction.svelte';
   import { recentFilesStore } from '$lib/stores/recentFiles.svelte';
-  import { uiStore } from '$lib/stores/ui.svelte';
   import { scanFiles } from '$lib/services/ffprobe';
   import { extractTrack, buildOutputPath } from '$lib/services/ffmpeg';
   import { logAndToast, log } from '$lib/utils/log-toast';
@@ -21,18 +21,19 @@
 
   import {
     Button,
-    DropZone,
     FileList,
     TrackDetails,
     ExtractionPanel,
     BatchTrackSelector
   } from '$lib/components';
-  import { Trash2, Upload } from '@lucide/svelte';
+  import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
+
+  const SUPPORTED_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'] as const;
+  const SUPPORTED_FORMATS = SUPPORTED_EXTENSIONS.map((ext) => ext.slice(1).toUpperCase());
 
   export async function handleFileDrop(paths: string[]) {
-    const videoExtensions = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
     const videoPaths = paths.filter(p =>
-      videoExtensions.some(ext => p.toLowerCase().endsWith(ext))
+      SUPPORTED_EXTENSIONS.some(ext => p.toLowerCase().endsWith(ext))
     );
 
     if (videoPaths.length === 0) {
@@ -86,7 +87,7 @@
         multiple: true,
         filters: [{
           name: 'Media files',
-          extensions: ['mkv', 'mp4', 'avi', 'mov', 'webm', 'm4v', 'mks', 'mka']
+          extensions: SUPPORTED_EXTENSIONS.map(ext => ext.slice(1))
         }]
       });
 
@@ -297,7 +298,12 @@
 
     {#if fileListStore.files.length === 0}
       <div class="flex-1 p-4 overflow-auto">
-        <DropZone isDragging={uiStore.isDragging} />
+        <ImportDropZone
+          icon={FileVideo}
+          title="Drop media files here"
+          formats={SUPPORTED_FORMATS}
+          onBrowse={handleImportClick}
+        />
       </div>
     {:else}
       <div class="flex-1 min-h-0 overflow-auto p-2">
@@ -353,4 +359,3 @@
     />
   </div>
 </div>
-

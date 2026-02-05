@@ -1,4 +1,3 @@
-export { default as AudioDropZone } from './AudioDropZone.svelte';
 export { default as AudioFileList } from './AudioFileList.svelte';
 export { default as AudioDetails } from './AudioDetails.svelte';
 export { default as Waveform } from './Waveform.svelte';

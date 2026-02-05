@@ -21,6 +21,7 @@
   import { Separator } from '$lib/components/ui/separator';
   import * as Card from '$lib/components/ui/card';
   import * as Tabs from '$lib/components/ui/tabs';
+  import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
 
   ;
   ;
@@ -39,6 +40,7 @@
   ;
 
   const SUPPORTED_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
+  const SUPPORTED_FORMATS = SUPPORTED_EXTENSIONS.map((ext) => ext.slice(1).toUpperCase());
 
   let copiedField = $state<string | null>(null);
 
@@ -269,13 +271,17 @@
     <!-- File list -->
     <div class="flex-1 overflow-y-auto">
       {#if infoStore.files.length === 0}
-        <div class="p-8 text-center">
-          <Film class="size-12 text-muted-foreground/30 mx-auto mb-3" />
-          <p class="text-sm text-muted-foreground mb-4">Drop files here or click Add</p>
-          
+        <div class="p-4">
+          <ImportDropZone
+            icon={Film}
+            title="Drop media files here"
+            formats={SUPPORTED_FORMATS}
+            onBrowse={handleAddFiles}
+          />
+
           <!-- Import buttons -->
           {#if extractionFilesCount > 0 || mergeFilesCount > 0}
-            <div class="space-y-2">
+            <div class="space-y-2 mt-4">
               {#if extractionFilesCount > 0}
                 <Button variant="outline" size="sm" class="w-full" onclick={handleImportFromExtraction}>
                   <Import class="size-4 mr-2" />
