@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Folder, FolderOpen, Play, Loader2, CheckCircle } from '@lucide/svelte';
+  import { Folder, FolderOpen, Play, Loader2, CheckCircle, X } from '@lucide/svelte';
   import type { MergeOutputConfig } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
@@ -25,6 +25,9 @@
     onOutputNameChange?: (name: string) => void;
     onMerge?: () => void;
     onOpenFolder?: () => void;
+    onCancel?: () => void;
+    isCancelling?: boolean;
+    currentFileName?: string;
     class?: string;
   }
 
@@ -38,6 +41,9 @@
     onOutputNameChange,
     onMerge,
     onOpenFolder,
+    onCancel,
+    isCancelling = false,
+    currentFileName,
     class: className = ''
   }: MergeOutputPanelProps = $props();
 
@@ -120,6 +126,11 @@
               <span class="font-medium">{Math.round(progress)}%</span>
             </div>
             <Progress value={progress} />
+            {#if currentFileName}
+              <p class="text-xs text-muted-foreground truncate" title={currentFileName}>
+                Current file: {currentFileName}
+              </p>
+            {/if}
           </div>
         {/if}
       </div>
@@ -139,6 +150,29 @@
         <Play class="size-4 mr-2" />
         Merge again
       </Button>
+    {:else if isProcessing}
+      <Button
+        class="w-full"
+        variant="destructive"
+        onclick={onCancel}
+        disabled={!onCancel || isCancelling}
+      >
+        {#if isCancelling}
+          <Loader2 class="size-4 mr-2 animate-spin" />
+          Cancelling...
+        {:else}
+          <X class="size-4 mr-2" />
+          Cancel merge
+        {/if}
+      </Button>
+      <Button
+        class="w-full"
+        onclick={onMerge}
+        disabled={!canMerge}
+      >
+        <Loader2 class="size-4 mr-2 animate-spin" />
+        Merging...
+      </Button>
     {:else}
       <Button
         class="w-full"
@@ -156,4 +190,3 @@
     {/if}
   </Card.Footer>
 </Card.Root>
-

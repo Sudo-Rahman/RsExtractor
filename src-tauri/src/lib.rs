@@ -22,6 +22,14 @@ use ocr_rs::{OcrEngine, OcrEngineConfig, Backend};
 static TRANSCODE_PROCESS_IDS: LazyLock<Mutex<HashMap<String, u32>>> = 
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Store merge process IDs keyed by video path for individual cancellation
+static MERGE_PROCESS_IDS: LazyLock<Mutex<HashMap<String, u32>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Store merge output paths for cleanup on cancel/error
+static MERGE_OUTPUT_PATHS: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 // ============================================================================
 // CONSTANTS
 // ============================================================================
@@ -696,18 +704,20 @@ async fn cancel_transcode_file(input_path: String) -> Result<(), String> {
     };
     
     if let Some(pid) = pid {
-        #[cfg(unix)]
-        {
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
+        if pid != 0 {
+            #[cfg(unix)]
+            {
+                unsafe {
+                    libc::kill(pid as i32, libc::SIGTERM);
+                }
             }
-        }
-        
-        #[cfg(windows)]
-        {
-            let _ = std::process::Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/F"])
-                .output();
+            
+            #[cfg(windows)]
+            {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/F"])
+                    .output();
+            }
         }
     }
     
@@ -2158,18 +2168,20 @@ async fn cancel_ocr_operation(file_id: String) -> Result<(), String> {
     };
     
     if let Some(pid) = pid {
-        #[cfg(unix)]
-        {
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
+        if pid != 0 {
+            #[cfg(unix)]
+            {
+                unsafe {
+                    libc::kill(pid as i32, libc::SIGTERM);
+                }
             }
-        }
-        
-        #[cfg(windows)]
-        {
-            let _ = std::process::Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/F"])
-                .output();
+            
+            #[cfg(windows)]
+            {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/F"])
+                    .output();
+            }
         }
     }
     
@@ -2521,22 +2533,147 @@ async fn merge_tracks(
     // Output file
     args.push(output_path.clone());
 
-    let merge_future = async {
-        Command::new("ffmpeg")
-            .args(&args)
-            .output()
-            .await
+    let mut child = Command::new("ffmpeg")
+        .args(&args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to start ffmpeg: {}", e))?;
+
+    if let Some(pid) = child.id() {
+        if let Ok(mut guard) = MERGE_PROCESS_IDS.lock() {
+            guard.insert(video_path.clone(), pid);
+        }
+    }
+
+    if let Ok(mut guard) = MERGE_OUTPUT_PATHS.lock() {
+        guard.insert(video_path.clone(), output_path.clone());
+    }
+
+    let wait_future = async {
+        child.wait_with_output().await
     };
     
     // Execute with timeout
-    let output = timeout(FFMPEG_MERGE_TIMEOUT, merge_future)
+    let output = timeout(FFMPEG_MERGE_TIMEOUT, wait_future)
         .await
-        .map_err(|_| format!("FFmpeg merge timeout after {} seconds", FFMPEG_MERGE_TIMEOUT.as_secs()))?
-        .map_err(|e| format!("Failed to execute ffmpeg: {}", e))?;
+        .map_err(|_| {
+            if let Ok(mut guard) = MERGE_PROCESS_IDS.lock() {
+                guard.remove(&video_path);
+            }
+            if let Ok(mut guard) = MERGE_OUTPUT_PATHS.lock() {
+                guard.remove(&video_path);
+            }
+            format!("FFmpeg merge timeout after {} seconds", FFMPEG_MERGE_TIMEOUT.as_secs())
+        })?
+        .map_err(|e| {
+            if let Ok(mut guard) = MERGE_PROCESS_IDS.lock() {
+                guard.remove(&video_path);
+            }
+            if let Ok(mut guard) = MERGE_OUTPUT_PATHS.lock() {
+                guard.remove(&video_path);
+            }
+            format!("Failed to execute ffmpeg: {}", e)
+        })?;
+
+    if let Ok(mut guard) = MERGE_PROCESS_IDS.lock() {
+        guard.remove(&video_path);
+    }
+    if let Ok(mut guard) = MERGE_OUTPUT_PATHS.lock() {
+        guard.remove(&video_path);
+    }
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("FFmpeg merge failed: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Cancel a specific merge by video path
+#[tauri::command]
+async fn cancel_merge_file(video_path: String) -> Result<(), String> {
+    let pid = {
+        match MERGE_PROCESS_IDS.lock() {
+            Ok(mut guard) => guard.remove(&video_path),
+            Err(_) => return Err("Failed to acquire process lock".to_string()),
+        }
+    };
+
+    let output_path = {
+        match MERGE_OUTPUT_PATHS.lock() {
+            Ok(mut guard) => guard.remove(&video_path),
+            Err(_) => None,
+        }
+    };
+
+    if let Some(pid) = pid {
+        #[cfg(unix)]
+        {
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/F"])
+                .output();
+        }
+    }
+
+    if let Some(path) = output_path {
+        let _ = std::fs::remove_file(&path);
+    }
+
+    Ok(())
+}
+
+/// Cancel all ongoing merges
+#[tauri::command]
+async fn cancel_merge() -> Result<(), String> {
+    let pids: Vec<u32> = {
+        match MERGE_PROCESS_IDS.lock() {
+            Ok(mut guard) => {
+                let pids: Vec<u32> = guard.values().copied().collect();
+                guard.clear();
+                pids
+            },
+            Err(_) => return Err("Failed to acquire process lock".to_string()),
+        }
+    };
+
+    let output_paths: Vec<String> = {
+        match MERGE_OUTPUT_PATHS.lock() {
+            Ok(mut guard) => {
+                let paths: Vec<String> = guard.values().cloned().collect();
+                guard.clear();
+                paths
+            },
+            Err(_) => Vec::new(),
+        }
+    };
+
+    for pid in pids {
+        #[cfg(unix)]
+        {
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/F"])
+                .output();
+        }
+    }
+
+    for path in output_paths {
+        let _ = std::fs::remove_file(&path);
     }
 
     Ok(())
@@ -2558,6 +2695,8 @@ pub fn run() {
             check_ffmpeg,
             get_ffmpeg_version,
             merge_tracks,
+            cancel_merge,
+            cancel_merge_file,
             rename_file,
             copy_file,
             get_file_metadata,
