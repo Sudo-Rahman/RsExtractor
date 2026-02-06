@@ -28,8 +28,10 @@ export { analyzeOcrSubtitles, formatOcrSubtitleAnalysis } from "./utils/ocr-subt
 export type { OcrSubtitleAnalysis } from "./utils/ocr-subtitle-analysis";
 export {
   normalizeOcrSubtitle,
+  toRustOcrFrame,
+  toRustOcrFrames,
   normalizeOcrSubtitles,
   toRustOcrSubtitle,
   toRustOcrSubtitles,
 } from "./utils/ocr-subtitle-adapter";
-export type { OcrSubtitleLike, RustOcrSubtitle } from "./utils/ocr-subtitle-adapter";
+export type { OcrRawFrameLike, OcrSubtitleLike, RustOcrRawFrame, RustOcrSubtitle } from "./utils/ocr-subtitle-adapter";

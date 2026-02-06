@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { Calendar, ChevronLeft, ChevronRight, Copy, Download, Check, Clock, Info } from '@lucide/svelte';
+  import { Calendar, ChevronLeft, ChevronRight, Copy, Download, Check, Clock, Info, Loader2 } from '@lucide/svelte';
   import { save } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
   import { toast } from 'svelte-sonner';
 
-  import type { OcrOutputFormat, OcrVideoFile, OcrVersion } from '$lib/types/video-ocr';
+  import type { OcrOutputFormat, OcrSubtitle, OcrVideoFile, OcrVersion } from '$lib/types/video-ocr';
   import { OCR_OUTPUT_FORMATS } from '$lib/types/video-ocr';
   import { normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils/ocr-subtitle-adapter';
   import * as Dialog from '$lib/components/ui/dialog';
@@ -29,22 +29,71 @@
   let currentVersionIndex = $state(0);
   let selectedFormat = $state<OcrOutputFormat>('srt');
   let copied = $state(false);
+  let previewText = $state('');
+  let isPreviewPending = $state(false);
+  let versionsLoading = $state(false);
+  let loadedVersions = $state.raw<OcrVersion[]>([]);
+  const previewCache = new Map<string, string>();
+  const DIALOG_OPEN_SETTLE_MS = 320;
 
   $effect(() => {
-    if (file && file.ocrVersions.length > 0) {
-      currentVersionIndex = file.ocrVersions.length - 1;
-    } else {
+    if (!open) {
+      versionsLoading = false;
+      loadedVersions = [];
       currentVersionIndex = 0;
+      return;
     }
+
+    if (!file) {
+      versionsLoading = true;
+      loadedVersions = [];
+      currentVersionIndex = 0;
+      return;
+    }
+
+    versionsLoading = true;
+    loadedVersions = [];
+    currentVersionIndex = 0;
+    let cancelled = false;
+    let frameId: number | null = null;
+
+    const timeoutId = window.setTimeout(() => {
+      frameId = requestAnimationFrame(() => {
+        if (cancelled) {
+          return;
+        }
+
+        loadedVersions = file.ocrVersions.map((version) => ({
+          ...version,
+          rawOcr: [],
+        }));
+        currentVersionIndex = loadedVersions.length > 0 ? loadedVersions.length - 1 : 0;
+        versionsLoading = false;
+      });
+    }, DIALOG_OPEN_SETTLE_MS);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
+    };
   });
 
-  const versions = $derived(file?.ocrVersions ?? []);
+  const versions = $derived(loadedVersions);
   const currentVersion = $derived(versions[currentVersionIndex] ?? null);
   const hasMultipleVersions = $derived(versions.length > 1);
-  const normalizedSubtitles = $derived.by(() =>
-    normalizeOcrSubtitles(currentVersion?.finalSubtitles ?? [])
-  );
+  const normalizedSubtitles = $derived.by(() => {
+    if (!open || versionsLoading || !currentVersion) {
+      return [];
+    }
+    return normalizeOcrSubtitles(currentVersion.finalSubtitles);
+  });
   const baseName = $derived((file?.name ?? 'video').replace(/\.[^/.]+$/, ''));
+  const currentPreviewCacheKey = $derived(
+    file && currentVersion ? `${file.path}:${currentVersion.id}:${selectedFormat}` : null
+  );
 
   function formatDate(isoDate: string): string {
     const date = new Date(isoDate);
@@ -73,8 +122,7 @@
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
   }
 
-  function buildFormattedPreview(format: OcrOutputFormat, version: OcrVersion): string {
-    const subtitles = normalizeOcrSubtitles(version.finalSubtitles);
+  function buildFormattedPreview(format: OcrOutputFormat, subtitles: OcrSubtitle[]): string {
     if (subtitles.length === 0) {
       return '';
     }
@@ -99,7 +147,43 @@
       .join('\n');
   }
 
-  const previewText = $derived(currentVersion ? buildFormattedPreview(selectedFormat, currentVersion) : '');
+  $effect(() => {
+    if (!open || versionsLoading || !currentVersion || !currentPreviewCacheKey) {
+      previewText = '';
+      isPreviewPending = false;
+      return;
+    }
+
+    const cacheKey = currentPreviewCacheKey;
+    const cachedPreview = previewCache.get(cacheKey);
+    if (cachedPreview !== undefined) {
+      previewText = cachedPreview;
+      isPreviewPending = false;
+      return;
+    }
+
+    isPreviewPending = true;
+    previewText = '';
+    const subtitles = normalizedSubtitles;
+    const format = selectedFormat;
+    let cancelled = false;
+
+    const frameId = requestAnimationFrame(() => {
+      if (cancelled) {
+        return;
+      }
+
+      const generatedPreview = buildFormattedPreview(format, subtitles);
+      previewCache.set(cacheKey, generatedPreview);
+      previewText = generatedPreview;
+      isPreviewPending = false;
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frameId);
+    };
+  });
 
   function sanitizeVersionName(name: string): string {
     return name
@@ -190,7 +274,12 @@
       <Dialog.Description>{file?.name ?? 'Unknown video'}</Dialog.Description>
     </Dialog.Header>
 
-    {#if currentVersion}
+    {#if versionsLoading || !file}
+      <div class="flex flex-col items-center justify-center h-64 text-muted-foreground gap-2">
+        <Loader2 class="size-5 animate-spin" />
+        <p class="text-sm">Loading versions...</p>
+      </div>
+    {:else if currentVersion}
       {#if hasMultipleVersions}
         <div class="flex items-center justify-between py-2">
           <Button
@@ -267,8 +356,10 @@
 
       <div class="flex-1">
         <ScrollArea class="overflow-scroll h-[calc(50vh-200px)] rounded-md border bg-muted/30">
-          {#if previewText}
-            <pre class="p-4 text-xs whitespace-pre-wrap leading-relaxed font-mono">{previewText}</pre>
+          {#if isPreviewPending}
+            <p class="p-6 text-sm text-muted-foreground text-center">Preparing preview...</p>
+          {:else if previewText}
+            <pre class="p-4 text-xs whitespace-pre leading-relaxed font-mono">{previewText}</pre>
           {:else}
             <p class="p-6 text-sm text-muted-foreground text-center">No subtitles in this version</p>
           {/if}
@@ -285,7 +376,7 @@
         variant="outline"
         size="sm"
         onclick={handleCopy}
-        disabled={!currentVersion}
+        disabled={!currentVersion || !previewText || isPreviewPending || versionsLoading}
       >
         {#if copied}
           <Check class="size-4 mr-2" />
@@ -299,7 +390,7 @@
         variant="outline"
         size="sm"
         onclick={handleExport}
-        disabled={!currentVersion}
+        disabled={!currentVersion || versionsLoading}
       >
         <Download class="size-4 mr-2" />
         Export

@@ -30,7 +30,7 @@
   import { settingsStore, videoOcrStore } from '$lib/stores';
   import { cleanupOcrSubtitlesWithAi } from '$lib/services/ocr-ai-cleanup';
   import { createOcrVersion, generateOcrVersionName, loadOcrData, saveOcrData } from '$lib/services/ocr-storage';
-  import { analyzeOcrSubtitles, formatOcrSubtitleAnalysis, normalizeOcrSubtitles } from '$lib/utils';
+  import { analyzeOcrSubtitles, formatOcrSubtitleAnalysis, normalizeOcrSubtitles, toRustOcrFrames } from '$lib/utils';
   import { logAndToast } from '$lib/utils/log-toast';
   import { scanFile } from '$lib/services/ffprobe';
 
@@ -59,10 +59,10 @@
   let { onNavigateToSettings }: VideoOcrViewProps = $props();
 
   let resultDialogOpen = $state(false);
-  let resultDialogFile = $state<OcrVideoFile | null>(null);
+  let resultDialogFile = $state.raw<OcrVideoFile | null>(null);
 
   let retryDialogOpen = $state(false);
-  let retryDialogFile = $state<OcrVideoFile | null>(null);
+  let retryDialogFile = $state.raw<OcrVideoFile | null>(null);
 
   let unlistenOcrProgress: UnlistenFn | null = null;
   const aiCleanupControllers = new Map<string, AbortController>();
@@ -224,7 +224,7 @@
 
     const rawSubtitles = await invoke<OcrSubtitleLike[]>('generate_subtitles_from_ocr', {
       fileId: file.id,
-      frameResults: rawOcr,
+      frameResults: toRustOcrFrames(rawOcr),
       fps: config.frameRate,
       minConfidence: config.confidenceThreshold,
       cleanup: buildCleanupOptions(config, disableCleanup),
@@ -322,7 +322,7 @@
         videoOcrStore.addLog('warning', 'Raw OCR not found. Falling back to full pipeline.', file.id);
         toast.info('Raw OCR not found for partial retry. Running full pipeline.');
       } else {
-        rawSource = [...sourceVersion.rawOcr];
+        rawSource = sourceVersion.rawOcr;
       }
     }
 
@@ -679,6 +679,8 @@
   <div class="flex-1 min-h-0 overflow-hidden p-4 grid grid-rows-[minmax(0,2fr)_minmax(0,1fr)] gap-4">
     <VideoPreview
       file={videoOcrStore.selectedFile}
+      showSubtitles={!resultDialogOpen && !retryDialogOpen}
+      suspendPlayback={resultDialogOpen || retryDialogOpen}
       onRegionChange={handleRegionChange}
       class="min-h-0"
     />

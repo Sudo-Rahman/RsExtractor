@@ -13,6 +13,7 @@
   interface VideoPreviewProps {
     file?: OcrVideoFile;
     showSubtitles?: boolean;
+    suspendPlayback?: boolean;
     onRegionChange?: (region: OcrRegion | undefined) => void;
     class?: string;
   }
@@ -20,6 +21,7 @@
   let {
     file,
     showSubtitles = true,
+    suspendPlayback = false,
     onRegionChange,
     class: className = '',
   }: VideoPreviewProps = $props();
@@ -29,6 +31,7 @@
   let currentTime = $state(0);
   let isRegionMode = $state(false);
   let region = $state<OcrRegion | undefined>(undefined);
+  let resumePlayback = $state(false);
   
   // Video bounds within container (for letterboxed videos)
   // These are relative values (0-1) within the container
@@ -58,6 +61,30 @@
     }
   });
 
+  // Pause playback while dialogs are open to reduce background render work
+  $effect(() => {
+    if (!videoEl) {
+      return;
+    }
+
+    if (suspendPlayback) {
+      resumePlayback = !videoEl.paused;
+      if (!videoEl.paused) {
+        videoEl.pause();
+      }
+      return;
+    }
+
+    if (!resumePlayback) {
+      return;
+    }
+
+    resumePlayback = false;
+    void videoEl.play().catch(() => {
+      // Ignore autoplay restrictions
+    });
+  });
+
   // Sync region with file's region
   $effect(() => {
     if (file?.ocrRegion) {
@@ -72,16 +99,38 @@
     file?.previewPath ? convertFileSrc(file.previewPath) : undefined
   );
 
+  function findSubtitleAtTime(subtitles: OcrSubtitle[], timeMs: number): OcrSubtitle | undefined {
+    let left = 0;
+    let right = subtitles.length - 1;
+
+    while (left <= right) {
+      const middle = Math.floor((left + right) / 2);
+      const subtitle = subtitles[middle];
+
+      if (timeMs < subtitle.startTime) {
+        right = middle - 1;
+      } else if (timeMs > subtitle.endTime) {
+        left = middle + 1;
+      } else {
+        return subtitle;
+      }
+    }
+
+    return undefined;
+  }
+
   // Current subtitle based on video time
   const currentSubtitle = $derived.by(() => {
     if (!showSubtitles || !file?.subtitles?.length) return undefined;
     const timeMs = currentTime * 1000;
-    return file.subtitles.find(
-      (sub) => timeMs >= sub.startTime && timeMs <= sub.endTime
-    );
+    return findSubtitleAtTime(file.subtitles, timeMs);
   });
 
   function handleTimeUpdate() {
+    if (!showSubtitles) {
+      return;
+    }
+
     if (videoEl) {
       currentTime = videoEl.currentTime;
     }

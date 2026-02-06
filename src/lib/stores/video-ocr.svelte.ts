@@ -22,7 +22,7 @@ import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_REGION } from '$lib/types';
 // ============================================================================
 
 // Video files state
-let videoFiles = $state<OcrVideoFile[]>([]);
+let videoFiles = $state.raw<OcrVideoFile[]>([]);
 let selectedFileId = $state<string | null>(null);
 
 // OCR configuration
