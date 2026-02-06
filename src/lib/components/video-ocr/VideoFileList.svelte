@@ -15,7 +15,6 @@
     onRemove: (id: string) => void;
     onCancel?: (id: string) => void;
     onViewResult?: (file: OcrVideoFile) => void;
-    onReprocess?: (file: OcrVideoFile) => void;
     onRetry?: (file: OcrVideoFile) => void;
     disabled?: boolean;
   }
@@ -27,7 +26,6 @@
     onRemove,
     onCancel,
     onViewResult,
-    onReprocess,
     onRetry,
     disabled = false 
   }: VideoFileListProps = $props();
@@ -56,7 +54,7 @@
   {#each files as file (file.id)}
     {@const isSelected = file.id === selectedId}
     {@const processing = isProcessing(file.status)}
-    {@const subtitleCount = file.subtitles?.length ?? 0}
+    {@const versionCount = file.ocrVersions?.length ?? 0}
     <button
       class={cn(
         "w-full text-left p-3 rounded-lg border transition-colors",
@@ -124,7 +122,7 @@
           <!-- Action buttons row -->
           <div class="flex items-center gap-1">
             <!-- View results button -->
-            {#if subtitleCount > 0 && onViewResult}
+            {#if versionCount > 0 && onViewResult}
               <Button 
                 variant="ghost" 
                 size="icon" 
@@ -139,8 +137,8 @@
               </Button>
             {/if}
 
-            <!-- Retry button for error status -->
-            {#if file.status === 'error' && onRetry}
+            <!-- Retry button for completed/error status -->
+            {#if (file.status === 'error' || file.status === 'completed') && onRetry}
               <Button 
                 variant="ghost" 
                 size="icon" 
@@ -150,22 +148,6 @@
                   onRetry(file); 
                 }}
                 title="Retry"
-              >
-                <RotateCw class="size-3.5" />
-              </Button>
-            {/if}
-
-            <!-- Reprocess button for completed status -->
-            {#if file.status === 'completed' && onReprocess}
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                class="size-7 text-muted-foreground hover:text-primary"
-                onclick={(e: MouseEvent) => { 
-                  e.stopPropagation(); 
-                  onReprocess(file); 
-                }}
-                title="Run OCR again"
               >
                 <RotateCw class="size-3.5" />
               </Button>
@@ -203,10 +185,10 @@
             {/if}
           </div>
           
-          <!-- Subtitle count badge -->
-          {#if subtitleCount > 0}
+          <!-- Version count badge -->
+          {#if versionCount > 0}
             <Badge variant="secondary" class="text-[10px] px-1.5 py-0">
-              {subtitleCount} subtitle{subtitleCount > 1 ? 's' : ''}
+              {versionCount} version{versionCount > 1 ? 's' : ''}
             </Badge>
           {/if}
         </div>

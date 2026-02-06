@@ -9,6 +9,7 @@ import type {
   OcrConfig,
   OcrRegion,
   OcrSubtitle,
+  OcrVersion,
   OcrProgress,
   OcrPhase,
   OcrLogEntry,
@@ -69,6 +70,7 @@ function createEmptyVideoFile(path: string, id?: string): OcrVideoFile {
     status: 'pending',
     ocrRegion: { ...DEFAULT_OCR_REGION },
     subtitles: [],
+    ocrVersions: [],
   };
 }
 
@@ -105,13 +107,13 @@ export const videoOcrStore = {
   },
 
   get filesWithSubtitles(): OcrVideoFile[] {
-    return videoFiles.filter(f => f.subtitles.length > 0);
+    return videoFiles.filter(f => f.subtitles.length > 0 || f.ocrVersions.length > 0);
   },
 
   get allCompleted(): boolean {
     return videoFiles.length > 0 && 
       videoFiles.every(f => f.status === 'completed' || f.status === 'error') &&
-      videoFiles.some(f => f.subtitles.length > 0);
+      videoFiles.some(f => f.subtitles.length > 0 || f.ocrVersions.length > 0);
   },
 
   get totalSubtitles(): number {
@@ -259,7 +261,7 @@ export const videoOcrStore = {
     videoFiles = videoFiles.map(f =>
       f.id === fileId ? {
         ...f,
-        status: 'ready' as const,
+        status: f.ocrVersions.length > 0 ? 'completed' as const : 'ready' as const,
         isTranscoding: false,
         transcodingProgress: 100,
         previewPath
@@ -317,12 +319,44 @@ export const videoOcrStore = {
   // -------------------------------------------------------------------------
   // Actions - Subtitles
   // -------------------------------------------------------------------------
+  setOcrVersions(fileId: string, versions: OcrVersion[]) {
+    const latest = versions[versions.length - 1];
+    videoFiles = videoFiles.map(f =>
+      f.id === fileId ? {
+        ...f,
+        ocrVersions: [...versions],
+        subtitles: latest?.finalSubtitles ?? f.subtitles,
+        status: versions.length > 0 ? 'completed' as const : f.status,
+        progress: undefined,
+        error: undefined,
+      } : f
+    );
+  },
+
+  addOcrVersion(fileId: string, version: OcrVersion) {
+    videoFiles = videoFiles.map(f => {
+      if (f.id !== fileId) {
+        return f;
+      }
+
+      return {
+        ...f,
+        ocrVersions: [...f.ocrVersions, version],
+        subtitles: [...version.finalSubtitles],
+        status: 'completed' as const,
+        progress: undefined,
+        error: undefined,
+      };
+    });
+  },
+
   setSubtitles(fileId: string, subtitles: OcrSubtitle[]) {
     videoFiles = videoFiles.map(f =>
       f.id === fileId ? {
         ...f,
         subtitles,
-        status: 'completed' as const
+        status: 'completed' as const,
+        progress: undefined,
       } : f
     );
   },
@@ -391,7 +425,7 @@ export const videoOcrStore = {
       if (f.id === fileId && isProcessingStatus(f.status)) {
         return {
           ...f,
-          status: f.subtitles.length > 0 ? 'completed' as const : 'ready' as const,
+          status: (f.ocrVersions.length > 0 || f.subtitles.length > 0) ? 'completed' as const : 'ready' as const,
           progress: undefined,
           error: undefined
         };
@@ -411,7 +445,7 @@ export const videoOcrStore = {
         cancelledFileIds = new Set([...cancelledFileIds, f.id]);
         return {
           ...f,
-          status: f.subtitles.length > 0 ? 'completed' as const : 'ready' as const,
+          status: (f.ocrVersions.length > 0 || f.subtitles.length > 0) ? 'completed' as const : 'ready' as const,
           progress: undefined,
           error: undefined
         };

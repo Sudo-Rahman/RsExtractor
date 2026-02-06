@@ -4,3 +4,6 @@ export * from './llm-client';
 export * from './ocr-ai-cleanup';
 export * from './translation';
 export * from './presets';
+export * from './rsext-storage';
+export * from './transcription-storage';
+export * from './ocr-storage';

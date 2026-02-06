@@ -31,6 +31,7 @@ export interface OcrVideoFile {
   
   // OCR results
   subtitles: OcrSubtitle[];
+  ocrVersions: OcrVersion[];
   
   // Progress tracking
   progress?: OcrProgress;
@@ -75,6 +76,29 @@ export interface OcrSubtitle {
   startTime: number;   // Start time in milliseconds
   endTime: number;     // End time in milliseconds
   confidence: number;  // OCR confidence (0-1)
+}
+
+export interface OcrRawFrame {
+  frameIndex: number;
+  timeMs: number;
+  text: string;
+  confidence: number;
+}
+
+export type OcrRetryMode =
+  | 'full_pipeline'
+  | 'cleanup_only'
+  | 'cleanup_and_ai'
+  | 'ai_only';
+
+export interface OcrVersion {
+  id: string;
+  name: string;
+  createdAt: string;
+  mode: OcrRetryMode;
+  configSnapshot: OcrConfig;
+  rawOcr: OcrRawFrame[];
+  finalSubtitles: OcrSubtitle[];
 }
 
 // ============================================================================
@@ -234,16 +258,17 @@ export function isVideoExtension(ext: string): ext is VideoExtension {
 // OCR STORAGE (for persistence)
 // ============================================================================
 
-export interface OcrStorageData {
+export interface VideoOcrPersistenceData {
   version: 1;
   videoPath: string;
   previewPath?: string;
   ocrRegion?: OcrRegion;
-  subtitles: OcrSubtitle[];
-  config: OcrConfig;
+  ocrVersions: OcrVersion[];
   createdAt: string;
   updatedAt: string;
 }
+
+export type OcrStorageData = VideoOcrPersistenceData;
 
 // ============================================================================
 // TAURI EVENT PAYLOADS

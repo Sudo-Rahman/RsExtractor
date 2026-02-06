@@ -10,45 +10,63 @@
   import { open } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { exists } from '@tauri-apps/plugin-fs';
   import { toast } from 'svelte-sonner';
 
-  import type { OcrModelsStatus, OcrProgressEvent, OcrRegion, OcrSubtitle, OcrVideoFile } from '$lib/types';
+  import type {
+    OcrConfig,
+    OcrModelsStatus,
+    OcrProgressEvent,
+    OcrRawFrame,
+    OcrRegion,
+    OcrRetryMode,
+    OcrSubtitle,
+    OcrVideoFile,
+    OcrVersion,
+    VideoOcrPersistenceData,
+  } from '$lib/types';
   import type { OcrSubtitleLike } from '$lib/utils';
   import { VIDEO_EXTENSIONS } from '$lib/types';
   import { settingsStore, videoOcrStore } from '$lib/stores';
   import { cleanupOcrSubtitlesWithAi } from '$lib/services/ocr-ai-cleanup';
+  import { createOcrVersion, generateOcrVersionName, loadOcrData, saveOcrData } from '$lib/services/ocr-storage';
   import { analyzeOcrSubtitles, formatOcrSubtitleAnalysis, normalizeOcrSubtitles } from '$lib/utils';
   import { logAndToast } from '$lib/utils/log-toast';
   import { scanFile } from '$lib/services/ffprobe';
 
   import { Button } from '$lib/components/ui/button';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
-  import { 
-    VideoFileList, 
+  import {
+    VideoFileList,
     VideoPreview,
     OcrOptionsPanel,
     OcrLogPanel,
-    OcrResultDialog 
+    OcrResultDialog,
+    OcrRetryDialog,
   } from '$lib/components/video-ocr';
 
-  // Constants
   const VIDEO_FORMATS = 'MP4, MKV, AVI, MOV';
 
   interface VideoOcrViewProps {
     onNavigateToSettings?: () => void;
   }
 
+  interface ProcessFileResult {
+    success: boolean;
+    effectiveMode: OcrRetryMode;
+  }
+
   let { onNavigateToSettings }: VideoOcrViewProps = $props();
 
-  // State for result dialog
   let resultDialogOpen = $state(false);
   let resultDialogFile = $state<OcrVideoFile | null>(null);
 
-  // Event listener cleanup
+  let retryDialogOpen = $state(false);
+  let retryDialogFile = $state<OcrVideoFile | null>(null);
+
   let unlistenOcrProgress: UnlistenFn | null = null;
   const aiCleanupControllers = new Map<string, AbortController>();
 
-  // Initialize on mount
   onMount(async () => {
     if (!settingsStore.isLoaded) {
       try {
@@ -58,12 +76,11 @@
       }
     }
 
-    // Check OCR models status
     if (!videoOcrStore.modelsChecked) {
       try {
         const status = await invoke<OcrModelsStatus>('check_ocr_models');
         videoOcrStore.setModelsStatus(status);
-        
+
         if (!status.installed) {
           toast.warning('OCR models not found. Some languages may not be available.');
         }
@@ -72,29 +89,24 @@
       }
     }
 
-    // Set up event listener for OCR progress (includes transcoding phase)
-    unlistenOcrProgress = await listen<OcrProgressEvent>(
-      'ocr-progress',
-      (event) => {
-        const { fileId, phase, current, total, message } = event.payload;
-        
-        // Handle transcoding phase separately
-        if (phase === 'transcoding') {
-          videoOcrStore.updateTranscodingProgress(fileId, current);
-        } else {
-          videoOcrStore.updateProgress(fileId, { 
-            phase, 
-            current, 
-            total, 
-            percentage: total > 0 ? Math.round((current / total) * 100) : 0, 
-            message 
-          });
-        }
+    unlistenOcrProgress = await listen<OcrProgressEvent>('ocr-progress', (event) => {
+      const { fileId, phase, current, total, message } = event.payload;
+
+      if (phase === 'transcoding') {
+        videoOcrStore.updateTranscodingProgress(fileId, current);
+        return;
       }
-    );
+
+      videoOcrStore.updateProgress(fileId, {
+        phase,
+        current,
+        total,
+        percentage: total > 0 ? Math.round((current / total) * 100) : 0,
+        message,
+      });
+    });
   });
 
-  // Cleanup on destroy
   onDestroy(() => {
     for (const controller of aiCleanupControllers.values()) {
       controller.abort();
@@ -103,11 +115,277 @@
     unlistenOcrProgress?.();
   });
 
-  // Exposed API for drag & drop
+  function getFreshFile(fileId: string): OcrVideoFile | undefined {
+    return videoOcrStore.videoFiles.find((file) => file.id === fileId);
+  }
+
+  function getLatestRawVersion(file: OcrVideoFile): OcrVersion | null {
+    for (let i = file.ocrVersions.length - 1; i >= 0; i -= 1) {
+      const version = file.ocrVersions[i];
+      if (version.rawOcr.length > 0) {
+        return version;
+      }
+    }
+    return null;
+  }
+
+  function buildCleanupOptions(config: OcrConfig, disableCleanup: boolean) {
+    if (disableCleanup) {
+      return {
+        mergeSimilar: false,
+        similarityThreshold: config.similarityThreshold,
+        maxGapMs: 0,
+        minCueDurationMs: 0,
+        filterUrlLike: false,
+      };
+    }
+
+    return {
+      mergeSimilar: config.mergeSimilar,
+      similarityThreshold: config.similarityThreshold,
+      maxGapMs: config.maxGapMs,
+      minCueDurationMs: config.minCueDurationMs,
+      filterUrlLike: config.filterUrlLike,
+    };
+  }
+
+  async function persistFileData(fileId: string): Promise<boolean> {
+    const file = getFreshFile(fileId);
+    if (!file) {
+      return false;
+    }
+
+    const existingData = await loadOcrData(file.path);
+    const now = new Date().toISOString();
+
+    const payload: VideoOcrPersistenceData = {
+      version: 1,
+      videoPath: file.path,
+      previewPath: file.previewPath,
+      ocrRegion: file.ocrRegion,
+      ocrVersions: file.ocrVersions,
+      createdAt: existingData?.createdAt ?? now,
+      updatedAt: now,
+    };
+
+    return saveOcrData(file.path, payload);
+  }
+
+  async function runAiCleanup(fileId: string, subtitles: OcrSubtitle[], config: OcrConfig): Promise<OcrSubtitle[]> {
+    const controller = new AbortController();
+    aiCleanupControllers.set(fileId, controller);
+    videoOcrStore.addLog('info', 'Running AI subtitle cleanup...', fileId);
+
+    try {
+      const cleanupResult = await cleanupOcrSubtitlesWithAi(subtitles, {
+        provider: config.aiCleanupProvider,
+        model: config.aiCleanupModel,
+        maxGapMs: config.maxGapMs,
+        signal: controller.signal,
+      });
+
+      if (cleanupResult.cancelled || controller.signal.aborted || videoOcrStore.isFileCancelled(fileId)) {
+        throw new Error('OCR cancelled');
+      }
+
+      if (cleanupResult.success) {
+        videoOcrStore.addLog(
+          'info',
+          `AI cleanup completed (${cleanupResult.batchesProcessed}/${cleanupResult.totalBatches} batches, ${subtitles.length} -> ${cleanupResult.subtitles.length} subtitles)`,
+          fileId,
+        );
+        return cleanupResult.subtitles;
+      }
+
+      videoOcrStore.addLog(
+        'warning',
+        `AI cleanup failed, using non-AI subtitles: ${cleanupResult.error ?? 'Unknown error'}`,
+        fileId,
+      );
+      return subtitles;
+    } finally {
+      aiCleanupControllers.delete(fileId);
+    }
+  }
+
+  async function runFromRaw(
+    file: OcrVideoFile,
+    rawOcr: OcrRawFrame[],
+    mode: OcrRetryMode,
+    config: OcrConfig,
+  ): Promise<OcrSubtitle[]> {
+    const disableCleanup = mode === 'ai_only';
+    const shouldRunAi = mode === 'cleanup_and_ai'
+      || mode === 'ai_only'
+      || (mode === 'full_pipeline' && config.aiCleanupEnabled);
+
+    videoOcrStore.setFileStatus(file.id, 'generating_subs');
+    videoOcrStore.setPhase(file.id, 'generating', 0, 1);
+
+    const rawSubtitles = await invoke<OcrSubtitleLike[]>('generate_subtitles_from_ocr', {
+      fileId: file.id,
+      frameResults: rawOcr,
+      fps: config.frameRate,
+      minConfidence: config.confidenceThreshold,
+      cleanup: buildCleanupOptions(config, disableCleanup),
+    });
+
+    const subtitles = normalizeOcrSubtitles(rawSubtitles);
+    if (rawSubtitles.length > 0 && subtitles.length === 0) {
+      throw new Error('Failed to parse OCR subtitle timing data');
+    }
+    if (subtitles.length !== rawSubtitles.length) {
+      videoOcrStore.addLog(
+        'warning',
+        `Dropped ${rawSubtitles.length - subtitles.length} subtitle(s) with invalid timing`,
+        file.id,
+      );
+    }
+
+    let finalSubtitles = subtitles;
+    if (shouldRunAi) {
+      finalSubtitles = await runAiCleanup(file.id, subtitles, config);
+    }
+
+    return finalSubtitles;
+  }
+
+  async function runFullPipeline(
+    file: OcrVideoFile,
+    config: OcrConfig,
+  ): Promise<{ rawOcr: OcrRawFrame[]; finalSubtitles: OcrSubtitle[] }> {
+    let framesDir: string | null = null;
+
+    try {
+      let current = getFreshFile(file.id) ?? file;
+      if (!current.previewPath) {
+        const transcodeOk = await transcodeFileForPreview(current);
+        if (!transcodeOk) {
+          throw new Error('Preview transcoding failed');
+        }
+      }
+
+      current = getFreshFile(file.id) ?? current;
+
+      videoOcrStore.setFileStatus(file.id, 'extracting_frames');
+      videoOcrStore.setPhase(file.id, 'extracting', 0, 100);
+
+      const [extractedFramesDir, frameCount] = await invoke<[string, number]>('extract_ocr_frames', {
+        videoPath: current.previewPath || current.path,
+        fileId: file.id,
+        fps: config.frameRate,
+        region: current.ocrRegion ?? null,
+      });
+      framesDir = extractedFramesDir;
+      videoOcrStore.addLog('info', `Extracted ${frameCount} frames`, file.id);
+
+      videoOcrStore.setFileStatus(file.id, 'ocr_processing');
+      videoOcrStore.setPhase(file.id, 'ocr', 0, frameCount);
+
+      const rawOcr = await invoke<OcrRawFrame[]>('perform_ocr', {
+        framesDir: extractedFramesDir,
+        fileId: file.id,
+        language: config.language,
+        fps: config.frameRate,
+        useGpu: config.useGpu,
+        numWorkers: config.threadCount,
+      });
+      videoOcrStore.addLog('info', `OCR processed ${rawOcr.length} frames with text`, file.id);
+
+      const finalSubtitles = await runFromRaw(file, rawOcr, 'full_pipeline', config);
+      return { rawOcr, finalSubtitles };
+    } finally {
+      if (framesDir) {
+        try {
+          await invoke('cleanup_ocr_frames', { framesDir });
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+    }
+  }
+
+  async function processFileOcr(
+    file: OcrVideoFile,
+    versionName: string,
+    mode: OcrRetryMode,
+    config: OcrConfig,
+  ): Promise<ProcessFileResult> {
+    let effectiveMode = mode;
+    let rawSource: OcrRawFrame[] = [];
+
+    const freshFile = getFreshFile(file.id) ?? file;
+    if (mode !== 'full_pipeline') {
+      const sourceVersion = getLatestRawVersion(freshFile);
+      if (!sourceVersion) {
+        effectiveMode = 'full_pipeline';
+        videoOcrStore.addLog('warning', 'Raw OCR not found. Falling back to full pipeline.', file.id);
+        toast.info('Raw OCR not found for partial retry. Running full pipeline.');
+      } else {
+        rawSource = [...sourceVersion.rawOcr];
+      }
+    }
+
+    try {
+      let rawOcr: OcrRawFrame[];
+      let finalSubtitles: OcrSubtitle[];
+
+      if (effectiveMode === 'full_pipeline') {
+        const result = await runFullPipeline(file, config);
+        rawOcr = result.rawOcr;
+        finalSubtitles = result.finalSubtitles;
+      } else {
+        rawOcr = rawSource;
+        finalSubtitles = await runFromRaw(file, rawOcr, effectiveMode, config);
+      }
+
+      const version = createOcrVersion(
+        versionName,
+        effectiveMode,
+        config,
+        rawOcr,
+        finalSubtitles,
+      );
+
+      videoOcrStore.addOcrVersion(file.id, version);
+      const saved = await persistFileData(file.id);
+      if (!saved) {
+        videoOcrStore.addLog('warning', 'Failed to persist OCR version to rsext file', file.id);
+      }
+
+      videoOcrStore.addLog('info', `Generated ${finalSubtitles.length} subtitles`, file.id);
+      const analysis = analyzeOcrSubtitles(finalSubtitles);
+      videoOcrStore.addLog('info', formatOcrSubtitleAnalysis(analysis), file.id);
+
+      return { success: true, effectiveMode };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'OCR failed';
+      const cancelled = videoOcrStore.isFileCancelled(file.id) || errorMsg.toLowerCase().includes('cancel');
+
+      if (cancelled) {
+        const latestFile = getFreshFile(file.id);
+        videoOcrStore.updateFile(file.id, {
+          status: (latestFile?.ocrVersions.length ?? 0) > 0 ? 'completed' : 'ready',
+          progress: undefined,
+          error: undefined,
+        });
+      } else {
+        videoOcrStore.failFile(file.id, errorMsg);
+        logAndToast.error({
+          source: 'system',
+          title: `OCR failed: ${file.name}`,
+          details: errorMsg,
+        });
+      }
+
+      return { success: false, effectiveMode };
+    }
+  }
+
   export async function handleFileDrop(paths: string[]) {
     const videoExtensions = new Set(VIDEO_EXTENSIONS);
-    const videoPaths = paths.filter(p => {
-      const ext = p.split('.').pop()?.toLowerCase() || '';
+    const videoPaths = paths.filter((path) => {
+      const ext = path.split('.').pop()?.toLowerCase() || '';
       return videoExtensions.has(ext as typeof VIDEO_EXTENSIONS[number]);
     });
 
@@ -124,28 +402,26 @@
       multiple: true,
       filters: [{
         name: 'Video files',
-        extensions: [...VIDEO_EXTENSIONS]
-      }]
+        extensions: [...VIDEO_EXTENSIONS],
+      }],
     });
 
-    if (selected) {
-      const paths = Array.isArray(selected) ? selected : [selected];
-      await addFiles(paths);
+    if (!selected) {
+      return;
     }
+
+    const paths = Array.isArray(selected) ? selected : [selected];
+    await addFiles(paths);
   }
 
   async function addFiles(paths: string[]) {
     const newFiles = videoOcrStore.addFilesFromPaths(paths);
-    
-    // Probe each file and start transcoding
+
     for (const file of newFiles) {
       try {
         const probeResult = await scanFile(file.path);
-        
-        // Find video track to get dimensions
-        const videoTrack = probeResult.tracks.find(t => t.type === 'video');
-        
-        // Update file with probe data
+        const videoTrack = probeResult.tracks.find((track) => track.type === 'video');
+
         videoOcrStore.updateFile(file.id, {
           duration: probeResult.duration,
           width: videoTrack?.width,
@@ -153,207 +429,134 @@
           size: probeResult.size || file.size,
         });
 
-        // Start transcoding for preview
-        await transcodeFileForPreview(file);
+        const persisted = await loadOcrData(file.path);
+        if (persisted) {
+          videoOcrStore.updateFile(file.id, {
+            ocrRegion: persisted.ocrRegion ?? file.ocrRegion,
+          });
+
+          if (persisted.ocrVersions.length > 0) {
+            videoOcrStore.setOcrVersions(file.id, persisted.ocrVersions);
+          }
+        }
+
+        let hasCachedPreview = false;
+        if (persisted?.previewPath) {
+          const previewExists = await exists(persisted.previewPath);
+          if (previewExists) {
+            videoOcrStore.updateFile(file.id, {
+              previewPath: persisted.previewPath,
+              status: (persisted.ocrVersions.length > 0) ? 'completed' : 'ready',
+            });
+            hasCachedPreview = true;
+            videoOcrStore.addLog('info', 'Loaded cached preview video', file.id);
+          }
+        }
+
+        if (!hasCachedPreview) {
+          const fresh = getFreshFile(file.id) ?? file;
+          await transcodeFileForPreview(fresh);
+        }
       } catch (error) {
-        videoOcrStore.setFileStatus(file.id, 'error', error instanceof Error ? error.message : 'Scan failed');
+        videoOcrStore.setFileStatus(
+          file.id,
+          'error',
+          error instanceof Error ? error.message : 'Scan failed',
+        );
       }
     }
   }
 
-  // Transcode video to 480p preview
   async function transcodeFileForPreview(file: OcrVideoFile): Promise<boolean> {
     try {
       videoOcrStore.startTranscoding(file.id);
-      
-      const result = await invoke<string>('transcode_for_preview', {
+
+      const outputPath = await invoke<string>('transcode_for_preview', {
         inputPath: file.path,
         fileId: file.id,
       });
-      
-      videoOcrStore.finishTranscoding(file.id, result);
+
+      videoOcrStore.finishTranscoding(file.id, outputPath);
       videoOcrStore.addLog('info', 'Preview transcoding complete', file.id);
-      
+      await persistFileData(file.id);
       return true;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       videoOcrStore.failTranscoding(file.id, errorMsg);
-      
       logAndToast.error({
         source: 'ffmpeg',
         title: `Transcode failed: ${file.name}`,
-        details: errorMsg
+        details: errorMsg,
       });
       return false;
     }
   }
 
   async function handleStartOcr() {
-    if (!videoOcrStore.canStartOcr) return;
-    
+    if (!videoOcrStore.canStartOcr) {
+      return;
+    }
+
     const readyFiles = videoOcrStore.readyFiles;
-    
-    for (const file of readyFiles) {
-      if (videoOcrStore.isCancelling) break;
-      
-      try {
-        await processFileOcr(file);
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : 'OCR failed';
-        const cancelled = videoOcrStore.isFileCancelled(file.id) || errorMsg.toLowerCase().includes('cancel');
-        if (!cancelled) {
-          videoOcrStore.failFile(file.id, errorMsg);
-          logAndToast.error({
-            source: 'system',
-            title: `OCR failed: ${file.name}`,
-            details: errorMsg
-          });
-        }
+    let successCount = 0;
+    let failCount = 0;
+    let cancelledCount = 0;
+
+    for (const entry of readyFiles) {
+      if (videoOcrStore.isCancelling) {
+        break;
+      }
+
+      const file = getFreshFile(entry.id) ?? entry;
+      const versionName = generateOcrVersionName(file.ocrVersions);
+
+      videoOcrStore.startProcessing(file.id);
+      const result = await processFileOcr(file, versionName, 'full_pipeline', { ...videoOcrStore.config });
+
+      if (result.success) {
+        successCount += 1;
+      } else if (videoOcrStore.isFileCancelled(file.id)) {
+        cancelledCount += 1;
+      } else {
+        failCount += 1;
       }
     }
-    
+
     videoOcrStore.stopProcessing();
-    
-    const completedCount = videoOcrStore.completedFiles.length;
-    if (completedCount > 0) {
-      toast.success(`OCR completed for ${completedCount} file${completedCount > 1 ? 's' : ''}`);
+
+    if (successCount > 0 || failCount > 0 || cancelledCount > 0) {
+      const parts: string[] = [];
+      if (successCount > 0) parts.push(`${successCount} completed`);
+      if (failCount > 0) parts.push(`${failCount} failed`);
+      if (cancelledCount > 0) parts.push(`${cancelledCount} cancelled`);
+      toast.success(`OCR finished: ${parts.join(', ')}`);
     }
   }
 
-  async function processFileOcr(file: OcrVideoFile): Promise<void> {
+  async function handleRetryConfirm(fileId: string, versionName: string, mode: OcrRetryMode, config: OcrConfig) {
+    const file = getFreshFile(fileId);
+    if (!file) {
+      return;
+    }
+
     videoOcrStore.startProcessing(file.id);
-    videoOcrStore.setFileStatus(file.id, 'extracting_frames');
-    
-    let framesDir: string | null = null;
-    
-    try {
-      // Extract frames
-      videoOcrStore.setPhase(file.id, 'extracting', 0, 100);
-      
-      const result = await invoke<[string, number]>('extract_ocr_frames', {
-        videoPath: file.previewPath || file.path,
-        fileId: file.id,
-        fps: videoOcrStore.config.frameRate,
-        region: file.ocrRegion ?? null,
-      });
-      const [extractedFramesDir, frameCount] = result;
-      const framesDirForOcr = extractedFramesDir;
-      framesDir = extractedFramesDir;
-      
-      videoOcrStore.addLog('info', `Extracted ${frameCount} frames`, file.id);
-      
-      // Run OCR on frames
-      videoOcrStore.setFileStatus(file.id, 'ocr_processing');
-      videoOcrStore.setPhase(file.id, 'ocr', 0, frameCount);
-      
-      const ocrResults = await invoke<Array<{ frameIndex: number; timeMs: number; text: string; confidence: number }>>('perform_ocr', {
-        framesDir: framesDirForOcr,
-        fileId: file.id,
-        language: videoOcrStore.config.language,
-        fps: videoOcrStore.config.frameRate,
-        useGpu: videoOcrStore.config.useGpu,
-        numWorkers: videoOcrStore.config.threadCount,
-      });
-      
-      videoOcrStore.addLog('info', `OCR processed ${ocrResults.length} frames with text`, file.id);
-      
-      // Generate subtitles
-      videoOcrStore.setFileStatus(file.id, 'generating_subs');
-      videoOcrStore.setPhase(file.id, 'generating', 0, 1);
-      
-      const rawSubtitles = await invoke<OcrSubtitleLike[]>('generate_subtitles_from_ocr', {
-        fileId: file.id,
-        frameResults: ocrResults,
-        fps: videoOcrStore.config.frameRate,
-        minConfidence: videoOcrStore.config.confidenceThreshold,
-        cleanup: {
-          mergeSimilar: videoOcrStore.config.mergeSimilar,
-          similarityThreshold: videoOcrStore.config.similarityThreshold,
-          maxGapMs: videoOcrStore.config.maxGapMs,
-          minCueDurationMs: videoOcrStore.config.minCueDurationMs,
-          filterUrlLike: videoOcrStore.config.filterUrlLike,
-        }
-      });
+    const result = await processFileOcr(file, versionName, mode, config);
+    videoOcrStore.stopProcessing();
 
-      const subtitles = normalizeOcrSubtitles(rawSubtitles);
-      if (rawSubtitles.length > 0 && subtitles.length === 0) {
-        throw new Error('Failed to parse OCR subtitle timing data');
-      }
-      if (subtitles.length !== rawSubtitles.length) {
-        videoOcrStore.addLog(
-          'warning',
-          `Dropped ${rawSubtitles.length - subtitles.length} subtitle(s) with invalid timing`,
-          file.id
-        );
-      }
-
-      let finalSubtitles: OcrSubtitle[] = subtitles;
-      if (videoOcrStore.config.aiCleanupEnabled) {
-        const controller = new AbortController();
-        aiCleanupControllers.set(file.id, controller);
-        videoOcrStore.addLog('info', 'Running AI subtitle cleanup...', file.id);
-
-        const cleanupResult = await cleanupOcrSubtitlesWithAi(subtitles, {
-          provider: videoOcrStore.config.aiCleanupProvider,
-          model: videoOcrStore.config.aiCleanupModel,
-          maxGapMs: videoOcrStore.config.maxGapMs,
-          signal: controller.signal,
-        });
-
-        if (cleanupResult.cancelled || controller.signal.aborted || videoOcrStore.isFileCancelled(file.id)) {
-          throw new Error('OCR cancelled');
-        }
-
-        if (cleanupResult.success) {
-          finalSubtitles = cleanupResult.subtitles;
-          videoOcrStore.addLog(
-            'info',
-            `AI cleanup completed (${cleanupResult.batchesProcessed}/${cleanupResult.totalBatches} batches, ${subtitles.length} -> ${finalSubtitles.length} subtitles)`,
-            file.id
-          );
-        } else {
-          videoOcrStore.addLog(
-            'warning',
-            `AI cleanup failed, using heuristic subtitles: ${cleanupResult.error ?? 'Unknown error'}`,
-            file.id
-          );
-        }
-      }
-      
-      videoOcrStore.setSubtitles(file.id, finalSubtitles);
-      videoOcrStore.addLog('info', `Generated ${finalSubtitles.length} subtitles`, file.id);
-
-      const analysis = analyzeOcrSubtitles(finalSubtitles);
-      videoOcrStore.addLog('info', formatOcrSubtitleAnalysis(analysis), file.id);
-      
-      // Clean up frames directory
-      if (framesDir) {
-        await invoke('cleanup_ocr_frames', { framesDir });
-      }
-      
-    } catch (error) {
-      // Cleanup on error
-      try {
-        if (framesDir) {
-          await invoke('cleanup_ocr_frames', { framesDir });
-        }
-      } catch {
-        // Ignore cleanup errors
-      }
-      throw error;
-    } finally {
-      aiCleanupControllers.delete(file.id);
+    if (result.success) {
+      toast.success(`Created ${versionName} (${result.effectiveMode.replaceAll('_', ' ')})`);
     }
   }
 
   async function handleCancelFile(id: string) {
-    const file = videoOcrStore.videoFiles.find(f => f.id === id);
-    if (!file) return;
+    const file = videoOcrStore.videoFiles.find((entry) => entry.id === id);
+    if (!file) {
+      return;
+    }
 
     aiCleanupControllers.get(id)?.abort();
     aiCleanupControllers.delete(id);
 
-    // Both transcoding and OCR operations use OCR_PROCESS_IDS keyed by fileId
     try {
       await invoke('cancel_ocr_operation', { fileId: id });
     } catch (error) {
@@ -365,7 +568,7 @@
     } else if (['extracting_frames', 'ocr_processing', 'generating_subs'].includes(file.status)) {
       videoOcrStore.cancelProcessing(id);
     }
-    
+
     toast.info('Cancelled');
   }
 
@@ -380,8 +583,7 @@
     } catch (error) {
       console.error('Failed to cancel transcodes:', error);
     }
-    
-    // Cancel all OCR operations
+
     for (const file of videoOcrStore.videoFiles) {
       if (['extracting_frames', 'ocr_processing', 'generating_subs'].includes(file.status)) {
         try {
@@ -391,7 +593,7 @@
         }
       }
     }
-    
+
     videoOcrStore.cancelAll();
     toast.info('Cancelling all...');
   }
@@ -401,39 +603,25 @@
     resultDialogOpen = true;
   }
 
-  async function handleRetryFile(file: OcrVideoFile) {
-    // Reset file state
-    videoOcrStore.updateFile(file.id, { 
-      status: 'pending', 
-      error: undefined,
-      previewPath: undefined,
-      transcodingProgress: 0
-    });
-    videoOcrStore.clearSubtitles(file.id);
-    
-    // Restart transcoding
-    await transcodeFileForPreview(file);
-  }
-
-  function handleReprocessFile(file: OcrVideoFile) {
-    // Clear existing subtitles and reprocess
-    videoOcrStore.clearSubtitles(file.id);
-    videoOcrStore.setFileStatus(file.id, 'ready');
+  function handleRetryFile(file: OcrVideoFile) {
+    retryDialogFile = file;
+    retryDialogOpen = true;
   }
 
   function handleRegionChange(region: OcrRegion | undefined) {
-    if (videoOcrStore.selectedFileId) {
-      videoOcrStore.setOcrRegion(videoOcrStore.selectedFileId, region);
+    if (!videoOcrStore.selectedFileId) {
+      return;
     }
+
+    videoOcrStore.setOcrRegion(videoOcrStore.selectedFileId, region);
+    void persistFileData(videoOcrStore.selectedFileId);
   }
 
-  const transcodingCount = $derived(videoOcrStore.videoFiles.filter(f => f.status === 'transcoding').length);
+  const transcodingCount = $derived(videoOcrStore.videoFiles.filter((file) => file.status === 'transcoding').length);
 </script>
 
 <div class="h-full flex overflow-hidden">
-  <!-- Left Panel: File List -->
   <div class="w-[max(20rem,25vw)] max-w-[32rem] border-r flex flex-col overflow-hidden">
-    <!-- Header -->
     <div class="p-3 border-b shrink-0 flex items-center justify-between">
       <h2 class="font-semibold">Video Files ({videoOcrStore.videoFiles.length})</h2>
       <div class="flex items-center gap-1">
@@ -456,7 +644,6 @@
       </div>
     </div>
 
-    <!-- Content -->
     <div class="flex-1 min-h-0 overflow-auto p-4">
       {#if videoOcrStore.videoFiles.length === 0}
         <ImportDropZone
@@ -474,14 +661,12 @@
           onRemove={(id) => videoOcrStore.removeFile(id)}
           onCancel={handleCancelFile}
           onViewResult={handleViewResult}
-          onReprocess={handleReprocessFile}
           onRetry={handleRetryFile}
           disabled={videoOcrStore.isProcessing}
         />
       {/if}
     </div>
 
-    <!-- Transcoding status -->
     {#if transcodingCount > 0}
       <div class="p-2 border-t shrink-0">
         <p class="text-xs text-muted-foreground text-center">
@@ -491,17 +676,15 @@
     {/if}
   </div>
 
-  <!-- Center Panel: Video Preview -->
   <div class="flex-1 min-h-0 overflow-hidden p-4 grid grid-rows-[minmax(0,2fr)_minmax(0,1fr)] gap-4">
-    <VideoPreview 
+    <VideoPreview
       file={videoOcrStore.selectedFile}
       onRegionChange={handleRegionChange}
       class="min-h-0"
     />
-    
-    <!-- Log Panel at bottom of center -->
+
     <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
-      <OcrLogPanel 
+      <OcrLogPanel
         logs={videoOcrStore.logs}
         onClear={() => videoOcrStore.clearLogs()}
         class="flex-1 flex flex-col"
@@ -509,7 +692,6 @@
     </div>
   </div>
 
-  <!-- Right Panel: OCR Options -->
   <div class="w-80 border-l overflow-auto flex flex-col p-4">
     <OcrOptionsPanel
       config={videoOcrStore.config}
@@ -527,10 +709,26 @@
   </div>
 </div>
 
-<!-- Result Dialog -->
 <OcrResultDialog
-  open={resultDialogOpen}
-  subtitles={resultDialogFile?.subtitles ?? []}
-  videoName={resultDialogFile?.name}
-  onClose={() => { resultDialogOpen = false; resultDialogFile = null; }}
+  bind:open={resultDialogOpen}
+  onOpenChange={(open) => {
+    resultDialogOpen = open;
+    if (!open) {
+      resultDialogFile = null;
+    }
+  }}
+  file={resultDialogFile}
+/>
+
+<OcrRetryDialog
+  bind:open={retryDialogOpen}
+  onOpenChange={(open) => {
+    retryDialogOpen = open;
+    if (!open) {
+      retryDialogFile = null;
+    }
+  }}
+  file={retryDialogFile}
+  baseConfig={videoOcrStore.config}
+  onConfirm={handleRetryConfirm}
 />

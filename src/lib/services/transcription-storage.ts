@@ -3,8 +3,8 @@
  * Handles persistence of transcription versions to .rsext.json files
  */
 
-import { invoke } from '@tauri-apps/api/core';
 import type { TranscriptionData, TranscriptionVersion, DeepgramConfig, DeepgramResult } from '$lib/types';
+import { deleteRsextData, loadRsextData, saveRsextData } from './rsext-storage';
 
 // ============================================================================
 // DATA OPERATIONS
@@ -15,11 +15,8 @@ import type { TranscriptionData, TranscriptionVersion, DeepgramConfig, DeepgramR
  */
 export async function loadTranscriptionData(audioPath: string): Promise<TranscriptionData | null> {
   try {
-    const jsonStr = await invoke<string | null>('load_transcription_data', { audioPath });
-    if (!jsonStr) return null;
-    
-    const data = JSON.parse(jsonStr) as TranscriptionData;
-    return data;
+    const rsextData = await loadRsextData(audioPath);
+    return rsextData?.audioToSubs ?? null;
   } catch (error) {
     console.error('Failed to load transcription data:', error);
     return null;
@@ -31,9 +28,12 @@ export async function loadTranscriptionData(audioPath: string): Promise<Transcri
  */
 export async function saveTranscriptionData(audioPath: string, data: TranscriptionData): Promise<boolean> {
   try {
-    const jsonStr = JSON.stringify(data, null, 2);
-    await invoke('save_transcription_data', { audioPath, data: jsonStr });
-    return true;
+    const existing = await loadRsextData(audioPath);
+    return saveRsextData(audioPath, {
+      version: 1,
+      audioToSubs: data,
+      videoOcr: existing?.videoOcr,
+    });
   } catch (error) {
     console.error('Failed to save transcription data:', error);
     return false;
@@ -45,8 +45,19 @@ export async function saveTranscriptionData(audioPath: string, data: Transcripti
  */
 export async function deleteTranscriptionData(audioPath: string): Promise<boolean> {
   try {
-    await invoke('delete_transcription_data', { audioPath });
-    return true;
+    const existing = await loadRsextData(audioPath);
+    if (!existing?.audioToSubs) {
+      return true;
+    }
+
+    if (existing.videoOcr) {
+      return saveRsextData(audioPath, {
+        version: 1,
+        videoOcr: existing.videoOcr,
+      });
+    }
+
+    return deleteRsextData(audioPath);
   } catch (error) {
     console.error('Failed to delete transcription data:', error);
     return false;
