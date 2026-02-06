@@ -165,27 +165,14 @@
           Cancel merge
         {/if}
       </Button>
-      <Button
-        class="w-full"
-        onclick={onMerge}
-        disabled={!canMerge}
-      >
-        <Loader2 class="size-4 mr-2 animate-spin" />
-        Merging...
-      </Button>
     {:else}
       <Button
         class="w-full"
         onclick={onMerge}
         disabled={!canMerge}
       >
-        {#if isProcessing}
-          <Loader2 class="size-4 mr-2 animate-spin" />
-          Merging...
-        {:else}
-          <Play class="size-4 mr-2" />
-          Merge {videosCount} file{videosCount !== 1 ? 's' : ''}
-        {/if}
+        <Play class="size-4 mr-2" />
+        Merge {videosCount} file{videosCount !== 1 ? 's' : ''}
       </Button>
     {/if}
   </Card.Footer>
