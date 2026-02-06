@@ -8,11 +8,12 @@
 <script lang="ts">
   import { open } from '@tauri-apps/plugin-dialog';
   import { toast } from 'svelte-sonner';
-  import { log } from '$lib/utils/log-toast';
 
   import { fileListStore } from '$lib/stores/files.svelte';
   import { mergeStore, infoStore } from '$lib/stores';
   import { scanFiles } from '$lib/services/ffprobe';
+  import { log } from '$lib/utils/log-toast';
+  import { cn } from '$lib/utils';
   import type { Track } from '$lib/types';
   import type { FileInfo } from '$lib/stores/info.svelte';
 
@@ -22,22 +23,6 @@
   import * as Card from '$lib/components/ui/card';
   import * as Tabs from '$lib/components/ui/tabs';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
-
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
 
   const SUPPORTED_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
   const SUPPORTED_FORMATS = SUPPORTED_EXTENSIONS.map((ext) => ext.slice(1).toUpperCase());
@@ -252,9 +237,9 @@
 
 <div class="h-full flex overflow-hidden">
   <!-- Left panel: File list -->
-  <div class="w-80 border-r flex flex-col overflow-hidden">
+  <div class="w-[max(20rem,25vw)] max-w-lg border-r flex flex-col overflow-hidden">
     <div class="p-3 border-b flex items-center justify-between">
-      <span class="text-sm font-semibold">Files ({infoStore.files.length})</span>
+      <h2 class="font-semibold">Files ({infoStore.files.length})</h2>
       <div class="flex gap-1">
         {#if infoStore.files.length > 0}
           <Button variant="ghost" size="icon-sm" onclick={handleClearAll} class="text-muted-foreground hover:text-destructive">
@@ -269,9 +254,9 @@
     </div>
 
     <!-- File list -->
-    <div class="flex-1 overflow-y-auto">
+    <div class="flex-1 min-h-0 overflow-auto">
       {#if infoStore.files.length === 0}
-        <div class="p-4">
+        <div class="p-2">
           <ImportDropZone
             icon={Film}
             title="Drop media files here"
@@ -298,46 +283,56 @@
           {/if}
         </div>
       {:else}
-        {#each infoStore.files as file (file.id)}
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <div
-            role="button"
-            tabindex="0"
-            class="w-full p-3 text-left hover:bg-muted/50 border-b transition-colors group relative cursor-pointer
-                   {infoStore.selectedFileId === file.id ? 'bg-muted' : ''}"
-            onclick={() => infoStore.selectFile(file.id)}
-          >
-            <div class="flex items-center gap-2">
-              {#if file.status === 'scanning'}
-                <Loader2 class="size-4 animate-spin text-muted-foreground shrink-0" />
-              {:else if file.status === 'error'}
-                <XCircle class="size-4 text-destructive shrink-0" />
-              {:else}
-                <FileVideo class="size-4 text-muted-foreground shrink-0" />
-              {/if}
-              <span class="truncate text-sm flex-1">{file.name}</span>
-              <button
-                class="opacity-0 group-hover:opacity-100 p-1 hover:bg-destructive/10 rounded transition-opacity"
-                onclick={(e) => { e.stopPropagation(); handleRemoveFile(file.id); }}
-              >
-                <X class="size-3 text-muted-foreground hover:text-destructive" />
-              </button>
-            </div>
-            {#if file.status === 'ready'}
-              <div class="text-xs text-muted-foreground mt-1 pl-6">
-                {formatFileSize(file.size)} • {file.tracks.length} tracks
+        <div class="space-y-2 p-2">
+          {#each infoStore.files as file (file.id)}
+            <button
+              class={cn(
+                'group w-full rounded-lg border p-3 text-left transition-colors hover:bg-accent',
+                infoStore.selectedFileId === file.id && 'border-primary bg-primary/5'
+              )}
+              onclick={() => infoStore.selectFile(file.id)}
+            >
+              <div class="flex items-start gap-3">
+                <div class="shrink-0 mt-0.5">
+                  {#if file.status === 'scanning'}
+                    <Loader2 class="size-5 animate-spin text-muted-foreground" />
+                  {:else if file.status === 'error'}
+                    <XCircle class="size-5 text-destructive" />
+                  {:else}
+                    <FileVideo class="size-5 text-primary" />
+                  {/if}
+                </div>
+
+                <div class="min-w-0 flex-1">
+                  <p class="font-medium truncate">{file.name}</p>
+                  {#if file.status === 'ready'}
+                    <p class="mt-1 text-xs text-muted-foreground">
+                      {formatFileSize(file.size)} • {file.tracks.length} tracks
+                    </p>
+                  {:else if file.status === 'error'}
+                    <p class="mt-1 truncate text-xs text-destructive">{file.error}</p>
+                  {:else}
+                    <p class="mt-1 text-xs text-muted-foreground">Scanning...</p>
+                  {/if}
+                </div>
+
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  class="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive hover:bg-destructive/10"
+                  onclick={(e: MouseEvent) => { e.stopPropagation(); handleRemoveFile(file.id); }}
+                >
+                  <X class="size-4" />
+                  <span class="sr-only">Remove</span>
+                </Button>
               </div>
-            {:else if file.status === 'error'}
-              <div class="text-xs text-destructive mt-1 pl-6 truncate">{file.error}</div>
-            {:else}
-              <div class="text-xs text-muted-foreground mt-1 pl-6">Scanning...</div>
-            {/if}
-          </div>
-        {/each}
+            </button>
+          {/each}
+        </div>
 
         <!-- Import buttons when files exist -->
         {#if extractionFilesCount > 0 || mergeFilesCount > 0}
-          <div class="p-3 border-t space-y-2">
+          <div class="border-t p-2 space-y-2">
             {#if extractionFilesCount > 0}
               <Button variant="ghost" size="sm" class="w-full justify-start" onclick={handleImportFromExtraction}>
                 <Import class="size-4 mr-2" />

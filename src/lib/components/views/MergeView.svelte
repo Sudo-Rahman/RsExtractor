@@ -34,25 +34,6 @@
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
   import { MergeTrackSettings, MergeOutputPanel, MergeTrackGroups, MergeTrackTable } from '$lib/components/merge';
 
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-
   // Constants
   const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
   const SUBTITLE_EXTENSIONS = ['.ass', '.ssa', '.srt', '.sub', '.idx', '.vtt'];
@@ -601,7 +582,7 @@
   <!-- Home View: Classic layout with left panel, center tabs, right panel -->
   <div class="h-full flex overflow-hidden">
     <!-- Left panel: Video files -->
-    <div class="w-80 border-r flex flex-col overflow-hidden">
+    <div class="w-[max(20rem,25vw)] max-w-lg border-r flex flex-col overflow-hidden">
       <div class="p-3 border-b shrink-0 flex items-center justify-between">
         <h2 class="font-semibold">Videos ({mergeStore.videoFiles.length})</h2>
         <div class="flex gap-1">
@@ -623,7 +604,7 @@
         </div>
       </div>
 
-      <div class="flex-1 min-h-0 overflow-auto p-4  space-y-2">
+      <div class="flex-1 min-h-0 overflow-auto p-2 space-y-2">
         {#each mergeStore.videoFiles as video (video.id)}
           {@const FileIcon = getFileIcon(video.path)}
           {@const attachedCount = video.attachedTracks.length}

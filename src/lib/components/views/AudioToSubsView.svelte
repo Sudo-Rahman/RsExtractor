@@ -37,11 +37,6 @@
     AudioTrackSelectDialog,
     BatchTrackSelectDialog
   } from '$lib/components/audio-to-subs';
-  
-  ;
-  ;
-  ;
-  ;
 
   interface AudioToSubsViewProps {
     onNavigateToSettings?: () => void;
@@ -1065,7 +1060,7 @@
     </div>
 
     <!-- Content -->
-    <div class="flex-1 min-h-0 overflow-auto p-4">
+    <div class="flex-1 min-h-0 overflow-auto p-2">
       {#if audioToSubsStore.audioFiles.length === 0}
         <ImportDropZone
           icon={AudioLines}

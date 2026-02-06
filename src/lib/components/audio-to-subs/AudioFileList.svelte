@@ -31,35 +31,18 @@
     disabled = false 
   }: AudioFileListProps = $props();
 
-  function getStatusIcon(status: AudioFile['status']) {
-    switch (status) {
-      case 'transcribing':
-        return { icon: Loader2, class: 'animate-spin text-primary' };
-      case 'transcoding':
-        return { icon: Loader2, class: 'animate-spin text-orange-500' };
-      case 'completed':
-        return { icon: CheckCircle, class: 'text-green-500' };
-      case 'error':
-        return { icon: AlertCircle, class: 'text-destructive' };
-      case 'scanning':
-        return { icon: Loader2, class: 'animate-spin text-muted-foreground' };
-      default:
-        return null;
-    }
-  }
 </script>
 
-<div class="space-y-1">
+<div class="space-y-2">
   {#each files as file (file.id)}
     {@const isSelected = file.id === selectedId}
-    {@const statusInfo = getStatusIcon(file.status)}
     {@const isTranscribing = file.status === 'transcribing'}
     {@const isTranscoding = file.status === 'transcoding'}
     {@const versionCount = file.transcriptionVersions?.length ?? 0}
     <button
       class={cn(
-        "w-full text-left p-3 rounded-lg border transition-colors",
-        isSelected ? "border-primary bg-primary/5" : "border-transparent hover:bg-muted/50"
+        'w-full rounded-lg border p-3 text-left transition-colors hover:bg-accent',
+        isSelected && 'border-primary bg-primary/5'
       )}
       onclick={() => onSelect(file.id)}
     >
@@ -81,7 +64,7 @@
         
         <!-- Content -->
         <div class="flex-1 min-w-0">
-          <p class="font-medium truncate text-sm">{file.name}</p>
+          <p class="font-medium truncate">{file.name}</p>
           
           <div class="flex items-center gap-2 text-xs text-muted-foreground mt-1 flex-wrap">
             {#if file.duration}

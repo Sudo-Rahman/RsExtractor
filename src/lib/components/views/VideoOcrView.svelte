@@ -644,7 +644,7 @@
       </div>
     </div>
 
-    <div class="flex-1 min-h-0 overflow-auto p-4">
+    <div class="flex-1 min-h-0 overflow-auto p-2">
       {#if videoOcrStore.videoFiles.length === 0}
         <ImportDropZone
           icon={Video}

@@ -50,15 +50,15 @@
   }
 </script>
 
-<div class="space-y-1">
+<div class="space-y-2">
   {#each files as file (file.id)}
     {@const isSelected = file.id === selectedId}
     {@const processing = isProcessing(file.status)}
     {@const versionCount = file.ocrVersions?.length ?? 0}
     <button
       class={cn(
-        "w-full text-left p-3 rounded-lg border transition-colors",
-        isSelected ? "border-primary bg-primary/5" : "border-transparent hover:bg-muted/50"
+        'w-full rounded-lg border p-3 text-left transition-colors hover:bg-accent',
+        isSelected && 'border-primary bg-primary/5'
       )}
       onclick={() => onSelect(file.id)}
     >
@@ -78,7 +78,7 @@
         
         <!-- Content -->
         <div class="flex-1 min-w-0">
-          <p class="font-medium truncate text-sm">{file.name}</p>
+          <p class="font-medium truncate">{file.name}</p>
           
           <div class="flex items-center gap-2 text-xs text-muted-foreground mt-1 flex-wrap">
             {#if file.duration}
