@@ -173,13 +173,15 @@
 
     <!-- FFmpeg warning -->
     {#if ffmpegAvailable === false && currentView !== 'settings'}
-      <Alert variant="destructive" class="m-4 shrink-0">
-        <AlertCircle class="size-4" />
-        <AlertTitle>FFmpeg not available</AlertTitle>
-        <AlertDescription>
-          Install FFmpeg to use this application.
-        </AlertDescription>
-      </Alert>
+      <div class="p-4">
+        <Alert variant="destructive">
+          <AlertCircle class="size-4" />
+          <AlertTitle>FFmpeg not available</AlertTitle>
+          <AlertDescription>
+            Install FFmpeg to use this application.
+          </AlertDescription>
+        </Alert>
+      </div>
     {/if}
 
     <!-- Main content - all views mounted but hidden with display:none for persistence -->

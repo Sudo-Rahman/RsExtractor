@@ -5,7 +5,7 @@ import { normalizeOcrSubtitles } from '$lib/utils/ocr-subtitle-adapter';
 import { callLlm } from './llm-client';
 import type { LlmUsage } from './llm-client';
 
-const DEFAULT_BATCH_SIZE = 120;
+const DEFAULT_BATCH_SIZE = 1000;
 
 const OCR_CLEANUP_SYSTEM_PROMPT = `You are an expert subtitle post-editor specializing in OCR correction.
 
