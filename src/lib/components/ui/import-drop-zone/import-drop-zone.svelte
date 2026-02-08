@@ -1,10 +1,10 @@
 <script lang="ts">
-  import type { ComponentType, SvelteComponent } from 'svelte';
+  import type { Component } from 'svelte';
   import type { IconProps } from '@lucide/svelte';
 
   import { cn } from '$lib/utils';
 
-  type IconComponent = ComponentType<SvelteComponent<IconProps>>;
+  type IconComponent = Component<IconProps>;
 
   interface ImportDropZoneProps {
     icon: IconComponent;
