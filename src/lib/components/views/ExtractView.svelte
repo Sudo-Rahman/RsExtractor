@@ -290,6 +290,7 @@
     fileListStore.clear();
     extractionStore.reset();
     extractionStore.clearAllTracks();
+    extractedOutputItems = [];
     toast.info('File list cleared');
   }
 

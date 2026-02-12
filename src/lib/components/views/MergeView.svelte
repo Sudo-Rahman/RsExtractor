@@ -589,6 +589,7 @@
 
   function handleClearAll() {
     mergeStore.clearAll();
+    mergedOutputItems = [];
     toast.info('Cleared all files');
   }
 
