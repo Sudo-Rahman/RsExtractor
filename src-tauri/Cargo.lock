@@ -2880,6 +2880,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "mediaflow"
+version = "0.1.0"
+dependencies = [
+ "cocoa",
+ "futures-util",
+ "image",
+ "libc",
+ "num_cpus",
+ "ocr-rs",
+ "rayon",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tar",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-http",
+ "tauri-plugin-opener",
+ "tauri-plugin-shell",
+ "tauri-plugin-store",
+ "tiktoken-rs",
+ "tokio",
+ "walkdir",
+ "window-vibrancy 0.7.1",
+ "xz2",
+ "zbus",
+ "zip",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4433,38 +4465,6 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "rsextractor"
-version = "0.1.0"
-dependencies = [
- "cocoa",
- "futures-util",
- "image",
- "libc",
- "num_cpus",
- "ocr-rs",
- "rayon",
- "reqwest",
- "serde",
- "serde_json",
- "tar",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-http",
- "tauri-plugin-opener",
- "tauri-plugin-shell",
- "tauri-plugin-store",
- "tiktoken-rs",
- "tokio",
- "walkdir",
- "window-vibrancy 0.7.1",
- "xz2",
- "zbus",
- "zip",
 ]
 
 [[package]]

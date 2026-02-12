@@ -344,7 +344,7 @@ export async function translateSubtitle(
     };
   }
 
-  return withSleepInhibit('RsExtractor: AI translation', async () => {
+  return withSleepInhibit('MediaFlow: AI translation', async () => {
     const reportProgress = (info: BatchProgressInfo) => {
       if (onProgress) {
         onProgress(info);

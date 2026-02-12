@@ -32,7 +32,7 @@ pub(crate) async fn transcode_for_preview(
         .unwrap_or("video");
     let path_hash = format!("{:x}", md5_hash(&input_path));
 
-    let temp_dir = std::env::temp_dir().join("rsextractor_preview");
+    let temp_dir = std::env::temp_dir().join("mediaflow_preview");
     std::fs::create_dir_all(&temp_dir)
         .map_err(|e| format!("Failed to create temp directory: {}", e))?;
 

@@ -497,8 +497,8 @@ async function callOpenRouter(params: ProviderCallParams): Promise<LlmResponse> 
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${params.apiKey}`,
-          'HTTP-Referer': 'https://rsextractor.app',
-          'X-Title': 'RsExtractor',
+          'HTTP-Referer': 'https://mediaflow.app',
+          'X-Title': 'MediaFlow',
         },
         body: JSON.stringify({
           model: params.model,

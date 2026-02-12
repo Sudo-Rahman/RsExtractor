@@ -38,7 +38,7 @@ export function ocrVersionToSubtitleFile(
   const baseName = getBaseName(videoName);
 
   return {
-    path: `rsextractor://ocr/${encodeURIComponent(videoPath)}?version=${encodeURIComponent(version.id)}`,
+    path: `mediaflow://ocr/${encodeURIComponent(videoPath)}?version=${encodeURIComponent(version.id)}`,
     name: `${baseName}_${version.name}.srt`,
     format: 'srt',
     content,
@@ -55,7 +55,7 @@ export function transcriptionVersionToSubtitleFile(
   const baseName = getBaseName(audioName);
 
   return {
-    path: `rsextractor://audio-to-subs/${encodeURIComponent(audioPath)}?version=${encodeURIComponent(version.id)}`,
+    path: `mediaflow://audio-to-subs/${encodeURIComponent(audioPath)}?version=${encodeURIComponent(version.id)}`,
     name: `${baseName}_${version.name}.srt`,
     format: 'srt',
     content,

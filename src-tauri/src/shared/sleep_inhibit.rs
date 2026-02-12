@@ -267,10 +267,10 @@ mod macos {
 
     pub(super) fn create_assertion(reason: &str) -> Result<u32, String> {
         let assertion_type = cf_string("PreventUserIdleSystemSleep")?;
-        let name = if reason.trim_start().starts_with("RsExtractor:") {
+        let name = if reason.trim_start().starts_with("MediaFlow:") {
             reason.to_string()
         } else {
-            format!("RsExtractor: {}", reason)
+            format!("MediaFlow: {}", reason)
         };
         let assertion_name = cf_string(&name)?;
 
@@ -355,7 +355,7 @@ mod linux {
             )
             .map_err(|e| format!("Failed to create logind proxy: {}", e))?;
 
-            let who = "RsExtractor";
+            let who = "MediaFlow";
             let what = "sleep:idle";
             let mode = "block";
 
@@ -373,7 +373,7 @@ mod linux {
         let mut child = Command::new("systemd-inhibit")
             .args([
                 "--what=sleep:idle",
-                "--who=RsExtractor",
+                "--who=MediaFlow",
                 &format!("--why={}", reason),
                 "--mode=block",
                 "sleep",

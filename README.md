@@ -1,18 +1,18 @@
-# RsExtractor
+# MediaFlow
 
-[![Release Build](https://github.com/Sudo-Rahman/RsExtractor/actions/workflows/release-tauri.yml/badge.svg)](https://github.com/Sudo-Rahman/RsExtractor/actions/workflows/release-tauri.yml)
+[![Release Build](https://github.com/Sudo-Rahman/MediaFlow/actions/workflows/release-tauri.yml/badge.svg)](https://github.com/Sudo-Rahman/MediaFlow/actions/workflows/release-tauri.yml)
 
 <p align="center">
-  <img src="src-tauri/icons/icon.png" alt="RsExtractor Logo" width="120" height="120">
+  <img src="src-tauri/icons/icon.png" alt="MediaFlow Logo" width="120" height="120">
 </p>
 
 <p align="center">
   <strong>Desktop multimedia toolbox for extraction, merge, OCR, transcription, translation, renaming, and analysis.</strong>
 </p>
 
-## Why RsExtractor
+## Why MediaFlow
 
-RsExtractor is a local-first desktop app built for high-volume subtitle and track workflows.
+MediaFlow is a local-first desktop app built for high-volume subtitle and track workflows.
 It combines FFmpeg-powered media processing with AI-assisted tools in one interface.
 
 ## Tools
@@ -72,8 +72,8 @@ It combines FFmpeg-powered media processing with AI-assisted tools in one interf
 
 ```bash
 # Clone
-git clone https://github.com/Sudo-Rahman/RsExtractor.git
-cd RsExtractor
+git clone https://github.com/Sudo-Rahman/MediaFlow.git
+cd MediaFlow
 
 # Install deps (pnpm only)
 pnpm install

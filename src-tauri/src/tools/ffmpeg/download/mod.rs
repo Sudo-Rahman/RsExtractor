@@ -39,7 +39,7 @@ fn create_temp_dir(app: &tauri::AppHandle, prefix: &str) -> Result<PathBuf, Stri
 
 fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
-        .user_agent("RsExtractor/1.0")
+        .user_agent("MediaFlow/1.0")
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))
 }

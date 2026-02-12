@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    rsextractor_lib::run()
+    mediaflow_lib::run()
 }

@@ -30,7 +30,7 @@ pub(crate) async fn extract_ocr_frames(
     // Create output directory
     let path_hash = format!("{:x}", md5_hash(&video_path));
     let temp_dir = std::env::temp_dir()
-        .join("rsextractor_ocr_frames")
+        .join("mediaflow_ocr_frames")
         .join(&path_hash[..12]);
 
     // Clean previous extraction if exists

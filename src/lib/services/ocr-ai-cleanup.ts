@@ -238,7 +238,7 @@ export async function cleanupOcrSubtitlesWithAi(
     };
   }
 
-  return withSleepInhibit('RsExtractor: OCR cleanup', async () => {
+  return withSleepInhibit('MediaFlow: OCR cleanup', async () => {
     const batchSize = Math.max(20, options.batchSize ?? DEFAULT_BATCH_SIZE);
     const batches = splitIntoBatches(normalizedInput, batchSize);
 

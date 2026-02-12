@@ -149,7 +149,7 @@
     const temp = await tempDir();
     const baseName = file.name.replace(/\.[^/.]+$/, ''); // Remove extension
     const pathHash = hashString(file.path);
-    return `${temp}rsextractor_opus/${baseName}_track${trackIndex}_${pathHash}.opus`;
+    return `${temp}mediaflow_opus/${baseName}_track${trackIndex}_${pathHash}.opus`;
   }
 
   // Helper: Get effective Deepgram config with language from track metadata

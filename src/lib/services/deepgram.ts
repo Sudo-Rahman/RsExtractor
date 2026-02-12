@@ -114,7 +114,7 @@ export async function transcribeWithDeepgram(options: TranscribeOptions): Promis
     return { success: false, error: 'Transcription cancelled' };
   }
   
-  return withSleepInhibit('RsExtractor: Transcription', async () => {
+  return withSleepInhibit('MediaFlow: Transcription', async () => {
     try {
       // Read audio file
       onProgress?.(5, 'uploading');

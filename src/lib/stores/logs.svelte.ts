@@ -1,5 +1,5 @@
 /**
- * Centralized logs store for RsExtractor
+ * Centralized logs store for MediaFlow
  * Manages all application logs (FFmpeg, FFprobe, Translation, etc.)
  */
 

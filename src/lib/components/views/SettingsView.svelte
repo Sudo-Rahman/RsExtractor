@@ -551,7 +551,7 @@
         <Separator />
         <div class="text-sm text-muted-foreground">
           <p>
-            RsExtractor is an all-in-one desktop toolkit for multimedia workflows: Extraction, Merge,
+            MediaFlow is an all-in-one desktop toolkit for multimedia workflows: Extraction, Merge,
             Audio to Subs, Video OCR, AI Translation, Rename, and file Info analysis.
           </p>
           <p class="mt-2">

@@ -30,7 +30,7 @@ pub(crate) async fn convert_audio_for_waveform(
         .unwrap_or("audio");
 
     // Use system temp directory for waveform cache
-    let temp_dir = std::env::temp_dir().join("rsextractor_waveform");
+    let temp_dir = std::env::temp_dir().join("mediaflow_waveform");
     std::fs::create_dir_all(&temp_dir)
         .map_err(|e| format!("Failed to create temp directory: {}", e))?;
 

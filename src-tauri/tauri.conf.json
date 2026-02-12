@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "RsExtractor",
+  "productName": "MediaFlow",
   "version": "0.1.0",
-  "identifier": "com.sr-71.rsextractor",
+  "identifier": "com.sr-71.mediaflow",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
