@@ -41,14 +41,17 @@
 
   let extractedOutputItems = $state<ExtractedOutputItem[]>([]);
 
-  function trackTypeToImportKind(type: Track['type']): ExtractedOutputItem['kind'] {
+  function trackTypeToImportKind(type: Track['type']): ExtractedOutputItem['kind'] | null {
     if (type === 'audio') {
       return 'track_audio';
     }
     if (type === 'subtitle') {
       return 'track_subtitle';
     }
-    return 'track_video';
+    if (type === 'video') {
+      return 'track_video';
+    }
+    return null;
   }
 
   export async function handleFileDrop(paths: string[]) {
@@ -243,13 +246,16 @@
 
       if (result.success) {
         successCount++;
-        extractedOutputs.push({
-          key: `extract:${file.path}:${track.id}:${outputPath}`,
-          path: outputPath,
-          name: outputPath.split('/').pop() ?? outputPath,
-          kind: trackTypeToImportKind(track.type),
-          createdAt: Date.now(),
-        });
+        const importKind = trackTypeToImportKind(track.type);
+        if (importKind) {
+          extractedOutputs.push({
+            key: `extract:${file.path}:${track.id}:${outputPath}`,
+            path: outputPath,
+            name: outputPath.split('/').pop() ?? outputPath,
+            kind: importKind,
+            createdAt: Date.now(),
+          });
+        }
       } else {
         errorCount++;
       }
@@ -284,7 +290,6 @@
     fileListStore.clear();
     extractionStore.reset();
     extractionStore.clearAllTracks();
-    extractedOutputItems = [];
     toast.info('File list cleared');
   }
 
