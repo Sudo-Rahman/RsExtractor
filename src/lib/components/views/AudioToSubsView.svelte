@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { AudioLines, Trash2, Upload, Download, X } from '@lucide/svelte';
+  import { AudioLines, Trash2, X } from '@lucide/svelte';
   export interface AudioToSubsViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -15,10 +15,11 @@
   import { toast } from 'svelte-sonner';
 
   import type { AudioFile, DeepgramConfig, TranscriptionVersion, AudioTrackInfo, BatchTrackStrategy } from '$lib/types';
+  import type { ImportSourceId } from '$lib/types/tool-import';
   import { AUDIO_EXTENSIONS } from '$lib/types';
-  import { audioToSubsStore, settingsStore } from '$lib/stores';
-  import { recentFilesStore } from '$lib/stores/recentFiles.svelte';
+  import { audioToSubsStore, settingsStore, toolImportStore } from '$lib/stores';
   import { transcribeWithDeepgram } from '$lib/services/deepgram';
+  import { transcriptionVersionToSubtitleFile } from '$lib/services/subtitle-interop';
   import { 
     saveTranscriptionData, 
     loadTranscriptionData 
@@ -29,6 +30,7 @@
   import { Button } from '$lib/components/ui/button';
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
+  import { ToolImportButton } from '$lib/components/shared';
   import { 
     AudioFileList, 
     AudioDetails,
@@ -49,6 +51,8 @@
   const MAX_CONCURRENT_TRANSCODES = 3;
   const OPUS_COMPATIBLE_EXTENSIONS = ['opus'];
   const AUDIO_FORMATS = 'MP3, WAV, FLAC, AAC, OGG, M4A, OPUS';
+
+  let persistedTranscriptionVersionKeys = $state<Set<string>>(new Set());
 
   // State for result dialog
   let resultDialogOpen = $state(false);
@@ -77,6 +81,41 @@
 
   // Event listener cleanup
   let unlistenTranscodeProgress: UnlistenFn | null = null;
+
+  function buildTranscriptionVersionKey(audioPath: string, versionId: string): string {
+    return `${audioPath}::${versionId}`;
+  }
+
+  function markPersistedTranscriptionVersions(audioPath: string, versions: TranscriptionVersion[]) {
+    if (versions.length === 0) {
+      return;
+    }
+
+    const next = new Set(persistedTranscriptionVersionKeys);
+    for (const version of versions) {
+      next.add(buildTranscriptionVersionKey(audioPath, version.id));
+    }
+    persistedTranscriptionVersionKeys = next;
+  }
+
+  function clearPersistedTranscriptionVersionsForPath(audioPath: string) {
+    const prefix = `${audioPath}::`;
+    const next = new Set(
+      Array.from(persistedTranscriptionVersionKeys).filter((key) => !key.startsWith(prefix)),
+    );
+    persistedTranscriptionVersionKeys = next;
+  }
+
+  function unmarkPersistedTranscriptionVersion(audioPath: string, versionId: string) {
+    const key = buildTranscriptionVersionKey(audioPath, versionId);
+    if (!persistedTranscriptionVersionKeys.has(key)) {
+      return;
+    }
+
+    const next = new Set(persistedTranscriptionVersionKeys);
+    next.delete(key);
+    persistedTranscriptionVersionKeys = next;
+  }
 
   function hasAudioFile(fileId: string): boolean {
     return audioToSubsStore.audioFiles.some((file) => file.id === fileId);
@@ -357,6 +396,7 @@
           for (const version of existingData.transcriptionVersions) {
             audioToSubsStore.addTranscriptionVersion(file.id, version);
           }
+          markPersistedTranscriptionVersions(file.path, existingData.transcriptionVersions);
           if (existingData.opusPath) {
             const opusExists = await exists(existingData.opusPath);
             if (opusExists) {
@@ -652,19 +692,19 @@
     }
   }
 
-  async function handleImportFromExtraction() {
-    const audioFiles = recentFilesStore.extractedFiles.filter(f => {
-      const ext = f.path.split('.').pop()?.toLowerCase() || '';
-      return AUDIO_EXTENSIONS.includes(ext as typeof AUDIO_EXTENSIONS[number]);
+  async function handleImportFromSource(sourceId: ImportSourceId) {
+    const { paths } = toolImportStore.resolveImport({
+      targetTool: 'audio-to-subs',
+      sourceId,
     });
 
-    if (audioFiles.length === 0) {
-      toast.info('No audio files in recent extractions');
+    if (paths.length === 0) {
+      toast.info('No audio files available from this source');
       return;
     }
 
-    await addFiles(audioFiles.map(f => f.path));
-    toast.success(`${audioFiles.length} audio file(s) imported`);
+    await addFiles(paths);
+    toast.success(`${paths.length} audio file(s) imported`);
   }
 
   async function transcribeFile(file: AudioFile, versionName: string, config: DeepgramConfig, signal?: AbortSignal) {
@@ -699,12 +739,22 @@
         // Persist to disk
         const updatedFile = audioToSubsStore.audioFiles.find(f => f.id === file.id);
         if (updatedFile) {
-          await saveTranscriptionData(file.path, {
+          const saved = await saveTranscriptionData(file.path, {
             version: 1,
             audioPath: file.path,
             opusPath: file.opusPath,
             transcriptionVersions: updatedFile.transcriptionVersions
           });
+
+          if (saved) {
+            markPersistedTranscriptionVersions(file.path, [version]);
+          } else {
+            logAndToast.warning({
+              source: 'deepgram',
+              title: 'Transcription not persisted',
+              details: 'Version is available in memory only for this session',
+            });
+          }
         }
 
         logAndToast.success({
@@ -948,6 +998,7 @@
     }
 
     if (file.status !== 'transcoding') {
+      clearPersistedTranscriptionVersionsForPath(file.path);
       audioToSubsStore.removeFile(id);
       return;
     }
@@ -959,6 +1010,7 @@
   function handleRequestRemoveAll() {
     const hasTranscoding = audioToSubsStore.audioFiles.some((file) => file.status === 'transcoding');
     if (!hasTranscoding) {
+      persistedTranscriptionVersionKeys = new Set();
       audioToSubsStore.clear();
       return;
     }
@@ -979,6 +1031,7 @@
       const file = getAudioFile(target.fileId);
       if (file) {
         await cancelTranscodeAndCleanup(file);
+        clearPersistedTranscriptionVersionsForPath(file.path);
         audioToSubsStore.removeFile(file.id);
       }
       removeTarget = null;
@@ -991,6 +1044,7 @@
       console.error('Failed to cancel transcodes before clearing list:', error);
     }
 
+    persistedTranscriptionVersionKeys = new Set();
     audioToSubsStore.clear();
     removeTarget = null;
   }
@@ -1087,18 +1141,28 @@
     }
   }
 
-  function handleDeleteVersion(fileId: string, versionId: string) {
+  async function handleDeleteVersion(fileId: string, versionId: string) {
     audioToSubsStore.removeTranscriptionVersion(fileId, versionId);
     
     // Persist changes to disk
     const file = audioToSubsStore.audioFiles.find(f => f.id === fileId);
     if (file) {
-      saveTranscriptionData(file.path, {
+      const saved = await saveTranscriptionData(file.path, {
         version: 1,
         audioPath: file.path,
         opusPath: file.opusPath,
         transcriptionVersions: file.transcriptionVersions
       });
+
+      if (!saved) {
+        logAndToast.warning({
+          source: 'deepgram',
+          title: 'Version removal not persisted',
+          details: 'Disk sync failed, but version was removed from current session',
+        });
+      }
+
+      unmarkPersistedTranscriptionVersion(file.path, versionId);
     }
   }
 
@@ -1108,12 +1172,32 @@
     }
   }
 
-  const hasExtractedAudioFiles = $derived(
-    recentFilesStore.extractedFiles.some(f => {
-      const ext = f.path.split('.').pop()?.toLowerCase() || '';
-      return AUDIO_EXTENSIONS.includes(ext as typeof AUDIO_EXTENSIONS[number]);
-    })
-  );
+  $effect(() => {
+    const versionedItems = audioToSubsStore.audioFiles.flatMap((file) =>
+      file.transcriptionVersions.map((version) => ({
+        key: `audio-to-subs:${file.path}:${version.id}`,
+        name: `${file.name} - ${version.name}`,
+        kind: 'subtitle' as const,
+        createdAt: Date.parse(version.createdAt) || Date.now(),
+        mediaPath: file.path,
+        mediaName: file.name,
+        versionId: version.id,
+        versionName: version.name,
+        versionCreatedAt: version.createdAt,
+        persisted: persistedTranscriptionVersionKeys.has(buildTranscriptionVersionKey(file.path, version.id))
+          ? 'rsext' as const
+          : 'memory' as const,
+        subtitleFile: transcriptionVersionToSubtitleFile(file.path, file.name, version),
+      })),
+    );
+
+    toolImportStore.publishVersionedSource(
+      'audio_to_subs_versions',
+      'audio-to-subs',
+      'Audio to Subs',
+      versionedItems,
+    );
+  });
 
   const apiKeyConfigured = $derived(settingsStore.hasDeepgramApiKey());
   const transcodingCount = $derived(audioToSubsStore.transcodingFiles.length);
@@ -1154,10 +1238,12 @@
               <span class="sr-only">Clear list</span>
             </Button>
           {/if}
-          <Button size="sm" onclick={handleAddFiles}>
-            <Upload class="size-4 mr-1" />
-            Add
-          </Button>
+          <ToolImportButton
+            targetTool="audio-to-subs"
+            onBrowse={handleAddFiles}
+            onSelectSource={handleImportFromSource}
+            disabled={audioToSubsStore.isTranscribing}
+          />
         {/if}
       </div>
     </div>
@@ -1187,21 +1273,6 @@
       {/if}
     </div>
 
-    <!-- Import from Extraction -->
-    {#if hasExtractedAudioFiles}
-      <div class="p-2 border-t shrink-0">
-        <Button
-          variant="outline"
-          size="sm"
-          class="w-full"
-          onclick={handleImportFromExtraction}
-          disabled={audioToSubsStore.isTranscribing}
-        >
-          <Download class="size-4 mr-2" />
-          Import from Extraction
-        </Button>
-      </div>
-    {/if}
   </div>
 
   <!-- Center Panel: File Details -->

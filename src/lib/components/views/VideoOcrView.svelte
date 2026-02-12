@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { Trash2, Upload, Video } from '@lucide/svelte';
+  import { Trash2, Video } from '@lucide/svelte';
   export interface VideoOcrViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -27,8 +27,9 @@
   } from '$lib/types';
   import type { OcrSubtitleLike } from '$lib/utils';
   import { VIDEO_EXTENSIONS } from '$lib/types';
-  import { settingsStore, videoOcrStore } from '$lib/stores';
+  import { settingsStore, toolImportStore, videoOcrStore } from '$lib/stores';
   import { cleanupOcrSubtitlesWithAi } from '$lib/services/ocr-ai-cleanup';
+  import { ocrVersionToSubtitleFile } from '$lib/services/subtitle-interop';
   import { createOcrVersion, generateOcrVersionName, loadOcrData, saveOcrData } from '$lib/services/ocr-storage';
   import { analyzeOcrSubtitles, formatOcrSubtitleAnalysis, normalizeOcrSubtitles, toRustOcrFrames } from '$lib/utils';
   import { logAndToast } from '$lib/utils/log-toast';
@@ -37,6 +38,7 @@
   import { Button } from '$lib/components/ui/button';
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
+  import { ToolImportButton } from '$lib/components/shared';
   import {
     VideoFileList,
     VideoPreview,
@@ -66,9 +68,34 @@
   let retryDialogFile = $state.raw<OcrVideoFile | null>(null);
   let removeDialogOpen = $state(false);
   let removeTarget = $state.raw<{ mode: 'single'; fileId: string } | { mode: 'all' } | null>(null);
+  let persistedOcrVersionKeys = $state<Set<string>>(new Set());
 
   let unlistenOcrProgress: UnlistenFn | null = null;
   const aiCleanupControllers = new Map<string, AbortController>();
+
+  function buildOcrVersionKey(videoPath: string, versionId: string): string {
+    return `${videoPath}::${versionId}`;
+  }
+
+  function markPersistedOcrVersions(videoPath: string, versions: OcrVersion[]) {
+    if (versions.length === 0) {
+      return;
+    }
+
+    const next = new Set(persistedOcrVersionKeys);
+    for (const version of versions) {
+      next.add(buildOcrVersionKey(videoPath, version.id));
+    }
+    persistedOcrVersionKeys = next;
+  }
+
+  function clearPersistedOcrVersionsForPath(videoPath: string) {
+    const prefix = `${videoPath}::`;
+    const next = new Set(
+      Array.from(persistedOcrVersionKeys).filter((key) => !key.startsWith(prefix)),
+    );
+    persistedOcrVersionKeys = next;
+  }
 
   onMount(async () => {
     if (!settingsStore.isLoaded) {
@@ -373,6 +400,8 @@
       const saved = await persistFileData(file.id);
       if (!saved) {
         videoOcrStore.addLog('warning', 'Failed to persist OCR version to rsext file', file.id);
+      } else {
+        markPersistedOcrVersions(file.path, [version]);
       }
 
       videoOcrStore.addLog('info', `Generated ${finalSubtitles.length} subtitles`, file.id);
@@ -463,6 +492,7 @@
 
           if (persisted.ocrVersions.length > 0) {
             videoOcrStore.setOcrVersions(file.id, persisted.ocrVersions);
+            markPersistedOcrVersions(file.path, persisted.ocrVersions);
           }
         }
 
@@ -625,6 +655,7 @@
     }
 
     if (file.status !== 'transcoding') {
+      clearPersistedOcrVersionsForPath(file.path);
       videoOcrStore.removeFile(id);
       return;
     }
@@ -635,6 +666,7 @@
 
   function handleRequestRemoveAll() {
     if (!hasTranscodingFile()) {
+      persistedOcrVersionKeys = new Set();
       videoOcrStore.clear();
       return;
     }
@@ -667,6 +699,7 @@
         console.error('Failed to cancel OCR operation before removal:', error);
       }
 
+      clearPersistedOcrVersionsForPath(file.path);
       videoOcrStore.removeFile(file.id);
       removeTarget = null;
       return;
@@ -688,6 +721,7 @@
       }
     }
 
+    persistedOcrVersionKeys = new Set();
     videoOcrStore.clear();
     removeTarget = null;
   }
@@ -735,6 +769,28 @@
     }
   }
 
+  $effect(() => {
+    const versionedItems = videoOcrStore.videoFiles.flatMap((file) =>
+      file.ocrVersions.map((version) => ({
+        key: `video-ocr:${file.path}:${version.id}`,
+        name: `${file.name} - ${version.name}`,
+        kind: 'subtitle' as const,
+        createdAt: Date.parse(version.createdAt) || Date.now(),
+        mediaPath: file.path,
+        mediaName: file.name,
+        versionId: version.id,
+        versionName: version.name,
+        versionCreatedAt: version.createdAt,
+        persisted: persistedOcrVersionKeys.has(buildOcrVersionKey(file.path, version.id))
+          ? 'rsext' as const
+          : 'memory' as const,
+        subtitleFile: ocrVersionToSubtitleFile(file.path, file.name, version),
+      })),
+    );
+
+    toolImportStore.publishVersionedSource('ocr_versions', 'video-ocr', 'OCR', versionedItems);
+  });
+
   const transcodingCount = $derived(videoOcrStore.videoFiles.filter((file) => file.status === 'transcoding').length);
 </script>
 
@@ -755,10 +811,11 @@
             <span class="sr-only">Clear list</span>
           </Button>
         {/if}
-        <Button size="sm" onclick={handleAddFiles} disabled={videoOcrStore.isProcessing}>
-          <Upload class="size-4 mr-1" />
-          Add
-        </Button>
+        <ToolImportButton
+          targetTool="video-ocr"
+          onBrowse={handleAddFiles}
+          disabled={videoOcrStore.isProcessing}
+        />
       </div>
     </div>
 

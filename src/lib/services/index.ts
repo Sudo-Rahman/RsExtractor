@@ -7,3 +7,4 @@ export * from './presets';
 export * from './rsext-storage';
 export * from './transcription-storage';
 export * from './ocr-storage';
+export * from './subtitle-interop';

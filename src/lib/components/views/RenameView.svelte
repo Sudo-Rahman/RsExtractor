@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { Upload, Trash2, Search, FolderOpen, Play, Square, RefreshCw, AlertTriangle, X, ChevronDown, FileDown, Combine, ArrowUpDown, ArrowUp, ArrowDown, FileText } from '@lucide/svelte';
+  import { Trash2, Search, FolderOpen, Play, Square, RefreshCw, AlertTriangle, X, ArrowUpDown, ArrowUp, ArrowDown, FileText } from '@lucide/svelte';
   export interface RenameViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -11,9 +11,10 @@
   import { toast } from 'svelte-sonner';
 
   import { renameStore } from '$lib/stores/rename.svelte';
-  import { recentFilesStore } from '$lib/stores/recentFiles.svelte';
+  import { toolImportStore } from '$lib/stores/tool-import.svelte';
   import { createRenameFile, buildNewPath } from '$lib/services/rename';
   import { logAndToast, log } from '$lib/utils/log-toast';
+  import type { ImportSourceId } from '$lib/types/tool-import';
   import type { RuleType, RuleConfig, RenameMode } from '$lib/types/rename';
 
   import { Button } from '$lib/components/ui/button';
@@ -24,6 +25,7 @@
   import { Label } from '$lib/components/ui/label';
   import { Progress } from '$lib/components/ui/progress';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
+  import { ToolImportButton } from '$lib/components/shared';
   import {
     RenameTable,
     RenameRuleEditor,
@@ -93,44 +95,26 @@
     }
   }
 
-  async function handleImportFromExtraction() {
-    const extractedFiles = recentFilesStore.extractedFiles;
-    if (extractedFiles.length === 0) {
-      toast.warning('No extracted files available');
+  async function handleImportFromSource(sourceId: ImportSourceId) {
+    const { paths } = toolImportStore.resolveImport({
+      targetTool: 'rename',
+      sourceId,
+    });
+
+    if (paths.length === 0) {
+      toast.info('No files available from this source');
       return;
     }
 
-    const paths = extractedFiles.map(f => f.path);
     const newFiles = await Promise.all(
       paths.map(async (path) => {
         const metadata = await fetchFileMetadata(path);
         return createRenameFile(path, metadata.size, metadata.modifiedAt, metadata.createdAt);
-      })
+      }),
     );
     renameStore.addFiles(newFiles);
-    recentFilesStore.clearExtracted();
-    
-    toast.success(`${paths.length} extracted file(s) imported`);
-  }
 
-  async function handleImportFromMerge() {
-    const mergedFiles = recentFilesStore.mergedFiles;
-    if (mergedFiles.length === 0) {
-      toast.warning('No merged files available');
-      return;
-    }
-
-    const paths = mergedFiles.map(f => f.path);
-    const newFiles = await Promise.all(
-      paths.map(async (path) => {
-        const metadata = await fetchFileMetadata(path);
-        return createRenameFile(path, metadata.size, metadata.modifiedAt, metadata.createdAt);
-      })
-    );
-    renameStore.addFiles(newFiles);
-    recentFilesStore.clearMerged();
-    
-    toast.success(`${paths.length} merged file(s) imported`);
+    toast.success(`${paths.length} file(s) imported`);
   }
 
   async function handleSelectOutputDir() {
@@ -341,13 +325,6 @@
   const allSelected = $derived(totalCount > 0 && selectedCount === totalCount);
   const someSelected = $derived(selectedCount > 0 && selectedCount < totalCount);
 
-  // Recent files availability
-  const hasExtractedFiles = $derived(recentFilesStore.hasExtractedFiles);
-  const hasRecentMergedFiles = $derived(recentFilesStore.hasMergedFiles);
-  const hasRecentFiles = $derived(hasExtractedFiles || hasRecentMergedFiles);
-  const extractedCount = $derived(recentFilesStore.extractedFiles.length);
-  const mergedCount = $derived(recentFilesStore.mergedFiles.length);
-
   const canExecute = $derived(
     selectedCount > 0 && 
     !hasConflicts && 
@@ -366,43 +343,12 @@
   <div class="flex-1 flex flex-col overflow-hidden">
     <!-- Toolbar -->
     <div class="p-3 border-b shrink-0 flex items-center gap-3">
-      <!-- Add button with dropdown -->
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger>
-          {#snippet child({ props })}
-            <Button size="sm" {...props}>
-              <Upload class="size-4 mr-1.5" />
-              Add Files
-              <ChevronDown class="size-3 ml-1" />
-            </Button>
-          {/snippet}
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Content align="start" class="w-56">
-          <DropdownMenu.Item onclick={handleImportClick}>
-            <Upload class="size-4 mr-2" />
-            Browse files...
-          </DropdownMenu.Item>
-          
-          {#if hasRecentFiles}
-            <DropdownMenu.Separator />
-            <DropdownMenu.Label>Import from</DropdownMenu.Label>
-            
-            {#if hasExtractedFiles}
-              <DropdownMenu.Item onclick={handleImportFromExtraction}>
-                <FileDown class="size-4 mr-2" />
-                Extraction ({extractedCount})
-              </DropdownMenu.Item>
-            {/if}
-            
-            {#if hasRecentMergedFiles}
-              <DropdownMenu.Item onclick={handleImportFromMerge}>
-                <Combine class="size-4 mr-2" />
-                Merge ({mergedCount})
-              </DropdownMenu.Item>
-            {/if}
-          {/if}
-        </DropdownMenu.Content>
-      </DropdownMenu.Root>
+      <ToolImportButton
+        targetTool="rename"
+        label="Add Files"
+        onBrowse={handleImportClick}
+        onSelectSource={handleImportFromSource}
+      />
 
       {#if totalCount > 0}
         <!-- Search -->
