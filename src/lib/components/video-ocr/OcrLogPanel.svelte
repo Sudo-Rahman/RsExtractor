@@ -78,11 +78,12 @@
         {:else}
           {#each displayLogs as log (log.id)}
             {@const iconInfo = getIcon(log.level)}
+            {@const Icon = iconInfo.icon}
             <div class="flex items-start gap-2 text-xs">
               <span class="text-muted-foreground shrink-0">
                 {formatTime(log.timestamp)}
               </span>
-              <svelte:component this={iconInfo.icon} class={cn("size-3.5 shrink-0 mt-0.5", iconInfo.class)} />
+              <Icon class={cn("size-3.5 shrink-0 mt-0.5", iconInfo.class)} />
               <span class={cn(
                 "flex-1",
                 log.level === 'error' && "text-destructive",
