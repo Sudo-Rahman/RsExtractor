@@ -1,21 +1,22 @@
 <script lang="ts" module>
-  import { Upload, Play, Trash2, FileText, Languages, X, Square, Check, AlertCircle, Download, Copy, Loader2, RotateCw } from '@lucide/svelte';
+  import { Play, Trash2, FileText, Languages, X, Square, Check, AlertCircle, Download, Copy, Loader2, RotateCw } from '@lucide/svelte';
   export interface TranslationViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
 </script>
 
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { untrack } from 'svelte';
   import { open, save } from '@tauri-apps/plugin-dialog';
   import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
   import { toast } from 'svelte-sonner';
 
-  import { translationStore, settingsStore } from '$lib/stores';
+  import { settingsStore, toolImportStore, translationStore } from '$lib/stores';
   import { translateSubtitle, detectSubtitleFormat, getSubtitleExtension, buildFullPromptForTokenCount, type BatchProgressInfo } from '$lib/services/translation';
   import { countTokens } from '$lib/services/tokenizer';
   import { logAndToast, log } from '$lib/utils/log-toast';
   import type { SubtitleFile, TranslationJob } from '$lib/types';
+  import type { ImportSelectionMode, ImportSourceId, VersionedImportItem } from '$lib/types/tool-import';
 
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
@@ -26,7 +27,7 @@
   import * as Resizable from '$lib/components/ui/resizable';
   import * as Tooltip from "$lib/components/ui/tooltip/index.js";
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
-  import { FileItemCard } from '$lib/components/shared';
+  import { FileItemCard, ToolImportButton, ToolImportSourceDialog } from '$lib/components/shared';
 
   import { TranslationConfigPanel } from '$lib/components/translation';
 
@@ -40,6 +41,10 @@
 
   const SUBTITLE_EXTENSIONS = ['.srt', '.ass', '.vtt', '.ssa'] as const;
   const SUBTITLE_FORMATS = SUBTITLE_EXTENSIONS.map((ext) => ext.slice(1).toUpperCase());
+  let sourceDialogOpen = $state(false);
+  let sourceDialogSourceId = $state<ImportSourceId | null>(null);
+  let sourceDialogLabel = $state('');
+  let sourceDialogItems = $state<VersionedImportItem[]>([]);
 
   // Reactive state for API key check - use $derived to react to settings changes
   const hasApiKey = $derived(
@@ -167,6 +172,81 @@
         title: 'Error opening file dialog',
         details: error instanceof Error ? error.message : String(error)
       });
+    }
+  }
+
+  async function importSubtitlePaths(paths: string[]) {
+    for (const path of paths) {
+      await loadSubtitleFile(path);
+    }
+  }
+
+  function importSubtitleFiles(files: SubtitleFile[]) {
+    if (files.length === 0) {
+      return { imported: 0, skipped: 0 };
+    }
+
+    const existingPaths = new Set(translationStore.jobs.map((job) => job.file.path));
+    let imported = 0;
+    let skipped = 0;
+
+    for (const file of files) {
+      if (existingPaths.has(file.path)) {
+        skipped++;
+        continue;
+      }
+      translationStore.addFile(file);
+      existingPaths.add(file.path);
+      imported++;
+    }
+
+    return { imported, skipped };
+  }
+
+  async function handleImportFromSource(sourceId: ImportSourceId) {
+    const sourceItems = toolImportStore.getItems(sourceId, 'translate');
+    if (sourceItems.length === 0) {
+      toast.info('No subtitle data available from this source');
+      return;
+    }
+
+    if (sourceItems[0].itemType === 'versioned') {
+      const sourceOption = toolImportStore
+        .getAvailableSources('translate')
+        .find((source) => source.sourceId === sourceId);
+
+      sourceDialogSourceId = sourceId;
+      sourceDialogLabel = sourceOption?.label ?? 'Source';
+      sourceDialogItems = sourceItems.filter((item): item is VersionedImportItem => item.itemType === 'versioned');
+      sourceDialogOpen = true;
+      return;
+    }
+
+    const payload = toolImportStore.resolveImport({
+      targetTool: 'translate',
+      sourceId,
+    });
+    await importSubtitlePaths(payload.paths);
+  }
+
+  async function handleConfirmVersionImport(mode: ImportSelectionMode, selectedKeys: string[]) {
+    if (!sourceDialogSourceId) {
+      return;
+    }
+
+    const payload = toolImportStore.resolveImport({
+      targetTool: 'translate',
+      sourceId: sourceDialogSourceId,
+      selectionMode: mode,
+      selectedKeys,
+    });
+
+    const result = importSubtitleFiles(payload.subtitleFiles);
+    if (result.imported > 0) {
+      toast.success(`Imported ${result.imported} subtitle version(s)`);
+    }
+    if (result.imported === 0) {
+      toast.info('No new subtitle versions to import');
     }
   }
 
@@ -508,10 +588,14 @@
                   <span class="sr-only">Clear all</span>
                 </Button>
               {/if}
-              <Button variant="outline" size="sm" onclick={handleImportClick} disabled={isTranslating}>
-                <Upload class="size-4 mr-2" />
-                Import
-              </Button>
+              <ToolImportButton
+                targetTool="translate"
+                label="Import"
+                variant="outline"
+                onBrowse={handleImportClick}
+                onSelectSource={handleImportFromSource}
+                disabled={isTranslating}
+              />
             </div>
           </div>
           {#if isTranslating || completedJobsCount > 0}
@@ -797,3 +881,18 @@
     </div>
   </div>
 </div>
+
+<ToolImportSourceDialog
+  bind:open={sourceDialogOpen}
+  onOpenChange={(open) => {
+    sourceDialogOpen = open;
+    if (!open) {
+      sourceDialogSourceId = null;
+      sourceDialogItems = [];
+      sourceDialogLabel = '';
+    }
+  }}
+  sourceLabel={sourceDialogLabel}
+  items={sourceDialogItems}
+  onConfirm={handleConfirmVersionImport}
+/>

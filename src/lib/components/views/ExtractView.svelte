@@ -8,15 +8,13 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { open } from '@tauri-apps/plugin-dialog';
-  import { FileVideo, Trash2, Upload } from '@lucide/svelte';
+  import { FileVideo, Trash2 } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
 
-  import { fileListStore } from '$lib/stores/files.svelte';
-  import { extractionStore } from '$lib/stores/extraction.svelte';
-  import { recentFilesStore } from '$lib/stores/recentFiles.svelte';
+  import { extractionStore, fileListStore, toolImportStore } from '$lib/stores';
   import { scanFiles } from '$lib/services/ffprobe';
   import { extractTrack, buildOutputPath } from '$lib/services/ffmpeg';
-  import { logAndToast, log } from '$lib/utils/log-toast';
+  import { logAndToast } from '$lib/utils/log-toast';
   import type { VideoFile, Track } from '$lib/types';
 
   import {
@@ -26,10 +24,32 @@
     ExtractionPanel,
     BatchTrackSelector
   } from '$lib/components';
+  import { ToolImportButton } from '$lib/components/shared';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
 
   const SUPPORTED_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'] as const;
   const SUPPORTED_FORMATS = SUPPORTED_EXTENSIONS.map((ext) => ext.slice(1).toUpperCase());
+  const EXTRACTION_SOURCE_LABEL = 'Extraction';
+
+  interface ExtractedOutputItem {
+    key: string;
+    path: string;
+    name: string;
+    kind: 'track_audio' | 'track_subtitle' | 'track_video';
+    createdAt: number;
+  }
+
+  let extractedOutputItems = $state<ExtractedOutputItem[]>([]);
+
+  function trackTypeToImportKind(type: Track['type']): ExtractedOutputItem['kind'] {
+    if (type === 'audio') {
+      return 'track_audio';
+    }
+    if (type === 'subtitle') {
+      return 'track_subtitle';
+    }
+    return 'track_video';
+  }
 
   export async function handleFileDrop(paths: string[]) {
     const videoPaths = paths.filter(p =>
@@ -199,7 +219,7 @@
 
     let successCount = 0;
     let errorCount = 0;
-    const extractedPaths: string[] = [];
+    const extractedOutputs: ExtractedOutputItem[] = [];
 
     for (let i = 0; i < extractions.length; i++) {
       const { file, track } = extractions[i];
@@ -223,7 +243,13 @@
 
       if (result.success) {
         successCount++;
-        extractedPaths.push(outputPath);
+        extractedOutputs.push({
+          key: `extract:${file.path}:${track.id}:${outputPath}`,
+          path: outputPath,
+          name: outputPath.split('/').pop() ?? outputPath,
+          kind: trackTypeToImportKind(track.type),
+          createdAt: Date.now(),
+        });
       } else {
         errorCount++;
       }
@@ -231,9 +257,12 @@
 
     extractionStore.updateProgress({ status: 'completed' });
 
-    // Add extracted files to recent files store for potential import in Rename tool
-    if (extractedPaths.length > 0) {
-      recentFilesStore.addExtractedFiles(extractedPaths);
+    if (extractedOutputs.length > 0) {
+      const byPath = new Map(extractedOutputItems.map((item) => [item.path, item]));
+      for (const item of extractedOutputs) {
+        byPath.set(item.path, item);
+      }
+      extractedOutputItems = Array.from(byPath.values());
     }
 
     if (errorCount === 0) {
@@ -255,6 +284,7 @@
     fileListStore.clear();
     extractionStore.reset();
     extractionStore.clearAllTracks();
+    extractedOutputItems = [];
     toast.info('File list cleared');
   }
 
@@ -270,6 +300,34 @@
       : []
   );
   const readyFiles = $derived(fileListStore.files.filter(f => f.status === 'ready'));
+
+  $effect(() => {
+    toolImportStore.publishPathSource(
+      'extraction_outputs',
+      'extract',
+      EXTRACTION_SOURCE_LABEL,
+      extractedOutputItems,
+    );
+  });
+
+  $effect(() => {
+    const mediaItems = fileListStore.files
+      .filter((file) => file.status === 'ready')
+      .map((file) => ({
+        key: `extract-media:${file.path}`,
+        path: file.path,
+        name: file.name,
+        kind: 'media' as const,
+        createdAt: Date.now(),
+      }));
+
+    toolImportStore.publishPathSource(
+      'extraction_media',
+      'extract',
+      EXTRACTION_SOURCE_LABEL,
+      mediaItems,
+    );
+  });
 </script>
 
 <div class="h-full flex overflow-hidden">
@@ -289,10 +347,10 @@
             <span class="sr-only">Clear list</span>
           </Button>
         {/if}
-        <Button size="sm" onclick={handleImportClick}>
-          <Upload class="size-4 mr-1" />
-          Add
-        </Button>
+        <ToolImportButton
+          targetTool="extract"
+          onBrowse={handleImportClick}
+        />
       </div>
     </div>
 

@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { FileVideo, Subtitles, Video, Volume2, Upload, Film, Plus, Trash2, Loader2, XCircle, X, Import, Layers, Copy, Check } from '@lucide/svelte';
+  import { FileVideo, Subtitles, Video, Volume2, Film, Plus, Trash2, Loader2, XCircle, X, Layers, Copy, Check } from '@lucide/svelte';
   export interface InfoViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -9,10 +9,10 @@
   import { open } from '@tauri-apps/plugin-dialog';
   import { toast } from 'svelte-sonner';
 
-  import { fileListStore } from '$lib/stores/files.svelte';
-  import { mergeStore, infoStore } from '$lib/stores';
+  import { infoStore, toolImportStore } from '$lib/stores';
   import { scanFiles } from '$lib/services/ffprobe';
   import { log } from '$lib/utils/log-toast';
+  import type { ImportSourceId } from '$lib/types/tool-import';
   import type { Track } from '$lib/types';
   import type { FileInfo } from '$lib/stores/info.svelte';
 
@@ -22,7 +22,7 @@
   import * as Card from '$lib/components/ui/card';
   import * as Tabs from '$lib/components/ui/tabs';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
-  import { FileItemCard } from '$lib/components/shared';
+  import { FileItemCard, ToolImportButton } from '$lib/components/shared';
 
   const SUPPORTED_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
   const SUPPORTED_FORMATS = SUPPORTED_EXTENSIONS.map((ext) => ext.slice(1).toUpperCase());
@@ -140,26 +140,18 @@
     }
   }
 
-  function handleImportFromExtraction() {
-    const extractionFiles = fileListStore.files.filter(f => f.status === 'ready');
-    if (extractionFiles.length === 0) {
-      toast.info('No files in Extraction to import');
+  async function handleImportFromSource(sourceId: ImportSourceId) {
+    const { paths } = toolImportStore.resolveImport({
+      targetTool: 'info',
+      sourceId,
+    });
+
+    if (paths.length === 0) {
+      toast.info('No media files available from this source');
       return;
     }
 
-    const paths = extractionFiles.map(f => f.path);
-    addFiles(paths);
-  }
-
-  function handleImportFromMerge() {
-    const mergeFiles = mergeStore.videoFiles.filter(f => f.status === 'ready');
-    if (mergeFiles.length === 0) {
-      toast.info('No files in Merge to import');
-      return;
-    }
-
-    const paths = mergeFiles.map(f => f.path);
-    addFiles(paths);
+    await addFiles(paths);
   }
 
   function handleRemoveFile(fileId: string) {
@@ -230,9 +222,6 @@
     return groups;
   }
 
-  // Count files by status
-  const extractionFilesCount = $derived(fileListStore.files.filter(f => f.status === 'ready').length);
-  const mergeFilesCount = $derived(mergeStore.videoFiles.filter(f => f.status === 'ready').length);
 </script>
 
 <div class="h-full flex overflow-hidden">
@@ -246,10 +235,11 @@
             <Trash2 class="size-4" />
           </Button>
         {/if}
-        <Button size="sm" onclick={handleAddFiles}>
-          <Upload class="size-4 mr-1" />
-          Add
-        </Button>
+        <ToolImportButton
+          targetTool="info"
+          onBrowse={handleAddFiles}
+          onSelectSource={handleImportFromSource}
+        />
       </div>
     </div>
 
@@ -264,23 +254,6 @@
             onBrowse={handleAddFiles}
           />
 
-          <!-- Import buttons -->
-          {#if extractionFilesCount > 0 || mergeFilesCount > 0}
-            <div class="space-y-2 mt-4">
-              {#if extractionFilesCount > 0}
-                <Button variant="outline" size="sm" class="w-full" onclick={handleImportFromExtraction}>
-                  <Import class="size-4 mr-2" />
-                  Import from Extract ({extractionFilesCount})
-                </Button>
-              {/if}
-              {#if mergeFilesCount > 0}
-                <Button variant="outline" size="sm" class="w-full" onclick={handleImportFromMerge}>
-                  <Import class="size-4 mr-2" />
-                  Import from Merge ({mergeFilesCount})
-                </Button>
-              {/if}
-            </div>
-          {/if}
         </div>
       {:else}
         <div class="space-y-2 p-2">
@@ -327,24 +300,6 @@
             </FileItemCard>
           {/each}
         </div>
-
-        <!-- Import buttons when files exist -->
-        {#if extractionFilesCount > 0 || mergeFilesCount > 0}
-          <div class="border-t p-2 space-y-2">
-            {#if extractionFilesCount > 0}
-              <Button variant="ghost" size="sm" class="w-full justify-start" onclick={handleImportFromExtraction}>
-                <Import class="size-4 mr-2" />
-                Import from Extract ({extractionFilesCount})
-              </Button>
-            {/if}
-            {#if mergeFilesCount > 0}
-              <Button variant="ghost" size="sm" class="w-full justify-start" onclick={handleImportFromMerge}>
-                <Import class="size-4 mr-2" />
-                Import from Merge ({mergeFilesCount})
-              </Button>
-            {/if}
-          </div>
-        {/if}
       {/if}
     </div>
   </div>

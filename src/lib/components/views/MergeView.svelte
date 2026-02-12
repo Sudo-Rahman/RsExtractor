@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { FileVideo, FileAudio, Subtitles, Video, Film, Volume2, Trash2, Plus, Upload, Loader2, XCircle, Wand2, Link, Unlink, Settings2, GripVertical, Clock, Layers, X } from '@lucide/svelte';
+  import { FileVideo, FileAudio, Subtitles, Video, Film, Volume2, Trash2, Plus, Loader2, XCircle, Wand2, Link, Unlink, Settings2, GripVertical, Clock, Layers, X } from '@lucide/svelte';
   export interface MergeViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -11,13 +11,13 @@
   import { toast } from 'svelte-sonner';
   import { flip } from 'svelte/animate';
 
-  import { mergeStore } from '$lib/stores';
-  import { recentFilesStore } from '$lib/stores/recentFiles.svelte';
+  import { mergeStore, toolImportStore } from '$lib/stores';
   import { scanFiles } from '$lib/services/ffprobe';
   import { dndzone } from '$lib/utils/dnd';
   import { logAndToast } from '$lib/utils/log-toast';
 
   import { getCodecFromExtension, type ImportedTrack, type MergeTrack, type MergeTrackConfig } from '$lib/types';
+  import type { ImportSourceId } from '$lib/types/tool-import';
 
   interface Props {
     viewMode?: 'home' | 'groups' | 'table';
@@ -32,7 +32,7 @@
   import * as Tooltip from '$lib/components/ui/tooltip';
   import * as Tabs from '$lib/components/ui/tabs';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
-  import { FileItemCard } from '$lib/components/shared';
+  import { FileItemCard, ToolImportButton } from '$lib/components/shared';
   import { MergeTrackSettings, MergeOutputPanel, MergeTrackGroups, MergeTrackTable } from '$lib/components/merge';
 
   // Constants
@@ -79,6 +79,13 @@
   // DnD items - mutable state required by svelte-dnd-action
   let unassignedItems = $state<(ImportedTrack & { id: string })[]>([]);
   let attachedItems = $state<(ImportedTrack & { id: string })[]>([]);
+  let mergedOutputItems = $state<Array<{
+    key: string;
+    path: string;
+    name: string;
+    kind: 'generic_file';
+    createdAt: number;
+  }>>([]);
 
   // Sync items with store
   $effect(() => {
@@ -90,6 +97,27 @@
       ? mergeStore.getAttachedTracks(mergeStore.selectedVideoId).map(t => ({ ...t }))
       : [];
   });
+
+  function appendMergedOutputs(paths: string[]) {
+    if (paths.length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    const byPath = new Map(mergedOutputItems.map((item) => [item.path, item]));
+
+    for (const path of paths) {
+      byPath.set(path, {
+        key: `merge-output:${path}`,
+        path,
+        name: path.split('/').pop() || path,
+        kind: 'generic_file',
+        createdAt: now,
+      });
+    }
+
+    mergedOutputItems = Array.from(byPath.values());
+  }
 
   function getFileIcon(path: string) {
     const ext = path.toLowerCase().substring(path.lastIndexOf('.'));
@@ -260,6 +288,20 @@
     if (parts.length > 0) {
       toast.success(`Added: ${parts.join(', ')}`);
     }
+  }
+
+  async function handleImportFromSource(sourceId: ImportSourceId) {
+    const { paths } = toolImportStore.resolveImport({
+      targetTool: 'merge',
+      sourceId,
+    });
+
+    if (paths.length === 0) {
+      toast.info('No compatible tracks available from this source');
+      return;
+    }
+
+    await addFiles(paths);
   }
 
 
@@ -449,9 +491,7 @@
       mergeStore.setStatus('idle');
       mergeStore.setProgress(0);
 
-      if (mergedPaths.length > 0) {
-        recentFilesStore.addMergedFiles(mergedPaths);
-      }
+      appendMergedOutputs(mergedPaths);
 
       const parts = [];
       if (completed > 0) parts.push(`${completed} completed`);
@@ -460,10 +500,7 @@
     } else {
       mergeStore.setStatus('completed');
       
-      // Add merged files to recent files store for potential import in Rename tool
-      if (mergedPaths.length > 0) {
-        recentFilesStore.addMergedFiles(mergedPaths);
-      }
+      appendMergedOutputs(mergedPaths);
       
       toast.success(`Successfully merged ${completed} file(s)!`);
     }
@@ -513,6 +550,7 @@
 
   function handleClearAll() {
     mergeStore.clearAll();
+    mergedOutputItems = [];
     toast.info('Cleared all files');
   }
 
@@ -566,6 +604,24 @@
     return groups;
   }
 
+  $effect(() => {
+    const mediaItems = mergeStore.videoFiles
+      .filter((file) => file.status === 'ready')
+      .map((file) => ({
+        key: `merge-media:${file.path}`,
+        path: file.path,
+        name: file.name,
+        kind: 'media' as const,
+        createdAt: Date.now(),
+      }));
+
+    toolImportStore.publishPathSource('merge_media', 'merge', 'Merge', mediaItems);
+  });
+
+  $effect(() => {
+    toolImportStore.publishPathSource('merge_outputs', 'merge', 'Merge', mergedOutputItems);
+  });
+
   const groupedSourceTracks = $derived(() => groupTracksByType(selectedVideoTracks()));
 </script>
 
@@ -598,10 +654,12 @@
               <Trash2 class="size-4" />
             </Button>
           {/if}
-          <Button size="sm" onclick={handleAddVideoFiles} disabled={isProcessing()}>
-            <Upload class="size-4 mr-1" />
-            Add
-          </Button>
+          <ToolImportButton
+            targetTool="merge"
+            sourceFilter={[]}
+            onBrowse={handleAddVideoFiles}
+            disabled={isProcessing()}
+          />
         </div>
       </div>
 
@@ -814,10 +872,13 @@
         <!-- Import Tracks Tab -->
         <Tabs.Content value="import" class="flex-1 min-h-0 overflow-auto p-4 mt-0 space-y-4">
           <div class="flex justify-end">
-            <Button size="sm" onclick={handleAddTrackFiles}>
-              <Plus class="size-4 mr-1" />
-              Add tracks
-            </Button>
+            <ToolImportButton
+              targetTool="merge"
+              label="Add tracks"
+              sourceFilter={['extraction_outputs']}
+              onBrowse={handleAddTrackFiles}
+              onSelectSource={handleImportFromSource}
+            />
           </div>
 
           <!-- Unassigned tracks (droppable) -->
