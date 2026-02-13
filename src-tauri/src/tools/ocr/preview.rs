@@ -3,7 +3,7 @@ use std::path::Path;
 use tauri::Emitter;
 use tokio::time::{Duration, timeout};
 
-use crate::shared::hash::md5_hash;
+use crate::shared::hash::stable_hash64;
 use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::validation::validate_media_path;
@@ -27,7 +27,7 @@ pub(super) async fn transcode_for_preview_with_bins(
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("video");
-    let path_hash = format!("{:x}", md5_hash(input_path));
+    let path_hash = format!("{:x}", stable_hash64(input_path));
 
     let temp_dir = std::env::temp_dir().join("mediaflow_preview");
     std::fs::create_dir_all(&temp_dir)
@@ -112,7 +112,7 @@ pub(crate) async fn transcode_for_preview(
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("video");
-    let path_hash = format!("{:x}", md5_hash(&input_path));
+    let path_hash = format!("{:x}", stable_hash64(&input_path));
 
     let temp_dir = std::env::temp_dir().join("mediaflow_preview");
     std::fs::create_dir_all(&temp_dir)

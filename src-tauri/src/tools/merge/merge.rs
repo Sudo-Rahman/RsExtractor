@@ -408,8 +408,14 @@ pub(crate) async fn merge_tracks(
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use serde_json::Value;
 
     use super::{build_merge_args, enabled_source_indices, merge_tracks_with_bins};
+
+    fn has_arg_pair(args: &[String], left: &str, right: &str) -> bool {
+        args.windows(2)
+            .any(|window| window[0] == left && window[1] == right)
+    }
 
     #[test]
     fn enabled_source_indices_uses_all_streams_when_no_config_provided() {
@@ -448,6 +454,60 @@ mod tests {
         assert!(args.windows(2).any(|w| w == ["-map", "0:1"]));
         assert!(args.windows(2).any(|w| w == ["-map", "1:0"]));
         assert_eq!(args.last().map(String::as_str), Some("/tmp/out.mkv"));
+    }
+
+    #[test]
+    fn build_merge_args_maps_multiple_external_tracks() {
+        let tracks = vec![
+            json!({"inputPath": "/tmp/sub1.srt", "config": {"language": "eng"}}),
+            json!({"inputPath": "/tmp/sub2.srt", "config": {"language": "fra"}}),
+        ];
+
+        let args = build_merge_args("/tmp/video.mkv", &tracks, None, 2, "/tmp/out.mkv");
+
+        assert!(has_arg_pair(&args, "-map", "0:0"));
+        assert!(has_arg_pair(&args, "-map", "0:1"));
+        assert!(has_arg_pair(&args, "-map", "1:0"));
+        assert!(has_arg_pair(&args, "-map", "2:0"));
+    }
+
+    #[test]
+    fn build_merge_args_applies_metadata_and_disposition_for_source_and_attached_tracks() {
+        let tracks = vec![json!({
+            "inputPath": "/tmp/sub.srt",
+            "config": {
+                "language": "eng",
+                "title": "English subtitle",
+                "default": true,
+                "forced": false
+            }
+        })];
+        let source_configs = vec![json!({
+            "originalIndex": 0,
+            "config": {
+                "enabled": true,
+                "language": "jpn",
+                "title": "Main stream",
+                "default": false,
+                "forced": true
+            }
+        })];
+
+        let args = build_merge_args(
+            "/tmp/video.mkv",
+            &tracks,
+            Some(&source_configs),
+            1,
+            "/tmp/out.mkv",
+        );
+
+        assert!(has_arg_pair(&args, "-metadata:s:0", "language=jpn"));
+        assert!(has_arg_pair(&args, "-metadata:s:0", "title=Main stream"));
+        assert!(has_arg_pair(&args, "-disposition:0", "forced"));
+
+        assert!(has_arg_pair(&args, "-metadata:s:1", "language=eng"));
+        assert!(has_arg_pair(&args, "-metadata:s:1", "title=English subtitle"));
+        assert!(has_arg_pair(&args, "-disposition:1", "default"));
     }
 
     #[tokio::test]
@@ -513,5 +573,47 @@ mod tests {
         .expect("merge should succeed");
 
         assert!(output.exists());
+
+        let merged_probe =
+            crate::tools::ffprobe::probe::probe_file_with_ffprobe("ffprobe", output.to_string_lossy().as_ref())
+                .await
+                .expect("probe merged output should succeed");
+        let merged_value: Value =
+            serde_json::from_str(&merged_probe).expect("merged probe json should be valid");
+
+        let subtitle_stream = merged_value
+            .get("streams")
+            .and_then(|v| v.as_array())
+            .and_then(|streams| {
+                streams.iter().find(|stream| {
+                    stream
+                        .get("codec_type")
+                        .and_then(|v| v.as_str())
+                        .map(|codec_type| codec_type == "subtitle")
+                        .unwrap_or(false)
+                })
+            })
+            .expect("merged output should contain subtitle stream");
+
+        let language = subtitle_stream
+            .get("tags")
+            .and_then(|tags| tags.get("language"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert_eq!(language, "eng");
+
+        let title = subtitle_stream
+            .get("tags")
+            .and_then(|tags| tags.get("title"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert_eq!(title, "English");
+
+        let default_disposition = subtitle_stream
+            .get("disposition")
+            .and_then(|d| d.get("default"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        assert_eq!(default_disposition, 1);
     }
 }

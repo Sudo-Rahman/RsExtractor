@@ -143,4 +143,15 @@ mod tests {
             .expect_err("missing directory should fail");
         assert!(error.contains("Directory not found"));
     }
+
+    #[test]
+    fn validate_directory_path_rejects_file_path() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let file = dir.path().join("not_a_dir.txt");
+        std::fs::write(&file, b"data").expect("failed to create file");
+
+        let error = validate_directory_path(file.to_string_lossy().as_ref())
+            .expect_err("file path should fail");
+        assert!(error.contains("Not a directory"));
+    }
 }

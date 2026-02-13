@@ -27,7 +27,11 @@ pub(crate) async fn rename_file(old_path: String, new_path: String) -> Result<()
 
 /// Copy a file to a new location
 #[tauri::command]
-pub(crate) async fn copy_file(source_path: String, dest_path: String) -> Result<(), String> {
+pub(crate) async fn copy_file(
+    source_path: String,
+    dest_path: String,
+    overwrite: Option<bool>,
+) -> Result<(), String> {
     // Validate paths
     let source = Path::new(&source_path);
     if !source.exists() {
@@ -38,6 +42,17 @@ pub(crate) async fn copy_file(source_path: String, dest_path: String) -> Result<
     }
 
     validate_output_path(&dest_path)?;
+    let overwrite = overwrite.unwrap_or(false);
+
+    let dest = Path::new(&dest_path);
+    if dest.exists() {
+        if !dest.is_file() {
+            return Err(format!("Destination is not a file: {}", dest_path));
+        }
+        if !overwrite {
+            return Err(format!("Destination already exists: {}", dest_path));
+        }
+    }
 
     let _sleep_guard = SleepInhibitGuard::try_acquire("Copying file").ok();
 
@@ -94,9 +109,51 @@ mod tests {
         copy_file(
             source.to_string_lossy().to_string(),
             dest.to_string_lossy().to_string(),
+            None,
         )
         .await
         .expect("copy should succeed");
+
+        let content = std::fs::read_to_string(&dest).expect("failed to read destination");
+        assert_eq!(content, "copy-me");
+    }
+
+    #[tokio::test]
+    async fn copy_file_rejects_existing_destination_without_overwrite() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let source = dir.path().join("src.txt");
+        let dest = dir.path().join("dst.txt");
+        std::fs::write(&source, b"copy-me").expect("failed to create source file");
+        std::fs::write(&dest, b"existing").expect("failed to create destination file");
+
+        let error = copy_file(
+            source.to_string_lossy().to_string(),
+            dest.to_string_lossy().to_string(),
+            None,
+        )
+        .await
+        .expect_err("copy should fail when destination exists and overwrite is false");
+
+        assert!(error.contains("Destination already exists"));
+        let content = std::fs::read_to_string(&dest).expect("failed to read destination");
+        assert_eq!(content, "existing");
+    }
+
+    #[tokio::test]
+    async fn copy_file_overwrites_existing_destination_when_allowed() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let source = dir.path().join("src.txt");
+        let dest = dir.path().join("dst.txt");
+        std::fs::write(&source, b"copy-me").expect("failed to create source file");
+        std::fs::write(&dest, b"existing").expect("failed to create destination file");
+
+        copy_file(
+            source.to_string_lossy().to_string(),
+            dest.to_string_lossy().to_string(),
+            Some(true),
+        )
+        .await
+        .expect("copy should overwrite destination");
 
         let content = std::fs::read_to_string(&dest).expect("failed to read destination");
         assert_eq!(content, "copy-me");

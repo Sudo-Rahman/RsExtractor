@@ -329,6 +329,141 @@ mod tests {
         assert_eq!(subtitles.len(), 1);
         assert_eq!(subtitles[0].text, "Real subtitle");
     }
+
+    #[test]
+    fn generate_subtitles_rejects_zero_or_negative_fps() {
+        let frames = vec![OcrFrameResult {
+            frame_index: 0,
+            time_ms: 0,
+            text: "Hello".to_string(),
+            confidence: 0.99,
+        }];
+
+        let zero_error = super::generate_subtitles_core(
+            &frames,
+            0.0,
+            0.5,
+            OcrSubtitleCleanupOptions::default(),
+            |_current, _total| {},
+        )
+        .expect_err("zero fps should fail");
+        assert!(zero_error.contains("FPS must be greater than 0"));
+
+        let negative_error = super::generate_subtitles_core(
+            &frames,
+            -1.0,
+            0.5,
+            OcrSubtitleCleanupOptions::default(),
+            |_current, _total| {},
+        )
+        .expect_err("negative fps should fail");
+        assert!(negative_error.contains("FPS must be greater than 0"));
+    }
+
+    #[test]
+    fn generate_subtitles_returns_empty_for_empty_frame_results() {
+        let subtitles = super::generate_subtitles_core(
+            &[],
+            1.0,
+            0.5,
+            OcrSubtitleCleanupOptions::default(),
+            |_current, _total| {},
+        )
+        .expect("empty frame input should succeed");
+
+        assert!(subtitles.is_empty());
+    }
+
+    #[test]
+    fn generate_subtitles_returns_empty_when_all_frames_below_confidence_threshold() {
+        let frames = vec![
+            OcrFrameResult {
+                frame_index: 0,
+                time_ms: 0,
+                text: "Hello".to_string(),
+                confidence: 0.10,
+            },
+            OcrFrameResult {
+                frame_index: 1,
+                time_ms: 1000,
+                text: "World".to_string(),
+                confidence: 0.15,
+            },
+        ];
+
+        let subtitles = super::generate_subtitles_core(
+            &frames,
+            1.0,
+            0.80,
+            OcrSubtitleCleanupOptions::default(),
+            |_current, _total| {},
+        )
+        .expect("subtitle generation should succeed");
+
+        assert!(subtitles.is_empty());
+    }
+
+    #[test]
+    fn generate_subtitles_handles_single_frame_input() {
+        let frames = vec![OcrFrameResult {
+            frame_index: 0,
+            time_ms: 0,
+            text: "Single frame".to_string(),
+            confidence: 0.99,
+        }];
+
+        let subtitles = super::generate_subtitles_core(
+            &frames,
+            1.0,
+            0.5,
+            OcrSubtitleCleanupOptions::default(),
+            |_current, _total| {},
+        )
+        .expect("subtitle generation should succeed");
+
+        assert_eq!(subtitles.len(), 1);
+        assert_eq!(subtitles[0].text, "Single frame");
+        assert!(subtitles[0].end_time > subtitles[0].start_time);
+    }
+
+    #[test]
+    fn generate_subtitles_merges_short_adjacent_cues_when_min_duration_requires_it() {
+        let frames = vec![
+            OcrFrameResult {
+                frame_index: 0,
+                time_ms: 0,
+                text: "today we fight together".to_string(),
+                confidence: 0.95,
+            },
+            OcrFrameResult {
+                frame_index: 1,
+                time_ms: 500,
+                text: "today we fight togather".to_string(),
+                confidence: 0.96,
+            },
+        ];
+
+        let cleanup = OcrSubtitleCleanupOptions {
+            merge_similar: true,
+            similarity_threshold: 0.98,
+            max_gap_ms: 1000,
+            min_cue_duration_ms: 800,
+            filter_url_like: false,
+        };
+
+        let subtitles = super::generate_subtitles_core(
+            &frames,
+            2.0,
+            0.5,
+            cleanup,
+            |_current, _total| {},
+        )
+        .expect("subtitle generation should succeed");
+
+        assert_eq!(subtitles.len(), 1);
+        assert_eq!(subtitles[0].start_time, 0);
+        assert!(subtitles[0].end_time >= 1000);
+    }
 }
 
 fn token_looks_like_domain(token: &str) -> bool {

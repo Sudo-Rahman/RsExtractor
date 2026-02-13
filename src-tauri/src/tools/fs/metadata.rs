@@ -38,6 +38,7 @@ pub(crate) async fn get_file_metadata(path: String) -> Result<FileMetadata, Stri
 #[cfg(test)]
 mod tests {
     use super::get_file_metadata;
+    use serde_json::Value;
 
     #[tokio::test]
     async fn get_file_metadata_returns_file_size() {
@@ -50,5 +51,31 @@ mod tests {
             .expect("metadata should succeed");
         let json = serde_json::to_value(metadata).expect("failed to serialize metadata");
         assert_eq!(json.get("size").and_then(|v| v.as_u64()), Some(5));
+    }
+
+    #[tokio::test]
+    async fn get_file_metadata_rejects_missing_file() {
+        let error = get_file_metadata("/tmp/definitely-missing-meta-file.bin".to_string())
+            .await
+            .expect_err("missing file should fail");
+        assert!(error.contains("Failed to get file metadata"));
+    }
+
+    #[tokio::test]
+    async fn get_file_metadata_exposes_temporal_fields_cross_platform() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let file = dir.path().join("meta-times.bin");
+        std::fs::write(&file, b"12345").expect("failed to write test file");
+
+        let metadata = get_file_metadata(file.to_string_lossy().to_string())
+            .await
+            .expect("metadata should succeed");
+        let json = serde_json::to_value(metadata).expect("failed to serialize metadata");
+
+        let created_at = json.get("created_at").unwrap_or(&Value::Null);
+        assert!(created_at.is_null() || created_at.as_u64().is_some());
+
+        let modified_at = json.get("modified_at").unwrap_or(&Value::Null);
+        assert!(modified_at.is_null() || modified_at.as_u64().is_some());
     }
 }

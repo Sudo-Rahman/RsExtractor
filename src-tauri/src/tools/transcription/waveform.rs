@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::shared::hash::md5_hash;
+use crate::shared::hash::stable_hash64;
 use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::validation::validate_media_path;
@@ -32,7 +32,7 @@ pub(super) async fn convert_audio_for_waveform_with_ffmpeg(
 
     let track_idx = track_index.unwrap_or(0);
     let cache_key = format!("{}::track{}", audio_path, track_idx);
-    let path_hash = format!("{:x}", md5_hash(&cache_key));
+    let path_hash = format!("{:x}", stable_hash64(&cache_key));
     let output_path = temp_dir.join(format!(
         "{}_track{}_{}.mp3",
         stem,

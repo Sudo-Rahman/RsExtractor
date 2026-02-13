@@ -276,4 +276,69 @@ mod tests {
 
         assert!(output.exists());
     }
+
+    #[tokio::test]
+    async fn extract_track_rejects_invalid_track_index() {
+        let video = crate::test_support::assets::ensure_sample_video()
+            .await
+            .expect("failed to load local sample video");
+        let temp = tempfile::tempdir().expect("failed to create tempdir");
+        let output = temp.path().join("invalid-track.mkv");
+
+        let error = extract_track_with_ffmpeg(
+            "ffmpeg",
+            video.to_string_lossy().as_ref(),
+            output.to_string_lossy().as_ref(),
+            999,
+            "video",
+            "h264",
+        )
+        .await
+        .expect_err("invalid track index should fail");
+
+        assert!(error.contains("ffmpeg extraction failed"));
+    }
+
+    #[tokio::test]
+    async fn extract_track_rejects_corrupted_media_input() {
+        let temp = tempfile::tempdir().expect("failed to create tempdir");
+        let input = temp.path().join("corrupted.mp4");
+        std::fs::write(&input, b"this-is-not-valid-media").expect("failed to write corrupted input");
+        let output = temp.path().join("out.mkv");
+
+        let error = extract_track_with_ffmpeg(
+            "ffmpeg",
+            input.to_string_lossy().as_ref(),
+            output.to_string_lossy().as_ref(),
+            0,
+            "video",
+            "h264",
+        )
+        .await
+        .expect_err("corrupted input should fail");
+
+        assert!(error.contains("ffmpeg extraction failed"));
+    }
+
+    #[tokio::test]
+    async fn extract_track_reports_error_when_ffmpeg_binary_is_missing() {
+        let video = crate::test_support::assets::ensure_sample_video()
+            .await
+            .expect("failed to load local sample video");
+        let temp = tempfile::tempdir().expect("failed to create tempdir");
+        let output = temp.path().join("missing-ffmpeg.mkv");
+
+        let error = extract_track_with_ffmpeg(
+            "/tmp/definitely-not-a-real-ffmpeg-binary",
+            video.to_string_lossy().as_ref(),
+            output.to_string_lossy().as_ref(),
+            0,
+            "video",
+            "h264",
+        )
+        .await
+        .expect_err("missing ffmpeg binary should fail");
+
+        assert!(error.contains("Failed to execute ffmpeg"));
+    }
 }

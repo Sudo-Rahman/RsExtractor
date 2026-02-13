@@ -3,7 +3,7 @@ use std::path::Path;
 use tauri::Emitter;
 use tokio::time::{Duration, timeout};
 
-use crate::shared::hash::md5_hash;
+use crate::shared::hash::stable_hash64;
 use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::validation::validate_media_path;
@@ -29,7 +29,7 @@ pub(super) async fn extract_ocr_frames_with_bins(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let path_hash = format!("{:x}", md5_hash(&format!("{}::{}", video_path, nonce)));
+    let path_hash = format!("{:x}", stable_hash64(&format!("{}::{}", video_path, nonce)));
     let temp_dir = std::env::temp_dir()
         .join("mediaflow_ocr_frames")
         .join(&path_hash[..12]);
@@ -121,7 +121,7 @@ pub(crate) async fn extract_ocr_frames(
     let _sleep_guard = SleepInhibitGuard::try_acquire("OCR frame extraction").ok();
 
     // Create output directory
-    let path_hash = format!("{:x}", md5_hash(&video_path));
+    let path_hash = format!("{:x}", stable_hash64(&video_path));
     let temp_dir = std::env::temp_dir()
         .join("mediaflow_ocr_frames")
         .join(&path_hash[..12]);
