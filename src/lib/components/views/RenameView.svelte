@@ -7,6 +7,7 @@
 
 <script lang="ts">
   import { open } from '@tauri-apps/plugin-dialog';
+  import { exists } from '@tauri-apps/plugin-fs';
   import { invoke } from '@tauri-apps/api/core';
   import { toast } from 'svelte-sonner';
 
@@ -15,13 +16,14 @@
   import { createRenameFile, buildNewPath } from '$lib/services/rename';
   import { logAndToast, log } from '$lib/utils/log-toast';
   import type { ImportSourceId } from '$lib/types/tool-import';
-  import type { RuleType, RuleConfig, RenameMode } from '$lib/types/rename';
+  import type { RuleType, RuleConfig, RenameMode, RenameFile } from '$lib/types/rename';
 
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Badge } from '$lib/components/ui/badge';
   import * as RadioGroup from '$lib/components/ui/radio-group';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+  import * as AlertDialog from '$lib/components/ui/alert-dialog';
   import { Label } from '$lib/components/ui/label';
   import { Progress } from '$lib/components/ui/progress';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
@@ -37,6 +39,15 @@
     created_at: number | null;
     modified_at: number | null;
   }
+
+  interface RenameExecutionPlanItem {
+    file: RenameFile;
+    newPath: string;
+  }
+
+  let overwriteDialogOpen = $state(false);
+  let pendingCopyPlan = $state.raw<RenameExecutionPlanItem[] | null>(null);
+  let existingCopyTargets = $state<string[]>([]);
 
   async function fetchFileMetadata(path: string): Promise<{ size?: number; createdAt?: Date; modifiedAt?: Date }> {
     try {
@@ -133,6 +144,108 @@
     }
   }
 
+  function buildExecutionPlan(selectedFiles: RenameFile[], mode: RenameMode): RenameExecutionPlanItem[] {
+    return selectedFiles.map((file) => ({
+      file,
+      newPath: buildNewPath(file, mode === 'copy' ? renameStore.outputDir : undefined),
+    }));
+  }
+
+  async function findExistingCopyTargets(plan: RenameExecutionPlanItem[]): Promise<string[]> {
+    const targets: string[] = [];
+    for (const item of plan) {
+      try {
+        if (await exists(item.newPath)) {
+          targets.push(item.newPath);
+        }
+      } catch (error) {
+        console.error('Failed to check destination path', item.newPath, error);
+      }
+    }
+    return targets;
+  }
+
+  async function executePlan(
+    plan: RenameExecutionPlanItem[],
+    mode: RenameMode,
+    overwriteCopy: boolean,
+  ): Promise<void> {
+    // Start processing with new AbortController
+    renameStore.startProcessing();
+    renameStore.updateProgress({
+      current: 0,
+      total: plan.length,
+    });
+
+    let successCount = 0;
+    let errorCount = 0;
+    let cancelledCount = 0;
+
+    for (let i = 0; i < plan.length; i++) {
+      // Check for cancellation before each file
+      if (renameStore.isCancelled) {
+        cancelledCount = plan.length - i;
+        break;
+      }
+
+      const item = plan[i];
+      const file = item.file;
+
+      renameStore.updateProgress({
+        current: i + 1,
+        currentFile: file.originalName,
+      });
+
+      renameStore.setFileStatus(file.id, 'processing');
+
+      try {
+        if (mode === 'rename') {
+          await invoke('rename_file', {
+            oldPath: file.originalPath,
+            newPath: item.newPath,
+          });
+        } else {
+          await invoke('copy_file', {
+            sourcePath: file.originalPath,
+            destPath: item.newPath,
+            overwrite: overwriteCopy,
+          });
+        }
+
+        renameStore.markFileComplete(file.id, true);
+        successCount++;
+
+        // Log success for this file
+        log('success', 'rename',
+          `${mode === 'rename' ? 'Renamed' : 'Copied'}: ${file.originalName}`,
+          `${file.originalName} → ${file.newName}`,
+          { filePath: file.originalPath, outputPath: item.newPath }
+        );
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        renameStore.markFileComplete(file.id, false, errorMsg);
+        errorCount++;
+
+        // Log error for this file
+        log('error', 'rename',
+          `Failed to ${mode}: ${file.originalName}`,
+          errorMsg,
+          { filePath: file.originalPath }
+        );
+      }
+    }
+
+    renameStore.updateProgress({ status: renameStore.isCancelled ? 'cancelled' : 'completed' });
+
+    if (renameStore.isCancelled) {
+      toast.warning(`Cancelled: ${successCount} completed, ${cancelledCount} skipped`);
+    } else if (errorCount === 0) {
+      toast.success(`${successCount} file(s) ${mode === 'rename' ? 'renamed' : 'copied'} successfully`);
+    } else {
+      toast.warning(`${successCount} success, ${errorCount} error(s)`);
+    }
+  }
+
   async function handleExecute() {
     const selectedFiles = renameStore.selectedFiles;
     
@@ -146,88 +259,43 @@
       return;
     }
 
-    if (renameStore.mode === 'copy' && !renameStore.outputDir) {
+    const mode = renameStore.mode;
+    if (mode === 'copy' && !renameStore.outputDir) {
       toast.error('Please select an output folder for copy mode');
       return;
     }
 
-    // Start processing with new AbortController
-    renameStore.startProcessing();
-    renameStore.updateProgress({
-      current: 0,
-      total: selectedFiles.length,
-    });
-
-    let successCount = 0;
-    let errorCount = 0;
-    let cancelledCount = 0;
-
-    for (let i = 0; i < selectedFiles.length; i++) {
-      // Check for cancellation before each file
-      if (renameStore.isCancelled) {
-        cancelledCount = selectedFiles.length - i;
-        break;
-      }
-      
-      const file = selectedFiles[i];
-      
-      renameStore.updateProgress({
-        current: i + 1,
-        currentFile: file.originalName,
-      });
-
-      renameStore.setFileStatus(file.id, 'processing');
-
-      try {
-        const newPath = buildNewPath(
-          file, 
-          renameStore.mode === 'copy' ? renameStore.outputDir : undefined
-        );
-
-        if (renameStore.mode === 'rename') {
-          await invoke('rename_file', { 
-            oldPath: file.originalPath, 
-            newPath 
-          });
-        } else {
-          await invoke('copy_file', { 
-            sourcePath: file.originalPath, 
-            destPath: newPath 
-          });
-        }
-
-        renameStore.markFileComplete(file.id, true);
-        successCount++;
-        
-        // Log success for this file
-        log('success', 'rename', 
-          `${renameStore.mode === 'rename' ? 'Renamed' : 'Copied'}: ${file.originalName}`,
-          `${file.originalName} → ${file.newName}`,
-          { filePath: file.originalPath, outputPath: newPath }
-        );
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        renameStore.markFileComplete(file.id, false, errorMsg);
-        errorCount++;
-        
-        // Log error for this file
-        log('error', 'rename',
-          `Failed to ${renameStore.mode}: ${file.originalName}`,
-          errorMsg,
-          { filePath: file.originalPath }
-        );
+    const plan = buildExecutionPlan(selectedFiles, mode);
+    if (mode === 'copy') {
+      const collisions = await findExistingCopyTargets(plan);
+      if (collisions.length > 0) {
+        pendingCopyPlan = plan;
+        existingCopyTargets = collisions;
+        overwriteDialogOpen = true;
+        return;
       }
     }
 
-    renameStore.updateProgress({ status: renameStore.isCancelled ? 'cancelled' : 'completed' });
+    await executePlan(plan, mode, false);
+  }
 
-    if (renameStore.isCancelled) {
-      toast.warning(`Cancelled: ${successCount} completed, ${cancelledCount} skipped`);
-    } else if (errorCount === 0) {
-      toast.success(`${successCount} file(s) ${renameStore.mode === 'rename' ? 'renamed' : 'copied'} successfully`);
-    } else {
-      toast.warning(`${successCount} success, ${errorCount} error(s)`);
+  function cancelCopyOverwritePrompt(): void {
+    overwriteDialogOpen = false;
+    pendingCopyPlan = null;
+    existingCopyTargets = [];
+  }
+
+  async function confirmCopyOverwrite(): Promise<void> {
+    const plan = pendingCopyPlan;
+    if (!plan) {
+      cancelCopyOverwritePrompt();
+      return;
     }
+
+    overwriteDialogOpen = false;
+    pendingCopyPlan = null;
+    existingCopyTargets = [];
+    await executePlan(plan, 'copy', true);
   }
 
   async function handleOpenFolder() {
@@ -336,6 +404,8 @@
   const progressPercent = $derived(
     progress.total > 0 ? (progress.current / progress.total) * 100 : 0
   );
+
+  const overwriteTargetSamples = $derived(existingCopyTargets.slice(0, 5));
 </script>
 
 <div class="h-full flex overflow-hidden">
@@ -582,3 +652,37 @@
     </div>
   </div>
 </div>
+
+<AlertDialog.Root bind:open={overwriteDialogOpen}>
+  <AlertDialog.Content>
+    <AlertDialog.Header>
+      <AlertDialog.Title>Overwrite existing files?</AlertDialog.Title>
+      <AlertDialog.Description>
+        {existingCopyTargets.length} destination file(s) already exist. Continuing will replace them.
+      </AlertDialog.Description>
+    </AlertDialog.Header>
+
+    {#if overwriteTargetSamples.length > 0}
+      <div class="rounded-md border bg-muted/40 p-3 space-y-1 max-h-36 overflow-auto">
+        {#each overwriteTargetSamples as targetPath}
+          <p class="text-xs font-mono truncate">{targetPath}</p>
+        {/each}
+        {#if existingCopyTargets.length > overwriteTargetSamples.length}
+          <p class="text-xs text-muted-foreground">
+            + {existingCopyTargets.length - overwriteTargetSamples.length} more
+          </p>
+        {/if}
+      </div>
+    {/if}
+
+    <AlertDialog.Footer>
+      <AlertDialog.Cancel onclick={cancelCopyOverwritePrompt}>Cancel</AlertDialog.Cancel>
+      <AlertDialog.Action
+        onclick={confirmCopyOverwrite}
+        class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+      >
+        Overwrite and Continue
+      </AlertDialog.Action>
+    </AlertDialog.Footer>
+  </AlertDialog.Content>
+</AlertDialog.Root>

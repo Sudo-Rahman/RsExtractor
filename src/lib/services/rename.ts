@@ -434,10 +434,11 @@ export async function renameFileOnDisk(
  */
 export async function copyFileWithNewName(
   sourcePath: string,
-  destPath: string
+  destPath: string,
+  overwrite = false,
 ): Promise<RenameResult> {
   try {
-    await invoke('copy_file', { sourcePath, destPath });
+    await invoke('copy_file', { sourcePath, destPath, overwrite });
     return {
       id: '',
       success: true,
