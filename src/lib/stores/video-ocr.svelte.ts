@@ -259,7 +259,8 @@ export const videoOcrStore = {
         ...f,
         status: 'transcoding' as const,
         isTranscoding: true,
-        transcodingProgress: 0
+        transcodingProgress: 0,
+        transcodingCodec: undefined,
       } : f
     );
   },
@@ -270,6 +271,12 @@ export const videoOcrStore = {
     );
   },
 
+  setTranscodingCodec(fileId: string, codec: string) {
+    videoFiles = videoFiles.map(f =>
+      f.id === fileId ? { ...f, transcodingCodec: codec } : f
+    );
+  },
+
   finishTranscoding(fileId: string, previewPath: string) {
     videoFiles = videoFiles.map(f =>
       f.id === fileId ? {
@@ -277,7 +284,8 @@ export const videoOcrStore = {
         status: f.ocrVersions.length > 0 ? 'completed' as const : 'ready' as const,
         isTranscoding: false,
         transcodingProgress: 100,
-        previewPath
+        previewPath,
+        transcodingCodec: undefined,
       } : f
     );
   },
@@ -288,7 +296,8 @@ export const videoOcrStore = {
         ...f,
         status: 'error' as const,
         isTranscoding: false,
-        error
+        error,
+        transcodingCodec: undefined,
       } : f
     );
     this.addLog('error', `Transcoding failed: ${error}`, fileId);

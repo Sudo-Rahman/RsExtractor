@@ -25,6 +25,7 @@ export interface OcrVideoFile {
   previewPath?: string;        // Path to transcoded 480p MP4
   isTranscoding?: boolean;
   transcodingProgress?: number;
+  transcodingCodec?: string;   // Active transcoding codec label (e.g. HEVC VideoToolbox)
   
   // OCR region (relative coordinates 0-1)
   ocrRegion?: OcrRegion;
@@ -284,6 +285,7 @@ export interface OcrProgressEvent {
   current: number;
   total: number;
   message?: string;
+  transcodingCodec?: string;
 }
 
 // ============================================================================

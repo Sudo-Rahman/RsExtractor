@@ -122,10 +122,13 @@
     }
 
     unlistenOcrProgress = await listen<OcrProgressEvent>('ocr-progress', (event) => {
-      const { fileId, phase, current, total, message } = event.payload;
+      const { fileId, phase, current, total, message, transcodingCodec } = event.payload;
 
       if (phase === 'transcoding') {
         videoOcrStore.updateTranscodingProgress(fileId, current);
+        if (transcodingCodec) {
+          videoOcrStore.setTranscodingCodec(fileId, transcodingCodec);
+        }
         return;
       }
 

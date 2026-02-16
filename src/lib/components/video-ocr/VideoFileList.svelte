@@ -35,10 +35,16 @@
   }
 
   function getPhaseLabel(file: OcrVideoFile): string {
+    if (file.status === 'transcoding') {
+      return file.transcodingCodec
+        ? `Transcoding... · ${file.transcodingCodec}`
+        : 'Transcoding...';
+    }
+
     if (file.progress?.phase) {
       return OCR_PHASE_LABELS[file.progress.phase] || 'Processing...';
     }
-    if (file.status === 'transcoding') return 'Transcoding...';
+
     return 'Processing...';
   }
 
