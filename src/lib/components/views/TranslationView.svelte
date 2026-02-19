@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { Play, Trash2, FileText, Languages, X, Square, AlertCircle, Download, Copy, Loader2, RotateCw } from '@lucide/svelte';
+  import { Play, Trash2, FileText, Languages, X, Square, AlertCircle, Copy, Loader2, RotateCw } from '@lucide/svelte';
   export interface TranslationViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -8,11 +8,11 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { open } from '@tauri-apps/plugin-dialog';
-  import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
+  import { readTextFile } from '@tauri-apps/plugin-fs';
   import { toast } from 'svelte-sonner';
 
   import { settingsStore, toolImportStore, translationStore } from '$lib/stores';
-  import { translateSubtitle, translateSubtitleMultiModel, detectSubtitleFormat, getSubtitleExtension, buildFullPromptForTokenCount, type BatchProgressInfo } from '$lib/services/translation';
+  import { translateSubtitle, translateSubtitleMultiModel, detectSubtitleFormat, buildFullPromptForTokenCount, type BatchProgressInfo } from '$lib/services/translation';
   import { countTokens } from '$lib/services/tokenizer';
   import {
     createTranslationVersion,
@@ -813,50 +813,6 @@
     }
   }
 
-
-  async function handleDownloadAll() {
-    const completedJobs = translationStore.jobs.filter(j => j.status === 'completed' && j.result?.translatedContent);
-    if (completedJobs.length === 0) {
-      toast.warning('No translated files to download');
-      return;
-    }
-
-    try {
-      const selectedDir = await open({
-        directory: true,
-        multiple: false,
-        title: 'Select Destination Folder'
-      });
-
-      if (!selectedDir || typeof selectedDir !== 'string') return;
-
-      let savedCount = 0;
-      const isWindows = navigator.userAgent.includes('Windows');
-      const sep = isWindows ? '\\' : '/';
-
-      for (const job of completedJobs) {
-        if (!job.result?.translatedContent) continue;
-
-        const extension = getSubtitleExtension(job.file.format);
-        const baseName = job.file.name.replace(/\.[^/.]+$/, '');
-        const targetLang = translationStore.config.targetLanguage;
-        const fileName = `${baseName}.${targetLang}${extension}`;
-        const filePath = `${selectedDir}${sep}${fileName}`;
-
-        await writeTextFile(filePath, job.result.translatedContent);
-        savedCount++;
-      }
-
-      toast.success(`Saved ${savedCount} files`);
-    } catch (e) {
-      logAndToast.error({
-        source: 'translation',
-        title: 'Failed to save files',
-        details: e instanceof Error ? e.message : String(e)
-      });
-    }
-  }
-
   async function handleTranslateAll() {
     const hasRetryableJobs = translationStore.jobs.some(j => isRetryableStatus(j.status));
 
@@ -1061,11 +1017,6 @@
   );
   const selectedJob = $derived(translationStore.selectedJob);
 
-  // Global progress
-  const totalJobs = $derived(translationStore.jobs.length);
-  const completedJobsCount = $derived(translationStore.jobs.filter(j => j.status === 'completed').length);
-  const globalProgressPercent = $derived(totalJobs === 0 ? 0 : (completedJobsCount / totalJobs) * 100);
-
   // Active version for the selected job
   const selectedJobVersions = $derived(selectedJob?.translationVersions ?? []);
   const activeVersionId = $derived(selectedJob?.activeVersionId ?? null);
@@ -1164,23 +1115,6 @@
               />
             </div>
           </div>
-          {#if isTranslating || completedJobsCount > 0}
-            <div class="mt-4 flex items-end gap-3">
-              <div class="flex-1 space-y-1">
-                <div class="flex justify-between text-xs text-muted-foreground">
-                  <span>Total Progress</span>
-                  <span>{Math.round(globalProgressPercent)}% ({completedJobsCount}/{totalJobs})</span>
-                </div>
-                <Progress value={globalProgressPercent} class="h-2" />
-              </div>
-              {#if completedJobsCount > 0 && !isTranslating}
-                <Button variant="outline" size="sm" onclick={handleDownloadAll} disabled={isTranslating} class="h-8">
-                  <Download class="size-4 mr-2" />
-                  Download All
-                </Button>
-              {/if}
-            </div>
-          {/if}
         </Card.Header>
         <Card.Content class="p-2">
           {#if hasFiles}

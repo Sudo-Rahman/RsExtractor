@@ -9,8 +9,9 @@
   import { Alert, AlertTitle, AlertDescription, ThemeToggle } from '$lib/components';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
   import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView, AudioToSubsView, VideoOcrView } from '$lib/components/views';
+  import { TranslationExportDialog } from '$lib/components/translation';
   import { LogsSheet } from '$lib/components/logs';
-  import { AlertCircle, ScrollText, Home, LayoutGrid, Table } from '@lucide/svelte';
+  import { AlertCircle, ScrollText, Home, LayoutGrid, Table, Download } from '@lucide/svelte';
   import { OS } from '$lib/utils';
   import { useSidebar } from "$lib/components/ui/sidebar";
   import { logStore } from '$lib/stores/logs.svelte';
@@ -25,6 +26,7 @@
 
   // Merge view mode state (only applicable when currentView === 'merge')
   let mergeViewMode = $state<'home' | 'groups' | 'table'>('home');
+  let translationExportDialogOpen = $state(false);
 
   // References to views for drag & drop forwarding
   let extractViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
@@ -141,6 +143,14 @@
     }
   });
 
+  const hasTranslationExportableData = $derived.by(() => {
+    return translationStore.jobs.some((job) => {
+      if (job.translationVersions.length > 0) return true;
+      const content = job.result?.translatedContent;
+      return !!content && content.trim().length > 0;
+    });
+  });
+
   const viewTitles: Record<string, string> = {
     extract: 'Track Extraction',
     merge: 'Track Merge',
@@ -205,6 +215,9 @@
 
   function handleNavigate(viewId: string) {
     currentView = viewId as 'extract' | 'merge' | 'translate' | 'rename' | 'audio-to-subs' | 'video-ocr' | 'info' | 'settings';
+    if (currentView !== 'translate') {
+      translationExportDialogOpen = false;
+    }
   }
 </script>
 
@@ -263,6 +276,19 @@
           </Button>
         </div>
         <Separator orientation="vertical" class="h-6 mr-2" />
+      {/if}
+
+      {#if currentView === 'translate'}
+        <Button
+          variant="outline"
+          size="sm"
+          onclick={() => { translationExportDialogOpen = true; }}
+          disabled={!hasTranslationExportableData}
+          title="Export translated subtitles"
+        >
+          <Download class="size-4 mr-2" />
+          Export
+        </Button>
       {/if}
 
       <!-- Logs button -->
@@ -339,6 +365,14 @@
     </main>
   </Sidebar.Inset>
 </Sidebar.Provider>
+
+<TranslationExportDialog
+  open={translationExportDialogOpen}
+  onOpenChange={(open) => {
+    translationExportDialogOpen = open;
+  }}
+  jobs={translationStore.jobs}
+/>
 
 <!-- Logs Sheet (global overlay) -->
 <LogsSheet />
