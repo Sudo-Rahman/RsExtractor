@@ -7,7 +7,7 @@
 
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { open, save } from '@tauri-apps/plugin-dialog';
+  import { open } from '@tauri-apps/plugin-dialog';
   import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
   import { toast } from 'svelte-sonner';
 
@@ -322,6 +322,10 @@
     return translationStore.jobs
       .find(j => j.id === jobId)
       ?.modelJobs?.find(mj => mj.id === modelJobId);
+  }
+
+  function isRetryableStatus(status: TranslationJob['status']): boolean {
+    return status === 'pending' || status === 'error' || status === 'cancelled';
   }
 
   /** Translate a single file with a single model (existing flow) */
@@ -854,9 +858,9 @@
   }
 
   async function handleTranslateAll() {
-    const hasPendingJobs = translationStore.jobs.some(j => j.status === 'pending' || j.status === 'error');
+    const hasRetryableJobs = translationStore.jobs.some(j => isRetryableStatus(j.status));
 
-    if (!hasPendingJobs) {
+    if (!hasRetryableJobs) {
       toast.warning('No files to translate');
       return;
     }
@@ -879,7 +883,7 @@
 
       const maxParallel = Math.max(1, settingsStore.settings.translationSettings.maxParallelFiles);
       const queuedJobs = translationStore.jobs.filter(
-        j => (j.status === 'pending' || j.status === 'error') && !activePromises.has(j.id)
+        j => isRetryableStatus(j.status) && !activePromises.has(j.id)
       );
 
       while (activePromises.size < maxParallel && queuedJobs.length > 0) {
@@ -895,7 +899,7 @@
       }
 
       if (activePromises.size === 0) {
-        const remaining = translationStore.jobs.some(j => j.status === 'pending' || j.status === 'error');
+        const remaining = translationStore.jobs.some(j => isRetryableStatus(j.status));
         if (!remaining) {
           break;
         }
@@ -1031,37 +1035,6 @@
 
     // Retry the job
     await translateJob(job);
-  }
-
-  async function handleSaveResult(job: TranslationJob) {
-    if (!job.result?.translatedContent) return;
-
-    try {
-      const extension = getSubtitleExtension(job.file.format);
-      const baseName = job.file.name.replace(/\.[^/.]+$/, '');
-      const targetLang = translationStore.config.targetLanguage;
-      const defaultFileName = `${baseName}.${targetLang}${extension}`;
-
-      const savePath = await save({
-        defaultPath: defaultFileName,
-        filters: [{
-          name: 'Subtitle files',
-          extensions: [extension.replace('.', '')]
-        }]
-      });
-
-      if (savePath) {
-        await writeTextFile(savePath, job.result.translatedContent);
-        toast.success('File saved successfully');
-      }
-    } catch (error) {
-      logAndToast.error({
-        source: 'translation',
-        title: 'Failed to save file',
-        details: error instanceof Error ? error.message : String(error),
-        context: { filePath: job.file.path }
-      });
-    }
   }
 
   async function handleCopyToClipboard(content: string) {
@@ -1316,13 +1289,14 @@
           </div>
           {#if displayedContent}
             <div class="flex gap-2 shrink-0">
-              <Button variant="outline" size="sm" onclick={() => handleCopyToClipboard(displayedContent)}>
-                <Copy class="size-4 mr-2" />
-                Copy
-              </Button>
-              <Button size="sm" onclick={() => handleSaveResult(selectedJob)}>
-                <Download class="size-4 mr-2" />
-                Save
+              <Button
+                variant="outline"
+                size="icon-sm"
+                onclick={() => handleCopyToClipboard(displayedContent)}
+                title="Copy translation"
+                aria-label="Copy translation"
+              >
+                <Copy class="size-4" />
               </Button>
             </div>
           {/if}

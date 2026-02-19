@@ -104,7 +104,7 @@
               </Button>
             {/if}
 
-            {#if (job.status === 'error' || job.status === 'completed') && onRetry && !processing}
+            {#if (job.status === 'error' || job.status === 'completed' || job.status === 'cancelled') && onRetry && !processing}
               <Button
                 variant="ghost"
                 size="icon"
