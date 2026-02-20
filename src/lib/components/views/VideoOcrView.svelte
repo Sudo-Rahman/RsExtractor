@@ -566,27 +566,31 @@
     let failCount = 0;
     let cancelledCount = 0;
 
-    for (const entry of readyFiles) {
-      if (videoOcrStore.isCancelling) {
-        break;
+    videoOcrStore.setProcessingScope(readyFiles.map((file) => file.id));
+
+    try {
+      for (const entry of readyFiles) {
+        if (videoOcrStore.isCancelling) {
+          break;
+        }
+
+        const file = getFreshFile(entry.id) ?? entry;
+        const versionName = generateOcrVersionName(file.ocrVersions);
+
+        videoOcrStore.startProcessing(file.id);
+        const result = await processFileOcr(file, versionName, 'full_pipeline', { ...videoOcrStore.config });
+
+        if (result.success) {
+          successCount += 1;
+        } else if (videoOcrStore.isFileCancelled(file.id)) {
+          cancelledCount += 1;
+        } else {
+          failCount += 1;
+        }
       }
-
-      const file = getFreshFile(entry.id) ?? entry;
-      const versionName = generateOcrVersionName(file.ocrVersions);
-
-      videoOcrStore.startProcessing(file.id);
-      const result = await processFileOcr(file, versionName, 'full_pipeline', { ...videoOcrStore.config });
-
-      if (result.success) {
-        successCount += 1;
-      } else if (videoOcrStore.isFileCancelled(file.id)) {
-        cancelledCount += 1;
-      } else {
-        failCount += 1;
-      }
+    } finally {
+      videoOcrStore.stopProcessing();
     }
-
-    videoOcrStore.stopProcessing();
 
     if (successCount > 0 || failCount > 0 || cancelledCount > 0) {
       const parts: string[] = [];
@@ -603,9 +607,15 @@
       return;
     }
 
+    videoOcrStore.setProcessingScope([file.id]);
     videoOcrStore.startProcessing(file.id);
-    const result = await processFileOcr(file, versionName, mode, config);
-    videoOcrStore.stopProcessing();
+
+    let result: ProcessFileResult;
+    try {
+      result = await processFileOcr(file, versionName, mode, config);
+    } finally {
+      videoOcrStore.stopProcessing();
+    }
 
     if (result.success) {
       toast.success(`Created ${versionName} (${result.effectiveMode.replaceAll('_', ' ')})`);

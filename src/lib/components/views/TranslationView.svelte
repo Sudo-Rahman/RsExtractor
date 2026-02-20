@@ -813,12 +813,21 @@
   }
 
   /** Dispatch to single-model or multi-model based on config */
-  async function translateJob(job: TranslationJob) {
+  async function translateJobInternal(job: TranslationJob) {
     const { models } = translationStore.config;
     if (models.length > 0) {
       await translateJobMultiModel(job);
     } else {
       await translateJobSingleModel(job);
+    }
+  }
+
+  async function translateScopedJob(job: TranslationJob) {
+    translationStore.setActiveScopeJobIds([job.id]);
+    try {
+      await translateJobInternal(job);
+    } finally {
+      translationStore.clearActiveScopeJobIds();
     }
   }
 
@@ -829,6 +838,7 @@
       return;
     }
 
+    translationStore.setActiveScopeJobIds(targets.map((job) => job.id));
     translationStore.updateProgress({
       status: 'translating',
       currentFile: '',
@@ -837,48 +847,52 @@
       totalBatches: 0
     });
 
-    const maxParallel = Math.max(1, settingsStore.settings.translationSettings.maxParallelFiles);
-    const queue = targets.map((job) => job.id);
-    const activePromises = new Map<string, Promise<void>>();
+    try {
+      const maxParallel = Math.max(1, settingsStore.settings.translationSettings.maxParallelFiles);
+      const queue = targets.map((job) => job.id);
+      const activePromises = new Map<string, Promise<void>>();
 
-    // Process a fixed snapshot of target IDs to avoid rerunning jobs in the same click.
-    while (queue.length > 0 || activePromises.size > 0) {
-      if ((translationStore.progress.status as string) === 'cancelled') {
-        break;
-      }
+      // Process a fixed snapshot of target IDs to avoid rerunning jobs in the same click.
+      while (queue.length > 0 || activePromises.size > 0) {
+        if ((translationStore.progress.status as string) === 'cancelled') {
+          break;
+        }
 
-      while (activePromises.size < maxParallel && queue.length > 0) {
-        if ((translationStore.progress.status as string) === 'cancelled') break;
+        while (activePromises.size < maxParallel && queue.length > 0) {
+          if ((translationStore.progress.status as string) === 'cancelled') break;
 
-        const jobId = queue.shift();
-        if (!jobId) break;
+          const jobId = queue.shift();
+          if (!jobId) break;
 
-        const job = translationStore.jobs.find((entry) => entry.id === jobId);
-        if (!job) {
+          const job = translationStore.jobs.find((entry) => entry.id === jobId);
+          if (!job) {
+            continue;
+          }
+
+          const promise = translateJobInternal(job).finally(() => {
+            activePromises.delete(jobId);
+          });
+          activePromises.set(jobId, promise);
+        }
+
+        if (activePromises.size === 0) {
+          // Yield to avoid a tight loop when remaining queued IDs were removed.
+          await Promise.resolve();
           continue;
         }
 
-        const promise = translateJob(job).finally(() => {
-          activePromises.delete(jobId);
+        await Promise.race([...activePromises.values()]);
+      }
+
+      // Only set completed if not cancelled
+      if ((translationStore.progress.status as string) !== 'cancelled') {
+        translationStore.updateProgress({
+          status: 'completed',
+          progress: 100
         });
-        activePromises.set(jobId, promise);
       }
-
-      if (activePromises.size === 0) {
-        // Yield to avoid a tight loop when remaining queued IDs were removed.
-        await Promise.resolve();
-        continue;
-      }
-
-      await Promise.race([...activePromises.values()]);
-    }
-
-    // Only set completed if not cancelled
-    if ((translationStore.progress.status as string) !== 'cancelled') {
-      translationStore.updateProgress({
-        status: 'completed',
-        progress: 100
-      });
+    } finally {
+      translationStore.clearActiveScopeJobIds();
     }
   }
   function handleCancelAll() {
@@ -996,7 +1010,7 @@
     toast.info(`Retrying with ${newBatchCount} batches...`);
 
     // Retry the job
-    await translateJob(job);
+    await translateScopedJob(job);
   }
 
   async function handleCopyToClipboard(content: string) {
@@ -1132,7 +1146,7 @@
                 onRemove={handleRequestRemoveJob}
                 onCancel={handleCancelJob}
                 onViewResult={(job) => openResultDialog(job.id)}
-                onRetry={(job) => translateJob(job)}
+                onRetry={(job) => translateScopedJob(job)}
                 disabled={isTranslating}
               />
             </div>

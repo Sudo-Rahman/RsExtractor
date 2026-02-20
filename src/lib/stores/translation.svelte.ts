@@ -41,6 +41,9 @@ let globalProgress = $state<TranslationProgress>({
 // For backward compatibility - returns first file
 let selectedJobId = $state<string | null>(null);
 
+// Scoped run targets (for precise global progress aggregation)
+let activeScopeJobIds = $state<Set<string>>(new Set());
+
 export const translationStore = {
   get jobs() {
     return jobs;
@@ -57,6 +60,10 @@ export const translationStore = {
   get selectedJob(): TranslationJob | null {
     if (!selectedJobId) return jobs[0] || null;
     return jobs.find(j => j.id === selectedJobId) || null;
+  },
+
+  get activeScopeJobIds() {
+    return activeScopeJobIds;
   },
 
   // Backward compatibility getters
@@ -139,6 +146,9 @@ export const translationStore = {
       }
     }
     jobs = jobs.filter(j => j.id !== jobId);
+    if (activeScopeJobIds.has(jobId)) {
+      activeScopeJobIds = new Set([...activeScopeJobIds].filter((id) => id !== jobId));
+    }
     if (selectedJobId === jobId) {
       selectedJobId = jobs[0]?.id || null;
     }
@@ -160,7 +170,16 @@ export const translationStore = {
     }
     jobs = [];
     selectedJobId = null;
+    activeScopeJobIds = new Set();
     globalProgress = { status: 'idle', currentFile: '', progress: 0, currentBatch: 0, totalBatches: 0 };
+  },
+
+  setActiveScopeJobIds(jobIds: string[]) {
+    activeScopeJobIds = new Set(jobIds);
+  },
+
+  clearActiveScopeJobIds() {
+    activeScopeJobIds = new Set();
   },
 
   // Select a job
@@ -285,6 +304,7 @@ export const translationStore = {
   setSubtitleFile(file: SubtitleFile | null) {
     jobs = [];
     selectedJobId = null;
+    activeScopeJobIds = new Set();
     if (file) {
       this.addFile(file);
     }
@@ -449,6 +469,7 @@ export const translationStore = {
     this.cancelAllJobs();
     jobs = [];
     selectedJobId = null;
+    activeScopeJobIds = new Set();
     config = {
       sourceLanguage: 'auto',
       targetLanguage: 'fr',

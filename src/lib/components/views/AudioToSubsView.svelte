@@ -546,7 +546,16 @@
     // Phase 5: Start transcoding files in parallel
     const pendingTranscodes = filesToTranscode.filter((item) => hasAudioFile(item.file.id));
     if (pendingTranscodes.length > 0) {
-      await transcodeFilesInParallel(pendingTranscodes);
+      audioToSubsStore.setTranscodingScope(
+        [...new Set(pendingTranscodes.map((item) => item.file.id))]
+      );
+      try {
+        await transcodeFilesInParallel(pendingTranscodes);
+      } finally {
+        audioToSubsStore.clearTranscodingScope();
+      }
+    } else {
+      audioToSubsStore.clearTranscodingScope();
     }
   }
 
@@ -809,107 +818,110 @@
     );
     if (readyFiles.length === 0) return;
 
+    audioToSubsStore.setTranscriptionScope(readyFiles.map((file) => file.id));
     audioToSubsStore.startTranscription();
 
-    const maxConcurrent = audioToSubsStore.config.maxConcurrentTranscriptions;
     let successCount = 0;
     let failCount = 0;
     let cancelledCount = 0;
     let completedCount = 0;
     const totalFiles = readyFiles.length;
 
-    // Create a queue of files to process (maintain order from the list)
-    const queue = [...readyFiles];
-    const activePromises = new Map<string, Promise<void>>();
+    try {
+      const maxConcurrent = audioToSubsStore.config.maxConcurrentTranscriptions;
 
-    // Function to process the next file from the queue
-    const processNext = async (): Promise<void> => {
-      // Check if we should stop
-      if (queue.length === 0) return;
-      if (activePromises.size >= maxConcurrent) return;
-      if (audioToSubsStore.isCancelling) return;
+      // Create a queue of files to process (maintain order from the list)
+      const queue = [...readyFiles];
+      const activePromises = new Map<string, Promise<void>>();
 
-      const file = queue.shift();
-      if (!file) return;
+      // Function to process the next file from the queue
+      const processNext = async (): Promise<void> => {
+        // Check if we should stop
+        if (queue.length === 0) return;
+        if (activePromises.size >= maxConcurrent) return;
+        if (audioToSubsStore.isCancelling) return;
 
-      // Check if this file was cancelled before starting
-      if (audioToSubsStore.isFileCancelled(file.id)) {
-        audioToSubsStore.updateFile(file.id, { status: 'ready' });
-        cancelledCount++;
-        completedCount++;
-        // Process next file immediately
-        return processNext();
-      }
+        const file = queue.shift();
+        if (!file) return;
 
-      // Create abort controller for this file
-      const controller = new AbortController();
-      abortControllers.set(file.id, controller);
-
-      // Create the transcription promise
-      const promise = (async () => {
-        const versionName = `Version ${(file.transcriptionVersions?.length ?? 0) + 1}`;
-        const effectiveConfig = getEffectiveConfig(file, audioToSubsStore.deepgramConfig);
-        
-        try {
-          const success = await transcribeFile(file, versionName, effectiveConfig, controller.signal);
-          
-          if (success) {
-            successCount++;
-          } else if (controller.signal.aborted) {
-            cancelledCount++;
-          } else {
-            failCount++;
-          }
-        } catch (error) {
-          console.error(`Transcription error for ${file.name}:`, error);
-          failCount++;
-        } finally {
-          // Clean up controller
-          abortControllers.delete(file.id);
+        // Check if this file was cancelled before starting
+        if (audioToSubsStore.isFileCancelled(file.id)) {
+          audioToSubsStore.updateFile(file.id, { status: 'ready' });
+          cancelledCount++;
           completedCount++;
-          
-          // Update progress toast
-          toast.info(`Transcription progress: ${completedCount}/${totalFiles} files`);
-          
-          // Remove from active promises
-          activePromises.delete(file.id);
-          
-          // Immediately start next file if available
-          if (!audioToSubsStore.isCancelling && queue.length > 0) {
-            processNext();
-          }
+          // Process next file immediately
+          return processNext();
         }
-      })();
 
-      activePromises.set(file.id, promise);
-      
-      // Start processing immediately (don't await here)
-      promise.catch(() => {
-        // Errors are handled inside the promise
-      });
-      
-      // Try to start more files if we haven't reached the limit
-      if (activePromises.size < maxConcurrent && queue.length > 0 && !audioToSubsStore.isCancelling) {
+        // Create abort controller for this file
+        const controller = new AbortController();
+        abortControllers.set(file.id, controller);
+
+        // Create the transcription promise
+        const promise = (async () => {
+          const versionName = `Version ${(file.transcriptionVersions?.length ?? 0) + 1}`;
+          const effectiveConfig = getEffectiveConfig(file, audioToSubsStore.deepgramConfig);
+
+          try {
+            const success = await transcribeFile(file, versionName, effectiveConfig, controller.signal);
+
+            if (success) {
+              successCount++;
+            } else if (controller.signal.aborted) {
+              cancelledCount++;
+            } else {
+              failCount++;
+            }
+          } catch (error) {
+            console.error(`Transcription error for ${file.name}:`, error);
+            failCount++;
+          } finally {
+            // Clean up controller
+            abortControllers.delete(file.id);
+            completedCount++;
+
+            // Update progress toast
+            toast.info(`Transcription progress: ${completedCount}/${totalFiles} files`);
+
+            // Remove from active promises
+            activePromises.delete(file.id);
+
+            // Immediately start next file if available
+            if (!audioToSubsStore.isCancelling && queue.length > 0) {
+              processNext();
+            }
+          }
+        })();
+
+        activePromises.set(file.id, promise);
+
+        // Start processing immediately (don't await here)
+        promise.catch(() => {
+          // Errors are handled inside the promise
+        });
+
+        // Try to start more files if we haven't reached the limit
+        if (activePromises.size < maxConcurrent && queue.length > 0 && !audioToSubsStore.isCancelling) {
+          processNext();
+        }
+      };
+
+      // Start initial batch (up to maxConcurrent files)
+      const initialBatchSize = Math.min(maxConcurrent, queue.length);
+      for (let i = 0; i < initialBatchSize; i++) {
         processNext();
       }
-    };
 
-    // Start initial batch (up to maxConcurrent files)
-    const initialBatchSize = Math.min(maxConcurrent, queue.length);
-    for (let i = 0; i < initialBatchSize; i++) {
-      processNext();
+      // Wait for all active transcriptions to complete
+      while (activePromises.size > 0) {
+        await Promise.race(activePromises.values());
+      }
+    } finally {
+      // Clean up any remaining controllers
+      abortControllers.clear();
+      audioToSubsStore.stopTranscription();
     }
 
-    // Wait for all active transcriptions to complete
-    while (activePromises.size > 0) {
-      await Promise.race(activePromises.values());
-    }
-
-    // Clean up any remaining controllers
-    abortControllers.clear();
-    
-    audioToSubsStore.stopTranscription();
-    
     // Show final summary
     if (successCount > 0 || failCount > 0 || cancelledCount > 0) {
       const parts = [];
@@ -928,14 +940,16 @@
     const controller = new AbortController();
     abortControllers.set(fileId, controller);
 
+    audioToSubsStore.setTranscriptionScope([fileId]);
     audioToSubsStore.startTranscription(fileId);
-    const effectiveConfig = getEffectiveConfig(file, config);
-    await transcribeFile(file, versionName, effectiveConfig, controller.signal);
-    
-    // Clean up controller
-    abortControllers.delete(fileId);
-    
-    audioToSubsStore.stopTranscription();
+    try {
+      const effectiveConfig = getEffectiveConfig(file, config);
+      await transcribeFile(file, versionName, effectiveConfig, controller.signal);
+    } finally {
+      // Clean up controller
+      abortControllers.delete(fileId);
+      audioToSubsStore.stopTranscription();
+    }
   }
 
   async function cancelTranscodeAndCleanup(file: AudioFile): Promise<void> {
@@ -991,6 +1005,8 @@
       controller.abort();
     }
     abortControllers.clear();
+
+    audioToSubsStore.clearTranscodingScope();
     
     audioToSubsStore.cancelAll();
     toast.info('Cancelling all...');
