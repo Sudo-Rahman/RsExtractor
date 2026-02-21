@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { FileVideo, Subtitles, Video, Volume2, Film, Plus, Trash2, Loader2, XCircle, X, Layers, Copy, Check } from '@lucide/svelte';
+  import { FileVideo, Subtitles, Video, Volume2, Film, Plus, Trash2, Loader2, XCircle, Layers, Copy, Check } from '@lucide/svelte';
   export interface InfoViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -12,6 +12,14 @@
   import { infoStore, toolImportStore } from '$lib/stores';
   import { scanFiles } from '$lib/services/ffprobe';
   import { log } from '$lib/utils/log-toast';
+  import {
+    FILE_ITEM_CARD_ACTION_BUTTON_CLASS,
+    FILE_ITEM_CARD_ACTION_ICON_CLASS,
+    FILE_ITEM_CARD_META_CLASS,
+    FILE_ITEM_CARD_REMOVE_ACTION_CLASS,
+    FILE_ITEM_CARD_STATUS_ICON_CLASS,
+    FILE_ITEM_CARD_TITLE_CLASS,
+  } from '$lib/utils/file-item-card-visuals';
   import type { ImportSourceId } from '$lib/types/tool-import';
   import type { Track } from '$lib/types';
   import type { FileInfo } from '$lib/stores/info.svelte';
@@ -260,40 +268,39 @@
           {#each infoStore.files as file (file.id)}
             <FileItemCard
               selected={infoStore.selectedFileId === file.id}
-              class="group"
               onclick={() => infoStore.selectFile(file.id)}
             >
               {#snippet icon()}
                 {#if file.status === 'scanning'}
-                  <Loader2 class="size-5 animate-spin text-muted-foreground" />
+                  <Loader2 class={`${FILE_ITEM_CARD_STATUS_ICON_CLASS} animate-spin text-muted-foreground`} />
                 {:else if file.status === 'error'}
-                  <XCircle class="size-5 text-destructive" />
+                  <XCircle class={`${FILE_ITEM_CARD_STATUS_ICON_CLASS} text-destructive`} />
                 {:else}
-                  <FileVideo class="size-5 text-primary" />
+                  <FileVideo class={`${FILE_ITEM_CARD_STATUS_ICON_CLASS} text-primary`} />
                 {/if}
               {/snippet}
 
               {#snippet content()}
-                <p class="font-medium text-sm truncate">{file.name}</p>
+                <p class={FILE_ITEM_CARD_TITLE_CLASS}>{file.name}</p>
                 {#if file.status === 'ready'}
-                  <p class="mt-1 text-xs text-muted-foreground">
+                  <p class={FILE_ITEM_CARD_META_CLASS}>
                     {formatFileSize(file.size)} • {file.tracks.length} tracks
                   </p>
                 {:else if file.status === 'error'}
                   <p class="mt-1 truncate text-xs text-destructive">{file.error}</p>
                 {:else}
-                  <p class="mt-1 text-xs text-muted-foreground">Scanning...</p>
+                  <p class={FILE_ITEM_CARD_META_CLASS}>Scanning...</p>
                 {/if}
               {/snippet}
 
               {#snippet actions()}
                 <Button
                   variant="ghost"
-                  size="icon-sm"
-                  class="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive hover:bg-destructive/10"
+                  size="icon"
+                  class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_REMOVE_ACTION_CLASS}`}
                   onclick={(e: MouseEvent) => { e.stopPropagation(); handleRemoveFile(file.id); }}
                 >
-                  <X class="size-4" />
+                  <Trash2 class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
                   <span class="sr-only">Remove</span>
                 </Button>
               {/snippet}

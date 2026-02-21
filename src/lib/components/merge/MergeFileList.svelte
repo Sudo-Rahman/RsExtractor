@@ -9,6 +9,7 @@
     Film,
     Volume2,
     Subtitles,
+    X,
   } from '@lucide/svelte';
   import { cn } from '$lib/utils';
   import type { FileRunState, MergeVideoFile } from '$lib/types';
@@ -19,10 +20,17 @@
   import { countTracksByType } from '$lib/utils/media-tracks';
   import {
     getFileCardStatus,
-    getFileCardStatusLabel,
-    getFileCardStatusTextClass,
     shouldShowFileCardProgress,
   } from '$lib/utils/file-run-state';
+  import {
+    FILE_ITEM_CARD_ACTION_BUTTON_CLASS,
+    FILE_ITEM_CARD_ACTION_ICON_CLASS,
+    FILE_ITEM_CARD_CANCEL_ACTION_CLASS,
+    FILE_ITEM_CARD_META_CLASS,
+    FILE_ITEM_CARD_REMOVE_ACTION_CLASS,
+    FILE_ITEM_CARD_STATUS_ICON_CLASS,
+    FILE_ITEM_CARD_TITLE_CLASS,
+  } from '$lib/utils/file-item-card-visuals';
   import { formatDuration, formatFileSize } from '$lib/utils/format';
 
   interface MergeFileListProps {
@@ -33,6 +41,7 @@
     currentProcessingPath?: string | null;
     onSelect?: (id: string) => void;
     onRemove?: (id: string) => void;
+    onCancelFile?: (id: string) => void | Promise<void>;
     onAddFiles?: () => void;
     showAddButton?: boolean;
     compact?: boolean;
@@ -47,6 +56,7 @@
     currentProcessingPath = null,
     onSelect,
     onRemove,
+    onCancelFile,
     onAddFiles,
     showAddButton = true,
     compact = false,
@@ -69,8 +79,9 @@
       {@const counts = countTracksByType(file.tracks)}
       {@const runState = fileRunStates.get(file.path)}
       {@const status = getFileCardStatus(file.status, runState)}
-      {@const statusLabel = getFileCardStatusLabel(file.status, runState, file.error)}
+      {@const showProgress = !!runState && shouldShowFileCardProgress(status)}
       {@const isCurrentProcessing = isProcessing && currentProcessingPath === file.path}
+      {@const showCancelAction = status === 'processing' && isCurrentProcessing}
       {@const removeDisabled = isProcessing && !isCurrentProcessing}
       {@const seriesInfo = formatSeriesInfo(file.seasonNumber, file.episodeNumber)}
       <FileItemCard
@@ -80,22 +91,22 @@
       >
         {#snippet icon()}
           {#if status === 'scanning'}
-            <Loader2 class="size-5 text-muted-foreground animate-spin" />
+            <Loader2 class={cn(FILE_ITEM_CARD_STATUS_ICON_CLASS, 'text-muted-foreground animate-spin')} />
           {:else if status === 'error'}
-            <XCircle class="size-5 text-destructive" />
+            <XCircle class={cn(FILE_ITEM_CARD_STATUS_ICON_CLASS, 'text-destructive')} />
           {:else if status === 'completed'}
-            <CheckCircle class="size-5 text-green-500" />
+            <CheckCircle class={cn(FILE_ITEM_CARD_STATUS_ICON_CLASS, 'text-green-500')} />
           {:else if status === 'cancelled'}
-            <XCircle class="size-5 text-orange-500" />
+            <XCircle class={cn(FILE_ITEM_CARD_STATUS_ICON_CLASS, 'text-orange-500')} />
           {:else if status === 'processing'}
-            <Loader2 class="size-5 text-primary animate-spin" />
+            <Loader2 class={cn(FILE_ITEM_CARD_STATUS_ICON_CLASS, 'text-primary animate-spin')} />
           {:else}
-            <FileVideo class="size-5 text-primary" />
+            <FileVideo class={cn(FILE_ITEM_CARD_STATUS_ICON_CLASS, 'text-primary')} />
           {/if}
         {/snippet}
 
         {#snippet content()}
-          <p class="font-medium truncate text-sm">{file.name}</p>
+          <p class={FILE_ITEM_CARD_TITLE_CLASS}>{file.name}</p>
 
           <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
             {#if seriesInfo}
@@ -124,21 +135,17 @@
             {/if}
           </div>
 
-          <div class="flex gap-2 mt-1 text-xs text-muted-foreground">
+          <div class={FILE_ITEM_CARD_META_CLASS}>
             <span>{formatFileSize(file.size)}</span>
             {#if file.duration}
-              <span>{formatDuration(file.duration)}</span>
+              <span>• {formatDuration(file.duration)}</span>
+            {/if}
+            {#if showProgress && runState}
+              <span>• {Math.round(runState.progress)}%</span>
             {/if}
           </div>
 
-          <p
-            class={cn('text-xs mt-1', getFileCardStatusTextClass(status))}
-            title={statusLabel}
-          >
-            {statusLabel}
-          </p>
-
-          {#if runState && shouldShowFileCardProgress(status)}
+          {#if showProgress && runState}
             <div class="mt-2">
               <Progress value={runState.progress} class="h-1.5" />
             </div>
@@ -146,17 +153,30 @@
         {/snippet}
 
         {#snippet actions()}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            class="size-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-            onclick={(e: MouseEvent) => { e.stopPropagation(); onRemove?.(file.id); }}
-            disabled={removeDisabled}
-            title={removeDisabled ? 'Cannot remove while another file is processing' : 'Remove'}
-          >
-            <Trash2 class="size-3" />
-            <span class="sr-only">Remove</span>
-          </Button>
+          {#if showCancelAction}
+            <Button
+              variant="ghost"
+              size="icon"
+              class={cn(FILE_ITEM_CARD_ACTION_BUTTON_CLASS, FILE_ITEM_CARD_CANCEL_ACTION_CLASS)}
+              onclick={(e: MouseEvent) => { e.stopPropagation(); void onCancelFile?.(file.id); }}
+              title="Cancel current file"
+            >
+              <X class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
+              <span class="sr-only">Cancel current file</span>
+            </Button>
+          {:else}
+            <Button
+              variant="ghost"
+              size="icon"
+              class={cn(FILE_ITEM_CARD_ACTION_BUTTON_CLASS, FILE_ITEM_CARD_REMOVE_ACTION_CLASS)}
+              onclick={(e: MouseEvent) => { e.stopPropagation(); onRemove?.(file.id); }}
+              disabled={removeDisabled}
+              title={removeDisabled ? 'Cannot remove while another file is processing' : 'Remove'}
+            >
+              <Trash2 class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
+              <span class="sr-only">Remove</span>
+            </Button>
+          {/if}
         {/snippet}
       </FileItemCard>
     {:else}

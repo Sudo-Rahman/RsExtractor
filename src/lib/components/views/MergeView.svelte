@@ -863,6 +863,7 @@
             isProcessing={mergeStore.isProcessing}
             currentProcessingPath={mergeStore.runtimeProgress.currentFilePath}
             onSelect={(fileId) => mergeStore.selectVideo(fileId)}
+            onCancelFile={(fileId) => { void handleCancelFile(fileId); }}
             onRemove={handleRequestRemoveFile}
             showAddButton={false}
           />

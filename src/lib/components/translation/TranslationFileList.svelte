@@ -5,6 +5,17 @@
   import { Button } from '$lib/components/ui/button';
   import { Progress } from '$lib/components/ui/progress';
   import { FileItemCard } from '$lib/components/shared';
+  import {
+    FILE_ITEM_CARD_ACTION_BUTTON_CLASS,
+    FILE_ITEM_CARD_ACTION_ICON_CLASS,
+    FILE_ITEM_CARD_CANCEL_ACTION_CLASS,
+    FILE_ITEM_CARD_META_CLASS,
+    FILE_ITEM_CARD_PRIMARY_ACTION_CLASS,
+    FILE_ITEM_CARD_REMOVE_ACTION_CLASS,
+    FILE_ITEM_CARD_RETRY_ACTION_CLASS,
+    FILE_ITEM_CARD_STATUS_ICON_CLASS,
+    FILE_ITEM_CARD_TITLE_CLASS,
+  } from '$lib/utils/file-item-card-visuals';
 
   interface TranslationFileListProps {
     jobs: TranslationJob[];
@@ -44,20 +55,20 @@
     <FileItemCard selected={isSelected} onclick={() => onSelect(job.id)}>
       {#snippet icon()}
         {#if job.status === 'completed'}
-          <CheckCircle class="size-5 text-green-500" />
+          <CheckCircle class={`${FILE_ITEM_CARD_STATUS_ICON_CLASS} text-green-500`} />
         {:else if processing}
-          <Loader2 class="size-5 animate-spin text-primary" />
+          <Loader2 class={`${FILE_ITEM_CARD_STATUS_ICON_CLASS} animate-spin text-primary`} />
         {:else if job.status === 'error'}
-          <AlertCircle class="size-5 text-destructive" />
+          <AlertCircle class={`${FILE_ITEM_CARD_STATUS_ICON_CLASS} text-destructive`} />
         {:else}
-          <FileText class="size-5 text-muted-foreground" />
+          <FileText class={`${FILE_ITEM_CARD_STATUS_ICON_CLASS} text-muted-foreground`} />
         {/if}
       {/snippet}
 
       {#snippet content()}
-        <p class="font-medium text-sm truncate">{job.file.name}</p>
+        <p class={FILE_ITEM_CARD_TITLE_CLASS}>{job.file.name}</p>
 
-        <div class="flex items-center gap-2 text-xs text-muted-foreground mt-1 flex-wrap">
+        <div class={FILE_ITEM_CARD_META_CLASS}>
           <Badge variant="outline" class="text-[10px] px-1.5 py-0 uppercase">
             {job.file.format}
           </Badge>
@@ -93,14 +104,14 @@
               <Button
                 variant="ghost"
                 size="icon"
-                class="size-7 text-primary hover:text-primary"
+                class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_PRIMARY_ACTION_CLASS}`}
                 onclick={(e: MouseEvent) => {
                   e.stopPropagation();
                   onViewResult(job);
                 }}
                 title="View results"
               >
-                <FileText class="size-3.5" />
+                <FileText class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
               </Button>
             {/if}
 
@@ -108,7 +119,7 @@
               <Button
                 variant="ghost"
                 size="icon"
-                class="size-7 text-orange-500 hover:text-orange-600 hover:bg-orange-500/10"
+                class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_RETRY_ACTION_CLASS}`}
                 onclick={(e: MouseEvent) => {
                   e.stopPropagation();
                   onRetry(job);
@@ -116,7 +127,7 @@
                 disabled={disabled}
                 title="Retry"
               >
-                <RotateCw class="size-3.5" />
+                <RotateCw class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
               </Button>
             {/if}
 
@@ -124,20 +135,20 @@
               <Button
                 variant="ghost"
                 size="icon"
-                class="size-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_CANCEL_ACTION_CLASS}`}
                 onclick={(e: MouseEvent) => {
                   e.stopPropagation();
                   onCancel(job.id);
                 }}
                 title="Cancel"
               >
-                <X class="size-3.5" />
+                <X class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
               </Button>
             {:else}
               <Button
                 variant="ghost"
                 size="icon"
-                class="size-7"
+                class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_REMOVE_ACTION_CLASS}`}
                 onclick={(e: MouseEvent) => {
                   e.stopPropagation();
                   onRemove(job.id);
@@ -145,7 +156,7 @@
                 disabled={disabled}
                 title="Remove"
               >
-                <Trash2 class="size-3.5" />
+                <Trash2 class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
               </Button>
             {/if}
           </div>

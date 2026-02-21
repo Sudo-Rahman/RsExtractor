@@ -715,6 +715,7 @@
           isProcessing={extractionStore.isExtracting}
           currentProcessingPath={activeExtractionFilePath}
           onSelect={(path) => fileListStore.selectFile(path)}
+          onCancelFile={(path) => { void handleCancelFile(path); }}
           onRemove={handleRequestRemoveFile}
         />
       </div>
