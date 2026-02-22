@@ -6,21 +6,26 @@
 </script>
 
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { open } from '@tauri-apps/plugin-dialog';
   import { exists } from '@tauri-apps/plugin-fs';
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import { toast } from 'svelte-sonner';
 
   import { renameStore } from '$lib/stores/rename.svelte';
   import { toolImportStore } from '$lib/stores/tool-import.svelte';
   import { createRenameFile, buildNewPath } from '$lib/services/rename';
   import { logAndToast, log } from '$lib/utils/log-toast';
+  import { formatFileSize, formatTransferRate } from '$lib/utils/format';
+  import type { RenameCopyProgressEvent } from '$lib/types/progress';
   import type { ImportSourceId } from '$lib/types/tool-import';
   import type { RuleType, RuleConfig, RenameMode, RenameFile } from '$lib/types/rename';
 
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Badge } from '$lib/components/ui/badge';
+  import { Progress } from '$lib/components/ui/progress';
   import * as RadioGroup from '$lib/components/ui/radio-group';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
@@ -44,9 +49,52 @@
     newPath: string;
   }
 
+  const COPY_CANCELLED_ERROR = 'Copy cancelled';
+
   let overwriteDialogOpen = $state(false);
   let pendingCopyPlan = $state.raw<RenameExecutionPlanItem[] | null>(null);
   let existingCopyTargets = $state<string[]>([]);
+  let isCancelling = $state(false);
+
+  function isCopyCancelledError(errorMsg: string): boolean {
+    return errorMsg === COPY_CANCELLED_ERROR || errorMsg.includes(COPY_CANCELLED_ERROR);
+  }
+
+  onMount(() => {
+    let destroyed = false;
+    let removeListener: (() => void) | null = null;
+
+    const registerCopyProgressListener = async () => {
+      const unlisten = await listen<RenameCopyProgressEvent>('rename-copy-progress', (event) => {
+        if (!renameStore.isProcessing || renameStore.mode !== 'copy') {
+          return;
+        }
+
+        const payload = event.payload;
+        renameStore.updateCurrentCopyProgress(
+          payload.sourcePath,
+          payload.bytesCopied,
+          payload.totalBytes,
+          payload.progress,
+          payload.speedBytesPerSec,
+        );
+      });
+
+      if (destroyed) {
+        unlisten();
+        return;
+      }
+
+      removeListener = unlisten;
+    };
+
+    void registerCopyProgressListener();
+
+    return () => {
+      destroyed = true;
+      removeListener?.();
+    };
+  });
 
   async function fetchFileMetadata(path: string): Promise<{ size?: number; createdAt?: Date; modifiedAt?: Date }> {
     try {
@@ -169,12 +217,12 @@
     mode: RenameMode,
     overwriteCopy: boolean,
   ): Promise<void> {
-    // Start processing with new AbortController
-    renameStore.startProcessing();
-    renameStore.updateProgress({
-      current: 0,
-      total: plan.length,
-    });
+    const totalPlannedBytes =
+      mode === 'copy'
+        ? plan.reduce((sum, item) => sum + Math.max(0, item.file.size ?? 0), 0)
+        : 0;
+
+    renameStore.startProcessingRun(plan.length, totalPlannedBytes);
 
     let successCount = 0;
     let errorCount = 0;
@@ -183,19 +231,15 @@
     for (let i = 0; i < plan.length; i++) {
       // Check for cancellation before each file
       if (renameStore.isCancelled) {
-        cancelledCount = plan.length - i;
         break;
       }
 
       const item = plan[i];
       const file = item.file;
 
-      renameStore.updateProgress({
-        current: i + 1,
-        currentFile: file.originalName,
-      });
-
+      renameStore.setCurrentFile(file);
       renameStore.setFileStatus(file.id, 'processing');
+      let outcome: 'success' | 'error' | 'cancelled' = 'success';
 
       try {
         if (mode === 'rename') {
@@ -222,26 +266,80 @@
         );
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
-        renameStore.markFileComplete(file.id, false, errorMsg);
-        errorCount++;
+        const cancelled = renameStore.isCancelled || (mode === 'copy' && isCopyCancelledError(errorMsg));
+        if (cancelled) {
+          outcome = 'cancelled';
+          cancelledCount++;
+          renameStore.setFileStatus(file.id, 'cancelled', COPY_CANCELLED_ERROR);
+          log('warning', 'rename',
+            `Cancelled ${mode}: ${file.originalName}`,
+            COPY_CANCELLED_ERROR,
+            { filePath: file.originalPath, outputPath: item.newPath }
+          );
+        } else {
+          outcome = 'error';
+          renameStore.markFileComplete(file.id, false, errorMsg);
+          errorCount++;
 
-        // Log error for this file
-        log('error', 'rename',
-          `Failed to ${mode}: ${file.originalName}`,
-          errorMsg,
-          { filePath: file.originalPath }
-        );
+          // Log error for this file
+          log('error', 'rename',
+            `Failed to ${mode}: ${file.originalName}`,
+            errorMsg,
+            { filePath: file.originalPath }
+          );
+        }
+      } finally {
+        renameStore.markCurrentFileProcessed(outcome);
+      }
+
+      if (outcome === 'cancelled') {
+        break;
       }
     }
 
-    renameStore.updateProgress({ status: renameStore.isCancelled ? 'cancelled' : 'completed' });
+    const wasCancelled = renameStore.isCancelled || cancelledCount > 0;
+    renameStore.updateProgress({ status: wasCancelled ? 'cancelled' : 'completed' });
+    const skippedCount = Math.max(0, plan.length - (successCount + errorCount + cancelledCount));
 
-    if (renameStore.isCancelled) {
-      toast.warning(`Cancelled: ${successCount} completed, ${cancelledCount} skipped`);
+    if (wasCancelled) {
+      toast.warning(`Cancelled: ${successCount} completed, ${cancelledCount + skippedCount} skipped`);
     } else if (errorCount === 0) {
       toast.success(`${successCount} file(s) ${mode === 'rename' ? 'renamed' : 'copied'} successfully`);
     } else {
       toast.warning(`${successCount} success, ${errorCount} error(s)`);
+    }
+  }
+
+  async function handleCancelProcessing() {
+    if (!renameStore.isProcessing || isCancelling) {
+      return;
+    }
+
+    renameStore.cancelProcessing();
+    const currentMode = renameStore.mode;
+    if (currentMode !== 'copy') {
+      toast.info('Cancelling operation...');
+      return;
+    }
+
+    const sourcePath = renameStore.progress.currentFilePath;
+    if (!sourcePath) {
+      toast.info('Cancelling operation...');
+      return;
+    }
+
+    isCancelling = true;
+    try {
+      await invoke('cancel_copy_file', { sourcePath });
+      toast.info('Cancelling current copy...');
+    } catch (error) {
+      logAndToast.error({
+        source: 'rename',
+        title: 'Cancel failed',
+        details: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      isCancelling = false;
     }
   }
 
@@ -401,6 +499,10 @@
   );
 
   const overwriteTargetSamples = $derived(existingCopyTargets.slice(0, 5));
+  const copiedBytes = $derived(Math.max(0, progress.completedBytes + progress.currentFileBytesCopied));
+  const totalBytes = $derived(Math.max(0, progress.totalBytes));
+  const copiedBytesLabel = $derived(formatFileSize(totalBytes > 0 ? Math.min(copiedBytes, totalBytes) : copiedBytes));
+  const totalBytesLabel = $derived(formatFileSize(totalBytes));
 </script>
 
 <div class="h-full flex overflow-hidden">
@@ -532,6 +634,9 @@
           {files}
           {allSelected}
           {someSelected}
+          currentProcessingFileId={progress.currentFileId}
+          currentProcessingProgress={mode === 'copy' ? progress.currentFileProgress : undefined}
+          currentProcessingSpeedBytesPerSec={mode === 'copy' ? progress.currentSpeedBytesPerSec : undefined}
           onToggleSelection={(id) => renameStore.toggleFileSelection(id)}
           onToggleAll={handleToggleAll}
           onRemove={(id) => renameStore.removeFile(id)}
@@ -595,13 +700,40 @@
         </div>
       {/if}
 
+      {#if isProcessing && mode === 'copy'}
+        <div class="space-y-2 rounded-md border bg-muted/30 px-3 py-2">
+          <p class="text-sm font-medium">Copying...</p>
+          {#if progress.currentFile}
+            <p class="text-xs text-muted-foreground truncate" title={progress.currentFile}>
+              Current file: {progress.currentFile}
+            </p>
+          {/if}
+          <div class="space-y-1.5">
+            <Progress value={progress.currentFileProgress} class="h-1.5" />
+            <p class="text-[11px] text-muted-foreground">
+              File progress: {Math.round(progress.currentFileProgress)}%
+              {#if progress.currentSpeedBytesPerSec && progress.currentSpeedBytesPerSec > 0}
+                · {formatTransferRate(progress.currentSpeedBytesPerSec)}
+              {/if}
+            </p>
+            <p class="text-[11px] text-muted-foreground">
+              {progress.current}/{progress.total} files completed
+            </p>
+            <p class="text-[11px] text-muted-foreground">
+              Copied: {copiedBytesLabel} / {totalBytesLabel}
+            </p>
+          </div>
+        </div>
+      {/if}
+
       <!-- Execute button -->
       {#if isProcessing}
         <Button
           class="w-full"
           size="lg"
           variant="destructive"
-          onclick={() => renameStore.cancelProcessing()}
+          disabled={isCancelling}
+          onclick={handleCancelProcessing}
         >
           <Square class="size-4 mr-2" />
           Cancel
@@ -643,7 +775,7 @@
 
     {#if overwriteTargetSamples.length > 0}
       <div class="rounded-md border bg-muted/40 p-3 space-y-1 max-h-36 overflow-auto">
-        {#each overwriteTargetSamples as targetPath}
+        {#each overwriteTargetSamples as targetPath (targetPath)}
           <p class="text-xs font-mono truncate">{targetPath}</p>
         {/each}
         {#if existingCopyTargets.length > overwriteTargetSamples.length}

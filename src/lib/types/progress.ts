@@ -21,3 +21,12 @@ export interface MergeProgressEvent {
   progress: number;
   speedBytesPerSec?: number;
 }
+
+export interface RenameCopyProgressEvent {
+  sourcePath: string;
+  destPath: string;
+  bytesCopied: number;
+  totalBytes: number;
+  progress: number;
+  speedBytesPerSec?: number;
+}

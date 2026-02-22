@@ -28,7 +28,7 @@ export interface RenameFile {
   createdAt?: Date;
 }
 
-export type RenameFileStatus = 'pending' | 'processing' | 'success' | 'error' | 'conflict';
+export type RenameFileStatus = 'pending' | 'processing' | 'success' | 'error' | 'conflict' | 'cancelled';
 
 /**
  * Available rule types
@@ -150,6 +150,14 @@ export interface RenameProgress {
   current: number;
   total: number;
   currentFile?: string;
+  currentFileId?: string;
+  currentFilePath?: string;
+  currentFileProgress: number;
+  currentSpeedBytesPerSec?: number;
+  completedBytes: number;
+  totalBytes: number;
+  currentFileBytesCopied: number;
+  currentFileTotalBytes: number;
 }
 
 /**

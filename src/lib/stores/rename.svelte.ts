@@ -35,11 +35,32 @@ let mode = $state<RenameMode>('rename');
 let outputDir = $state<string>('');
 let searchQuery = $state<string>('');
 let sortConfig = $state<SortConfig>({ field: 'name', direction: 'asc' });
-let progress = $state<RenameProgress>({
-  status: 'idle',
-  current: 0,
-  total: 0,
-});
+
+function createDefaultProgressState(status: RenameProgress['status'] = 'idle'): RenameProgress {
+  return {
+    status,
+    current: 0,
+    total: 0,
+    currentFile: undefined,
+    currentFileId: undefined,
+    currentFilePath: undefined,
+    currentFileProgress: 0,
+    currentSpeedBytesPerSec: undefined,
+    completedBytes: 0,
+    totalBytes: 0,
+    currentFileBytesCopied: 0,
+    currentFileTotalBytes: 0,
+  };
+}
+
+function clampPercentage(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, value));
+}
+
+type CurrentFileOutcome = 'success' | 'error' | 'cancelled';
+
+let progress = $state<RenameProgress>(createDefaultProgressState());
 
 // AbortController for cancelling rename operations
 let abortController = $state<AbortController | null>(null);
@@ -289,7 +310,7 @@ export const renameStore = {
   
   clear() {
     files = [];
-    progress = { status: 'idle', current: 0, total: 0 };
+    progress = createDefaultProgressState();
   },
   
   setSearchQuery(query: string) {
@@ -408,26 +429,104 @@ export const renameStore = {
   updateProgress(updates: Partial<RenameProgress>) {
     progress = { ...progress, ...updates };
   },
+
+  startProcessingRun(total: number, totalBytes: number) {
+    abortController = new AbortController();
+    progress = {
+      ...createDefaultProgressState('processing'),
+      total: Math.max(0, total),
+      totalBytes: Math.max(0, totalBytes),
+    };
+  },
+
+  setCurrentFile(file: RenameFile) {
+    progress = {
+      ...progress,
+      currentFile: file.originalName,
+      currentFileId: file.id,
+      currentFilePath: file.originalPath,
+      currentFileProgress: 0,
+      currentSpeedBytesPerSec: undefined,
+      currentFileBytesCopied: 0,
+      currentFileTotalBytes: Math.max(0, file.size ?? 0),
+    };
+  },
+
+  updateCurrentCopyProgress(
+    sourcePath: string,
+    bytesCopied: number,
+    totalBytes: number,
+    fileProgress: number,
+    speedBytesPerSec?: number,
+  ) {
+    if (progress.status !== 'processing' || progress.currentFilePath !== sourcePath) {
+      return;
+    }
+
+    const normalizedTotalBytes = Math.max(0, totalBytes);
+    const effectiveTotalBytes = Math.max(normalizedTotalBytes, progress.currentFileTotalBytes);
+    const normalizedBytesCopied = Math.max(0, Math.floor(bytesCopied));
+    const clampedBytesCopied =
+      effectiveTotalBytes > 0
+        ? Math.min(normalizedBytesCopied, effectiveTotalBytes)
+        : normalizedBytesCopied;
+
+    progress = {
+      ...progress,
+      currentFileProgress: clampPercentage(fileProgress),
+      currentSpeedBytesPerSec:
+        speedBytesPerSec && Number.isFinite(speedBytesPerSec) && speedBytesPerSec > 0
+          ? speedBytesPerSec
+          : undefined,
+      currentFileBytesCopied: clampedBytesCopied,
+      currentFileTotalBytes: effectiveTotalBytes,
+    };
+  },
+
+  markCurrentFileProcessed(outcome: CurrentFileOutcome = 'success') {
+    const shouldAdvanceCurrent = outcome !== 'cancelled';
+    const bytesToCredit = outcome === 'success'
+      ? Math.max(0, progress.currentFileTotalBytes)
+      : 0;
+    const nextCompletedBytes = progress.completedBytes + bytesToCredit;
+    progress = {
+      ...progress,
+      current: shouldAdvanceCurrent
+        ? Math.min(progress.total, progress.current + 1)
+        : progress.current,
+      completedBytes:
+        progress.totalBytes > 0
+          ? Math.min(progress.totalBytes, nextCompletedBytes)
+          : nextCompletedBytes,
+      currentFile: undefined,
+      currentFileId: undefined,
+      currentFilePath: undefined,
+      currentFileProgress: 0,
+      currentSpeedBytesPerSec: undefined,
+      currentFileBytesCopied: 0,
+      currentFileTotalBytes: 0,
+    };
+  },
   
   /**
    * Start processing and create a new AbortController
    */
   startProcessing() {
     abortController = new AbortController();
-    progress = { ...progress, status: 'processing' };
+    progress = {
+      ...createDefaultProgressState('processing'),
+      total: progress.total,
+      totalBytes: progress.totalBytes,
+    };
   },
   
   /**
    * Cancel the current processing operation
    */
   cancelProcessing() {
-    if (abortController) {
+    if (abortController && !abortController.signal.aborted) {
       abortController.abort();
-      // Note: Don't set abortController to null here!
-      // The loop needs to check isCancelled which reads from the signal.
-      // abortController will be reset in startProcessing() or resetProgress()
     }
-    progress = { ...progress, status: 'cancelled' };
   },
   
   /**
@@ -492,12 +591,12 @@ export const renameStore = {
     mode = 'rename';
     outputDir = '';
     searchQuery = '';
-    progress = { status: 'idle', current: 0, total: 0 };
+    progress = createDefaultProgressState();
   },
   
   resetProgress() {
     abortController = null;
-    progress = { status: 'idle', current: 0, total: 0 };
+    progress = createDefaultProgressState();
     files = files.map(f => ({ ...f, status: 'pending' as const, error: undefined }));
   },
   

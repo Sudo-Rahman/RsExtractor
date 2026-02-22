@@ -28,6 +28,7 @@
   import { LogsSheet } from '$lib/components/logs';
   import { AlertCircle, ScrollText, Home, LayoutGrid, Table, Download, AudioLines, ScanText, Languages, FileOutput, GitMerge, PenLine } from '@lucide/svelte';
   import { OCR_OUTPUT_FORMATS } from '$lib/types';
+  import { formatFileSize } from '$lib/utils/format';
   import { OS, formatTransferRate, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
   import { useSidebar } from "$lib/components/ui/sidebar";
   import { logStore } from '$lib/stores/logs.svelte';
@@ -281,7 +282,20 @@
   const renameMetric = $derived.by((): ToolProgressMetric => {
     const progress = renameStore.progress;
     const totalUnits = progress.total;
-    const doneUnits = Math.min(Math.max(progress.current, 0), totalUnits);
+    const doneUnits = Math.min(
+      totalUnits,
+      Math.max(0, progress.current) + (clampPercentage(progress.currentFileProgress) / 100),
+    );
+    const copiedBytes = Math.max(0, progress.completedBytes + progress.currentFileBytesCopied);
+    const clampedCopiedBytes = progress.totalBytes > 0
+      ? Math.min(copiedBytes, progress.totalBytes)
+      : copiedBytes;
+    const bytesText = progress.totalBytes > 0
+      ? ` · ${formatFileSize(clampedCopiedBytes)}/${formatFileSize(progress.totalBytes)}`
+      : '';
+    const speedText = progress.currentSpeedBytesPerSec && progress.currentSpeedBytesPerSec > 0
+      ? ` · ${formatTransferRate(progress.currentSpeedBytesPerSec)}`
+      : '';
     return {
       toolId: 'rename',
       label: 'Batch Rename',
@@ -289,7 +303,7 @@
       totalUnits,
       percentage: ratioToPercentage(doneUnits, totalUnits),
       active: renameStore.isProcessing && totalUnits > 0,
-      detailText: `${Math.round(doneUnits)}/${totalUnits} files`,
+      detailText: `${Math.min(Math.round(Math.max(0, progress.current)), totalUnits)}/${totalUnits} files${bytesText}${speedText}`,
       icon: PenLine,
     };
   });
