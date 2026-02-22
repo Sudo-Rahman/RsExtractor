@@ -586,11 +586,10 @@
       {#if globalToolProgress.active}
         <HoverCard.Root openDelay={150} closeDelay={100}>
           <HoverCard.Trigger
-            class="block w-48 rounded-md border bg-muted/40 px-2 py-1.5 transition-colors hover:bg-muted/60"
+            class="block w-38 rounded-md border bg-muted/40 px-2 py-1.5 transition-colors hover:bg-muted/60"
             title={`Global progress: ${Math.round(globalToolProgress.percentage)}%`}
           >
             <div class="flex items-center gap-2">
-              <span class="text-[11px] text-muted-foreground whitespace-nowrap">Global</span>
               <Progress value={globalToolProgress.percentage} class="h-2 flex-1" />
               <span class="text-[11px] font-medium tabular-nums">{Math.round(globalToolProgress.percentage)}%</span>
             </div>
