@@ -39,6 +39,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-22.04'
         run: |
@@ -74,20 +79,23 @@ jobs:
       - name: Run Rust tests (macOS)
         if: runner.os == 'macOS'
         working-directory: src-tauri
-        run: cargo test
+        run: |
+          cargo test
+          cargo test evermeet_release_endpoints_are_reachable -- --ignored
 
       - name: Run Rust tests (Linux)
         if: matrix.os == 'ubuntu-22.04'
         working-directory: src-tauri
         run: |
           cargo test --no-default-features --features ocr-backend-opencl
-          cargo test --no-default-features --features ocr-backend-opencl btbn_latest_page_contains_download_url_for_supported_variant -- --ignored
-          cargo test --no-default-features --features ocr-backend-opencl evermeet_release_endpoints_are_reachable -- --ignored
+          cargo test --no-default-features --features ocr-backend-opencl btbn_latest_page_contains_download_url_for_current_supported_variant -- --ignored
 
       - name: Run Rust tests (Windows)
         if: runner.os == 'Windows'
         working-directory: src-tauri
-        run: cargo test --no-default-features --features ocr-backend-opencl
+        run: |
+          cargo test --no-default-features --features ocr-backend-opencl
+          cargo test --no-default-features --features ocr-backend-opencl btbn_latest_page_contains_download_url_for_current_supported_variant -- --ignored
 
       - name: Build Tauri app (macOS)
         if: runner.os == 'macOS'
