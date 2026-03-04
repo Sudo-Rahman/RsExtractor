@@ -510,7 +510,7 @@ export const translationStore = {
       sourceLanguage: 'auto',
       targetLanguage: 'fr',
       provider: 'google',
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.1-flash-lite-preview',
       batchCount: 1,
       models: [],
     };
