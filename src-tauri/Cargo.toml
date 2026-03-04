@@ -15,6 +15,11 @@ license-file = "../LICENSE"
 name = "mediaflow_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = ["ocr-backend-vulkan"]
+ocr-backend-vulkan = ["dep:ocr-runtime-vulkan"]
+ocr-backend-opencl = ["dep:ocr-runtime-opencl"]
+
 [build-dependencies]
 tauri-build = { version = "^2", features = [] }
 
@@ -36,29 +41,31 @@ rayon = "1.10"
 num_cpus = "1.16"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 futures-util = "0.3"
-zip = "7.0.0"
+zip = "8.2.0"
 tar = "0.4"
 xz2 = "0.1"
 walkdir = "2.5"
 
-#windows or linux ocr
+# Linux/Windows OCR backend selection:
+# local builds default to Vulkan; CI builds/tests can force OpenCL.
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
-ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git", branch = "next", features = ["vulkan"] }
+ocr-runtime-vulkan = { package = "mediaflow-ocr-backend-vulkan", path = "crates/ocr-backend-vulkan", optional = true }
+ocr-runtime-opencl = { package = "mediaflow-ocr-backend-opencl", path = "crates/ocr-backend-opencl", optional = true }
 
 
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26.0"
 window-vibrancy = "0.7.1"
-# OCR
-ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git", branch = "next", features = ["metal"] }
+# macOS always uses Metal.
+ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git", branch = "next", default-features = false, features = ["metal"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]
-ctor = "0.2"
-serial_test = "3.2"
+ctor = "0.6.3"
+serial_test = "3.4"
 sha2 = "0.10"
 tempfile = "3.20"
 

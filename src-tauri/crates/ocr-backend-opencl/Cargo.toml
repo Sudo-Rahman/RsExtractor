@@ -1,0 +1,11 @@
+[package]
+name = "mediaflow-ocr-backend-opencl"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "ocr_runtime_opencl"
+path = "src/lib.rs"
+
+[dependencies]
+ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git", branch = "next", default-features = false, features = ["opencl"] }

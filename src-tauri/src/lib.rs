@@ -5,6 +5,23 @@ mod shared;
 pub(crate) mod test_support;
 mod tools;
 
+#[cfg(all(
+    any(target_os = "windows", target_os = "linux"),
+    feature = "ocr-backend-vulkan",
+    feature = "ocr-backend-opencl"
+))]
+compile_error!(
+    "Enable only one Linux/Windows OCR backend feature: ocr-backend-vulkan or ocr-backend-opencl."
+);
+
+#[cfg(all(
+    any(target_os = "windows", target_os = "linux"),
+    not(any(feature = "ocr-backend-vulkan", feature = "ocr-backend-opencl"))
+))]
+compile_error!(
+    "Enable one Linux/Windows OCR backend feature: ocr-backend-vulkan or ocr-backend-opencl."
+);
+
 pub use shared::ExtractionError;
 pub use tools::ocr::OcrModelPaths;
 
