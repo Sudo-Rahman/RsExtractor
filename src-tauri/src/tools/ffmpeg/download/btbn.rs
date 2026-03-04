@@ -175,9 +175,10 @@ mod tests {
         assert!(url.ends_with(".zip"));
     }
 
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     #[tokio::test]
     #[ignore = "network integration test; run explicitly when internet is available"]
-    async fn btbn_latest_page_contains_download_url_for_supported_variant() {
+    async fn btbn_latest_page_contains_download_url_for_current_supported_variant() {
         let client = reqwest::Client::builder()
             .user_agent("RsExtractor-Tests/1.0")
             .no_proxy()
@@ -207,7 +208,10 @@ mod tests {
         }
         let page = page.unwrap_or_else(|| panic!("{}", last_error));
 
-        let variant = resolve_btbn_variant("linux", "x86_64").expect("variant should resolve");
+        let current_os = std::env::consts::OS;
+        let current_arch = std::env::consts::ARCH;
+        let variant = resolve_btbn_variant(current_os, current_arch)
+            .expect("current runner should map to a supported BTBN variant");
         let url = find_btbn_url(&page, variant, ".tar.xz", ".zip");
         assert!(url.is_some());
     }

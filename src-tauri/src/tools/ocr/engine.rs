@@ -1,6 +1,19 @@
 use std::path::{Path, PathBuf};
 
-use ocr_rs::{Backend, OcrEngine, OcrEngineConfig};
+use ocr_backend::{Backend, OcrEngine, OcrEngineConfig};
+#[cfg(target_os = "macos")]
+use ocr_rs as ocr_backend;
+#[cfg(all(
+    any(target_os = "windows", target_os = "linux"),
+    feature = "ocr-backend-opencl"
+))]
+use ocr_runtime_opencl as ocr_backend;
+#[cfg(all(
+    any(target_os = "windows", target_os = "linux"),
+    feature = "ocr-backend-vulkan",
+    not(feature = "ocr-backend-opencl")
+))]
+use ocr_runtime_vulkan as ocr_backend;
 use tauri::Manager;
 
 /// Default OCR models directory (relative to app resources)
@@ -43,8 +56,33 @@ fn get_charset_for_language(language: &str) -> &'static str {
     }
 }
 
+// Select the compiled GPU backend for the current target.
+fn default_gpu_backend() -> Backend {
+    #[cfg(target_os = "macos")]
+    {
+        Backend::Metal
+    }
+
+    #[cfg(all(
+        any(target_os = "windows", target_os = "linux"),
+        feature = "ocr-backend-opencl"
+    ))]
+    {
+        Backend::OpenCL
+    }
+
+    #[cfg(all(
+        any(target_os = "windows", target_os = "linux"),
+        feature = "ocr-backend-vulkan",
+        not(feature = "ocr-backend-opencl")
+    ))]
+    {
+        Backend::Vulkan
+    }
+}
+
 /// Create an OCR engine for the given language with specified options
-/// Thread count for MNN is fixed to num_cpus/2 for optimal performance
+/// Thread count for MNN uses the available CPU count with a minimum of 1.
 pub(super) fn create_ocr_engine(
     models_dir: &Path,
     language: &str,
@@ -83,18 +121,9 @@ pub(super) fn create_ocr_engine(
 
     // Create OCR engine config based on GPU option
     let config = if use_gpu {
-        #[cfg(target_os = "macos")]
-        {
-            OcrEngineConfig::new()
-                .with_backend(Backend::Metal)
-                .with_threads(mnn_threads)
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            OcrEngineConfig::new()
-                .with_backend(Backend::Vulkan)
-                .with_threads(mnn_threads)
-        }
+        OcrEngineConfig::new()
+            .with_backend(default_gpu_backend())
+            .with_threads(mnn_threads)
     } else {
         // CPU-only mode: force CPU backend to avoid platform auto-selection issues.
         OcrEngineConfig::new()
@@ -137,12 +166,46 @@ pub(super) fn get_ocr_models_dir(app: &tauri::AppHandle) -> Result<PathBuf, Stri
 
 #[cfg(test)]
 mod tests {
-    use super::{create_ocr_engine, get_charset_for_language, get_rec_model_for_language};
+    use super::{
+        Backend, create_ocr_engine, default_gpu_backend, get_charset_for_language,
+        get_rec_model_for_language,
+    };
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn default_gpu_backend_returns_metal_on_macos() {
+        assert_eq!(default_gpu_backend(), Backend::Metal);
+    }
+
+    #[cfg(all(
+        any(target_os = "windows", target_os = "linux"),
+        feature = "ocr-backend-vulkan",
+        not(feature = "ocr-backend-opencl")
+    ))]
+    #[test]
+    fn default_gpu_backend_returns_vulkan_when_vulkan_feature_is_enabled() {
+        assert_eq!(default_gpu_backend(), Backend::Vulkan);
+    }
+
+    #[cfg(all(
+        any(target_os = "windows", target_os = "linux"),
+        feature = "ocr-backend-opencl"
+    ))]
+    #[test]
+    fn default_gpu_backend_returns_opencl_when_opencl_feature_is_enabled() {
+        assert_eq!(default_gpu_backend(), Backend::OpenCL);
+    }
 
     #[test]
     fn language_model_mapping_returns_expected_model_file() {
-        assert_eq!(get_rec_model_for_language("korean"), "korean_PP-OCRv5_mobile_rec_infer.mnn");
-        assert_eq!(get_rec_model_for_language("unknown"), "PP-OCRv5_mobile_rec.mnn");
+        assert_eq!(
+            get_rec_model_for_language("korean"),
+            "korean_PP-OCRv5_mobile_rec_infer.mnn"
+        );
+        assert_eq!(
+            get_rec_model_for_language("unknown"),
+            "PP-OCRv5_mobile_rec.mnn"
+        );
     }
 
     #[test]
