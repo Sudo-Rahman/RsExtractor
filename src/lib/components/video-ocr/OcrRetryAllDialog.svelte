@@ -180,7 +180,7 @@
 
         <div class="space-y-2">
           <div class="flex items-center justify-between">
-            <Label>Parallel workers</Label>
+            <Label>Requested OCR parallelism</Label>
             <span class="text-xs text-muted-foreground">{config.threadCount}</span>
           </div>
           <Slider
@@ -191,6 +191,9 @@
             step={1}
             onValueChange={(value) => config = { ...config, threadCount: value }}
           />
+          <p class="text-xs text-muted-foreground">
+            The app picks the effective worker and thread layout automatically.
+          </p>
         </div>
 
         <div class="flex items-center justify-between">

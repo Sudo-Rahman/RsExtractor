@@ -16,6 +16,7 @@
   import type {
     OcrConfig,
     OcrModelsStatus,
+    OcrPipelineResult,
     OcrProgressEvent,
     OcrRawFrame,
     OcrRegion,
@@ -41,6 +42,7 @@
   import {
     analyzeOcrSubtitles,
     formatOcrSubtitleAnalysis,
+    normalizeOcrRawFrames,
     normalizeOcrSubtitles,
     toRustOcrFrames,
   } from '$lib/utils';
@@ -156,7 +158,7 @@
     }
 
     unlistenOcrProgress = await listen<OcrProgressEvent>('ocr-progress', (event) => {
-      const { fileId, phase, current, total, message, transcodingCodec } = event.payload;
+      const { fileId, phase, current, total, overallPercentage, message, transcodingCodec } = event.payload;
 
       if (phase === 'transcoding') {
         videoOcrStore.updateTranscodingProgress(fileId, current);
@@ -171,6 +173,7 @@
         current,
         total,
         percentage: total > 0 ? Math.round((current / total) * 100) : 0,
+        overallPercentage,
         message,
       });
     });
@@ -258,6 +261,14 @@
     await Promise.all(persistPromises);
   }
 
+  function logPipelineTimings(fileId: string, timings: OcrPipelineResult['timings']): void {
+    videoOcrStore.addLog(
+      'info',
+      `Pipeline timings: extract ${timings.extractMs}ms, OCR ${timings.ocrMs}ms, subtitles ${timings.subtitleMs}ms, total ${timings.totalMs}ms`,
+      fileId,
+    );
+  }
+
   async function runAiCleanup(fileId: string, subtitles: OcrSubtitle[], config: OcrConfig): Promise<OcrSubtitle[]> {
     const controller = new AbortController();
     aiCleanupControllers.set(fileId, controller);
@@ -342,55 +353,54 @@
     file: OcrVideoFile,
     config: OcrConfig,
   ): Promise<{ rawOcr: OcrRawFrame[]; finalSubtitles: OcrSubtitle[] }> {
-    let framesDir: string | null = null;
-
-    try {
-      let current = getFreshFile(file.id) ?? file;
-      if (!current.previewPath) {
-        const transcodeOk = await transcodeFileForPreview(current);
-        if (!transcodeOk) {
-          throw new Error('Preview transcoding failed');
-        }
-      }
-
-      current = getFreshFile(file.id) ?? current;
-
-      videoOcrStore.setFileStatus(file.id, 'extracting_frames');
-      videoOcrStore.setPhase(file.id, 'extracting', 0, 100);
-
-      const [extractedFramesDir, frameCount] = await invoke<[string, number]>('extract_ocr_frames', {
-        videoPath: current.previewPath || current.path,
-        fileId: file.id,
-        fps: config.frameRate,
-        region: current.ocrRegion ?? null,
-      });
-      framesDir = extractedFramesDir;
-      videoOcrStore.addLog('info', `Extracted ${frameCount} frames`, file.id);
-
-      videoOcrStore.setFileStatus(file.id, 'ocr_processing');
-      videoOcrStore.setPhase(file.id, 'ocr', 0, frameCount);
-
-      const rawOcr = await invoke<OcrRawFrame[]>('perform_ocr', {
-        framesDir: extractedFramesDir,
-        fileId: file.id,
-        language: config.language,
-        fps: config.frameRate,
-        useGpu: config.useGpu,
-        numWorkers: config.threadCount,
-      });
-      videoOcrStore.addLog('info', `OCR processed ${rawOcr.length} frames with text`, file.id);
-
-      const finalSubtitles = await runFromRaw(file, rawOcr, 'full_pipeline', config);
-      return { rawOcr, finalSubtitles };
-    } finally {
-      if (framesDir) {
-        try {
-          await invoke('cleanup_ocr_frames', { framesDir });
-        } catch {
-          // Ignore cleanup errors
-        }
+    let current = getFreshFile(file.id) ?? file;
+    if (!current.previewPath) {
+      const transcodeOk = await transcodeFileForPreview(current);
+      if (!transcodeOk) {
+        throw new Error('Preview transcoding failed');
       }
     }
+
+    current = getFreshFile(file.id) ?? current;
+
+    videoOcrStore.setFileStatus(file.id, 'extracting_frames');
+    videoOcrStore.setPhase(file.id, 'extracting', 0, 100);
+
+    const pipelineResult = await invoke<OcrPipelineResult>('run_ocr_pipeline', {
+      videoPath: current.previewPath || current.path,
+      fileId: file.id,
+      language: config.language,
+      fps: config.frameRate,
+      useGpu: config.useGpu,
+      numWorkers: config.threadCount,
+      minConfidence: config.confidenceThreshold,
+      cleanup: buildCleanupOptions(config, false),
+      region: current.ocrRegion ?? null,
+    });
+
+    const rawOcr = normalizeOcrRawFrames(pipelineResult.rawOcr);
+    const subtitles = normalizeOcrSubtitles(pipelineResult.subtitles);
+    if (pipelineResult.subtitles.length > 0 && subtitles.length === 0) {
+      throw new Error('Failed to parse OCR subtitle timing data');
+    }
+    if (subtitles.length !== pipelineResult.subtitles.length) {
+      videoOcrStore.addLog(
+        'warning',
+        `Dropped ${pipelineResult.subtitles.length - subtitles.length} subtitle(s) with invalid timing`,
+        file.id,
+      );
+    }
+
+    videoOcrStore.addLog('info', `Extracted ${pipelineResult.frameCount} frames`, file.id);
+    videoOcrStore.addLog('info', `OCR processed ${rawOcr.length} frames with text`, file.id);
+    logPipelineTimings(file.id, pipelineResult.timings);
+
+    let finalSubtitles = subtitles;
+    if (config.aiCleanupEnabled) {
+      finalSubtitles = await runAiCleanup(file.id, subtitles, config);
+    }
+
+    return { rawOcr, finalSubtitles };
   }
 
   async function processFileOcr(

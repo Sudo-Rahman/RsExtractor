@@ -353,7 +353,9 @@ export const videoOcrStore = {
   // -------------------------------------------------------------------------
   updateProgress(fileId: string, progress: OcrProgress) {
     videoFiles = videoFiles.map(f =>
-      f.id === fileId ? { ...f, progress } : f
+      f.id === fileId
+        ? mergeFileProgress(f, progress)
+        : f
     );
   },
 
@@ -568,4 +570,109 @@ export const videoOcrStore = {
 
 function isProcessingStatus(status: OcrFileStatus): boolean {
   return ['extracting_frames', 'ocr_processing', 'generating_subs'].includes(status);
+}
+
+function getStatusForProgressPhase(phase: OcrPhase): OcrFileStatus {
+  switch (phase) {
+    case 'extracting':
+      return 'extracting_frames';
+    case 'ocr':
+      return 'ocr_processing';
+    case 'generating':
+      return 'generating_subs';
+    case 'transcoding':
+      return 'transcoding';
+  }
+}
+
+const OCR_PHASE_ORDER: Record<OcrPhase, number> = {
+  transcoding: 0,
+  extracting: 1,
+  ocr: 2,
+  generating: 3,
+};
+
+const OCR_PHASE_PROGRESS_RANGES: Record<Exclude<OcrPhase, 'transcoding'>, { start: number; end: number }> = {
+  extracting: { start: 0, end: 25 },
+  ocr: { start: 25, end: 95 },
+  generating: { start: 95, end: 100 },
+};
+
+function clampPercentage(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function getPhaseOrder(phase: OcrPhase): number {
+  return OCR_PHASE_ORDER[phase] ?? 0;
+}
+
+function getOverallPercentage(progress: OcrProgress): number {
+  if (typeof progress.overallPercentage === 'number') {
+    return clampPercentage(progress.overallPercentage);
+  }
+
+  if (progress.phase === 'transcoding') {
+    return clampPercentage(progress.percentage);
+  }
+
+  const range = OCR_PHASE_PROGRESS_RANGES[progress.phase];
+  const phasePercentage = clampPercentage(progress.percentage);
+  return clampPercentage(range.start + ((range.end - range.start) * phasePercentage) / 100);
+}
+
+function mergeProgress(previous: OcrProgress | undefined, incoming: OcrProgress): OcrProgress {
+  const normalizedIncoming: OcrProgress = {
+    ...incoming,
+    current: Math.max(0, Math.round(incoming.current)),
+    total: Math.max(0, Math.round(incoming.total)),
+    percentage: clampPercentage(incoming.percentage),
+  };
+
+  if (!previous) {
+    return {
+      ...normalizedIncoming,
+      overallPercentage: getOverallPercentage(normalizedIncoming),
+    };
+  }
+
+  const previousOrder = getPhaseOrder(previous.phase);
+  const incomingOrder = getPhaseOrder(normalizedIncoming.phase);
+
+  if (incomingOrder < previousOrder) {
+    return previous;
+  }
+
+  if (incomingOrder > previousOrder && previous.percentage < 100) {
+    return previous;
+  }
+
+  const merged =
+    incomingOrder === previousOrder
+      ? {
+          ...normalizedIncoming,
+          current: Math.max(previous.current, normalizedIncoming.current),
+          total: normalizedIncoming.total > 0 ? normalizedIncoming.total : previous.total,
+          percentage: Math.max(previous.percentage, normalizedIncoming.percentage),
+          message: normalizedIncoming.message ?? previous.message,
+        }
+      : normalizedIncoming;
+
+  return {
+    ...merged,
+    overallPercentage: getOverallPercentage(merged),
+  };
+}
+
+function mergeFileProgress(file: OcrVideoFile, incomingProgress: OcrProgress): OcrVideoFile {
+  const progress = mergeProgress(file.progress, incomingProgress);
+
+  return {
+    ...file,
+    status: getStatusForProgressPhase(progress.phase),
+    progress,
+  };
 }

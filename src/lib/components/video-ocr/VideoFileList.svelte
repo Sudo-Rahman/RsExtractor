@@ -63,7 +63,7 @@
     if (file.status === 'transcoding' && file.transcodingProgress !== undefined) {
       return file.transcodingProgress;
     }
-    return file.progress?.percentage ?? 0;
+    return file.progress?.overallPercentage ?? file.progress?.percentage ?? 0;
   }
 </script>
 

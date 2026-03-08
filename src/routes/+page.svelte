@@ -180,7 +180,7 @@
       } else if (file.status === 'transcoding') {
         doneUnits += clampPercentage(file.transcodingProgress ?? 0) / 100;
       } else if (file.status === 'extracting_frames' || file.status === 'ocr_processing' || file.status === 'generating_subs') {
-        doneUnits += clampPercentage(file.progress?.percentage ?? 0) / 100;
+        doneUnits += clampPercentage(file.progress?.overallPercentage ?? file.progress?.percentage ?? 0) / 100;
       } else if (!videoOcrStore.isProcessing) {
         doneUnits += 1;
         settledCount += 1;

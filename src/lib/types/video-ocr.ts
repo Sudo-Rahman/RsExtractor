@@ -88,6 +88,20 @@ export interface OcrRawFrame {
   confidence: number;
 }
 
+export interface OcrPipelineTimings {
+  extractMs: number;
+  ocrMs: number;
+  subtitleMs: number;
+  totalMs: number;
+}
+
+export interface OcrPipelineResult {
+  rawOcr: OcrRawFrame[];
+  subtitles: OcrSubtitle[];
+  frameCount: number;
+  timings: OcrPipelineTimings;
+}
+
 export type OcrRetryMode =
   | 'full_pipeline'
   | 'cleanup_only'
@@ -114,6 +128,7 @@ export interface OcrProgress {
   current: number;     // Current step (e.g., frame 50)
   total: number;       // Total steps (e.g., 1000 frames)
   percentage: number;  // 0-100
+  overallPercentage?: number; // 0-100, monotonic across OCR phases
   message?: string;    // Optional status message
 }
 
@@ -139,7 +154,7 @@ export interface OcrConfig {
   language: OcrLanguage;          // OCR language
   useGpu: boolean;                // Use GPU acceleration
   confidenceThreshold: number;    // Min confidence to keep (0-1)
-  threadCount: number;            // Number of threads for OCR processing
+  threadCount: number;            // Requested OCR parallelism level
 
   // Subtitle cleanup / stabilization
   mergeSimilar: boolean;          // Merge similar consecutive subtitles (recommended)
@@ -162,7 +177,7 @@ export const OCR_OUTPUT_FORMATS: { value: OcrOutputFormat; label: string }[] = [
   { value: 'txt', label: 'Plain Text (.txt)' },
 ];
 
-// Default thread count: 2/3 of available cores (calculated at runtime)
+// Default OCR parallelism request: 2/3 of available cores (calculated at runtime)
 export const DEFAULT_OCR_CONFIG: OcrConfig = {
   frameRate: 10,
   language: 'multi',
@@ -282,6 +297,7 @@ export interface OcrProgressEvent {
   phase: OcrPhase;
   current: number;
   total: number;
+  overallPercentage?: number;
   message?: string;
   transcodingCodec?: string;
 }

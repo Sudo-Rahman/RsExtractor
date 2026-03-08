@@ -28,6 +28,8 @@ export { analyzeOcrSubtitles, formatOcrSubtitleAnalysis } from "./utils/ocr-subt
 export type { OcrSubtitleAnalysis } from "./utils/ocr-subtitle-analysis";
 export { formatTransferRate } from "./utils/format";
 export {
+  normalizeOcrRawFrame,
+  normalizeOcrRawFrames,
   normalizeOcrSubtitle,
   toRustOcrFrame,
   toRustOcrFrames,

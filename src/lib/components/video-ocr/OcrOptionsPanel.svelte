@@ -192,10 +192,10 @@
     </p>
   </div>
 
-  <!-- Parallel Workers -->
+  <!-- Requested OCR Parallelism -->
   <div class="space-y-2">
     <div class="flex justify-between">
-      <Label>Parallel Workers</Label>
+      <Label>Requested OCR Parallelism</Label>
       <span class="text-sm text-muted-foreground">{config.threadCount} / {maxThreads}</span>
     </div>
     <Slider
@@ -207,7 +207,7 @@
       step={1}
     />
     <p class="text-xs text-muted-foreground">
-      More workers = faster, but uses more memory
+      Higher values request more concurrent OCR work. The app chooses the effective worker and thread layout automatically.
     </p>
   </div>
 

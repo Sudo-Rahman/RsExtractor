@@ -144,6 +144,33 @@ export function toRustOcrFrame(frame: OcrRawFrameLike, fallbackIndex: number): R
   };
 }
 
+export function normalizeOcrRawFrame(raw: OcrRawFrameLike, fallbackIndex: number): OcrRawFrame {
+  const frameIndex = toFiniteFrameIndex(raw.frameIndex ?? raw.frame_index) ?? fallbackIndex;
+  const timeMs = toFiniteMilliseconds(raw.timeMs ?? raw.time_ms) ?? 0;
+  const text = typeof raw.text === 'string' ? raw.text : String(raw.text ?? '');
+
+  return {
+    frameIndex,
+    timeMs,
+    text,
+    confidence: toFiniteConfidence(raw.confidence),
+  };
+}
+
+export function normalizeOcrRawFrames(rawItems: Array<OcrRawFrame | OcrRawFrameLike | unknown>): OcrRawFrame[] {
+  const normalized: OcrRawFrame[] = [];
+
+  for (let index = 0; index < rawItems.length; index += 1) {
+    const raw = rawItems[index];
+    if (!raw || typeof raw !== 'object') {
+      continue;
+    }
+    normalized.push(normalizeOcrRawFrame(raw as OcrRawFrameLike, index));
+  }
+
+  return normalized;
+}
+
 export function toRustOcrFrames(frames: Array<OcrRawFrame | OcrRawFrameLike | unknown>): RustOcrRawFrame[] {
   const normalized: RustOcrRawFrame[] = [];
 

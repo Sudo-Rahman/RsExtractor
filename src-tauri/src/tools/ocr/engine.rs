@@ -43,12 +43,36 @@ fn get_charset_for_language(language: &str) -> &'static str {
     }
 }
 
-/// Create an OCR engine for the given language with specified options
-/// Thread count for MNN is fixed to num_cpus/2 for optimal performance
+pub(super) fn resolve_ocr_worker_count(requested_workers: u32) -> usize {
+    let available_workers = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or_else(|_| num_cpus::get().max(1));
+    let physical_cores = num_cpus::get_physical().max(1);
+    let worker_cap = if physical_cores >= 4 {
+        (physical_cores / 2).max(1)
+    } else {
+        physical_cores
+    };
+
+    (requested_workers.max(1) as usize).clamp(1, worker_cap.min(available_workers).max(1))
+}
+
+pub(super) fn resolve_ocr_engine_threads(worker_count: usize) -> i32 {
+    let physical_cores = num_cpus::get_physical();
+    let fallback_cores = num_cpus::get();
+    let available_cores = physical_cores.max(fallback_cores).max(1);
+    let minimum_threads = if available_cores >= 4 { 2 } else { 1 };
+    let derived_threads = available_cores / worker_count.max(1);
+
+    derived_threads.clamp(minimum_threads, 4) as i32
+}
+
+/// Create an OCR engine for the given language with specified options.
 pub(super) fn create_ocr_engine(
     models_dir: &Path,
     language: &str,
     use_gpu: bool,
+    engine_threads: i32,
 ) -> Result<OcrEngine, String> {
     // Build model paths
     let det_path = models_dir.join(OCR_DET_MODEL);
@@ -78,28 +102,25 @@ pub(super) fn create_ocr_engine(
         ));
     }
 
-    // Fixed thread count for MNN: num_cpus / 2 (optimal for inference)
-    let mnn_threads = std::cmp::max(1, num_cpus::get() as i32);
-
     // Create OCR engine config based on GPU option
     let config = if use_gpu {
         #[cfg(target_os = "macos")]
         {
             OcrEngineConfig::new()
                 .with_backend(Backend::Metal)
-                .with_threads(mnn_threads)
+                .with_threads(engine_threads)
         }
         #[cfg(not(target_os = "macos"))]
         {
             OcrEngineConfig::new()
                 .with_backend(Backend::Vulkan)
-                .with_threads(mnn_threads)
+                .with_threads(engine_threads)
         }
     } else {
         // CPU-only mode: force CPU backend to avoid platform auto-selection issues.
         OcrEngineConfig::new()
             .with_backend(Backend::CPU)
-            .with_threads(mnn_threads)
+            .with_threads(engine_threads)
     };
 
     // Create the engine
@@ -137,12 +158,21 @@ pub(super) fn get_ocr_models_dir(app: &tauri::AppHandle) -> Result<PathBuf, Stri
 
 #[cfg(test)]
 mod tests {
-    use super::{create_ocr_engine, get_charset_for_language, get_rec_model_for_language};
+    use super::{
+        create_ocr_engine, get_charset_for_language, get_rec_model_for_language,
+        resolve_ocr_engine_threads, resolve_ocr_worker_count,
+    };
 
     #[test]
     fn language_model_mapping_returns_expected_model_file() {
-        assert_eq!(get_rec_model_for_language("korean"), "korean_PP-OCRv5_mobile_rec_infer.mnn");
-        assert_eq!(get_rec_model_for_language("unknown"), "PP-OCRv5_mobile_rec.mnn");
+        assert_eq!(
+            get_rec_model_for_language("korean"),
+            "korean_PP-OCRv5_mobile_rec_infer.mnn"
+        );
+        assert_eq!(
+            get_rec_model_for_language("unknown"),
+            "PP-OCRv5_mobile_rec.mnn"
+        );
     }
 
     #[test]
@@ -154,10 +184,35 @@ mod tests {
     #[test]
     fn create_ocr_engine_fails_when_required_models_are_missing() {
         let models_dir = tempfile::tempdir().expect("failed to create tempdir");
-        let error = match create_ocr_engine(models_dir.path(), "multi", false) {
+        let error = match create_ocr_engine(models_dir.path(), "multi", false, 1) {
             Ok(_) => panic!("missing detection model should fail"),
             Err(error) => error,
         };
         assert!(error.contains("Detection model not found"));
+    }
+
+    #[test]
+    fn resolve_ocr_worker_count_stays_in_valid_range() {
+        let workers = resolve_ocr_worker_count(0);
+        assert!(workers >= 1);
+        assert!(
+            workers
+                <= std::thread::available_parallelism()
+                    .map(|value| value.get())
+                    .unwrap()
+        );
+    }
+
+    #[test]
+    fn resolve_ocr_engine_threads_returns_at_least_one() {
+        assert!(resolve_ocr_engine_threads(1) >= 1);
+        assert!(resolve_ocr_engine_threads(64) >= 1);
+    }
+
+    #[test]
+    fn resolve_ocr_engine_threads_prefers_two_threads_on_multicore_hosts() {
+        if num_cpus::get_physical().max(num_cpus::get()) >= 4 {
+            assert!(resolve_ocr_engine_threads(64) >= 2);
+        }
     }
 }

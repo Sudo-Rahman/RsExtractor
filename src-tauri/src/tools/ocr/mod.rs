@@ -1,10 +1,10 @@
 pub(crate) mod cancel;
 mod engine;
 pub(crate) mod export;
-pub(crate) mod frames;
 pub(crate) mod models;
-pub(crate) mod perform;
+pub(crate) mod pipeline;
 pub(crate) mod preview;
+mod progress;
 mod state;
 pub(crate) mod subtitles;
 
@@ -32,6 +32,24 @@ pub(crate) struct OcrFrameResult {
     pub(crate) time_ms: u64,
     pub(crate) text: String,
     pub(crate) confidence: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OcrPipelineTimings {
+    pub(crate) extract_ms: u64,
+    pub(crate) ocr_ms: u64,
+    pub(crate) subtitle_ms: u64,
+    pub(crate) total_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OcrPipelineResult {
+    pub(crate) raw_ocr: Vec<OcrFrameResult>,
+    pub(crate) subtitles: Vec<OcrSubtitleEntry>,
+    pub(crate) frame_count: u32,
+    pub(crate) timings: OcrPipelineTimings,
 }
 
 /// OCR subtitle entry
