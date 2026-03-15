@@ -40,7 +40,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust build artifacts
-        if: runner.os != 'Windows'
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
@@ -140,11 +139,15 @@ jobs:
             "link-arg=/MANIFESTINPUT:$manifestPath"
           ) -join [char]31
 
-          function Show-WindowsCrashDiagnostics {
+          function Get-LatestLibTestExe {
             $depsDir = Join-Path (Get-Location) "target\debug\deps"
-            $libTestExe = Get-ChildItem -Path $depsDir -Filter "mediaflow_lib-*.exe" |
+            Get-ChildItem -Path $depsDir -Filter "mediaflow_lib-*.exe" |
               Sort-Object LastWriteTime -Descending |
               Select-Object -First 1
+          }
+
+          function Show-WindowsCrashDiagnostics {
+            $libTestExe = Get-LatestLibTestExe
 
             Write-Host "::group::Windows test crash diagnostics"
             if ($libTestExe) {
@@ -163,16 +166,21 @@ jobs:
             Write-Host "::endgroup::"
           }
 
-          function Invoke-CargoLibTest {
+          function Invoke-LibHarness {
             param([string[]]$Args)
 
-            & cargo test --lib @Args
+            $libTestExe = Get-LatestLibTestExe
+            if (-not $libTestExe) {
+              throw "Could not locate compiled mediaflow_lib test executable"
+            }
+
+            & $libTestExe.FullName @Args
             if ($LASTEXITCODE -eq 0) {
               return
             }
 
             Show-WindowsCrashDiagnostics
-            throw "cargo test --lib failed with exit code $LASTEXITCODE"
+            throw "Windows lib test harness failed with exit code $LASTEXITCODE"
           }
 
           # Avoid the Tauri bin test target on Windows: it collides with the embedded app manifest.
@@ -203,17 +211,15 @@ jobs:
             throw "vulkan-1.dll not found on PATH after setup"
           }
 
-          Invoke-CargoLibTest
-          Invoke-CargoLibTest "btbn_latest_page_contains_download_url_for_supported_variant", "--", "--ignored"
-          Invoke-CargoLibTest "evermeet_release_endpoints_are_reachable", "--", "--ignored"
+          Invoke-LibHarness
+          Invoke-LibHarness "--ignored"
 
       - name: Run Rust tests
         if: runner.os != 'Windows'
         working-directory: src-tauri
         run: |
           cargo test
-          cargo test btbn_latest_page_contains_download_url_for_supported_variant -- --ignored
-          cargo test evermeet_release_endpoints_are_reachable -- --ignored
+          cargo test -- --ignored
 
       - name: Build Tauri app
         run: pnpm tauri build
