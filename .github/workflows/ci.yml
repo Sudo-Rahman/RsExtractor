@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - fix-windows-ci-test-manifest
 
 permissions:
   contents: read
@@ -15,37 +16,36 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-          - os: ubuntu-22.04
+          - os: ubuntu-latest
           - os: windows-latest
 
     runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 10.32.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 25.8.1
           cache: pnpm
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust build artifacts
-        if: runner.os != 'Windows'
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
 
       - name: Install Linux dependencies
-        if: matrix.os == 'ubuntu-22.04'
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -69,6 +69,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: choco install ffmpeg -y
+
+      - name: Install Visual C++ Runtime (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install vcredist140 -y
 
       - name: Setup Vulkan SDK (Windows)
         if: runner.os == 'Windows'
@@ -99,26 +104,122 @@ jobs:
           ffmpeg -version
           ffprobe -version
 
-      - name: Prepare Rust test runtime (Windows)
+      - name: Run Rust tests (Windows)
         if: runner.os == 'Windows'
         working-directory: src-tauri
         shell: pwsh
         run: |
-          cargo test --no-run
+          $ErrorActionPreference = "Stop"
+          $targetDir = Join-Path (Get-Location) "target"
+          New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+          $manifestPath = Join-Path $targetDir "ci.common-controls.manifest"
+          @"
+          <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+            <dependency>
+              <dependentAssembly>
+                <assemblyIdentity
+                  type="win32"
+                  name="Microsoft.Windows.Common-Controls"
+                  version="6.0.0.0"
+                  processorArchitecture="*"
+                  publicKeyToken="6595b64144ccf1df"
+                  language="*" />
+              </dependentAssembly>
+            </dependency>
+          </assembly>
+          "@ | Set-Content -Path $manifestPath -Encoding utf8
+
+          $env:CARGO_ENCODED_RUSTFLAGS = @(
+            "-C",
+            "target-feature=+crt-static",
+            "-C",
+            "link-arg=/MANIFEST:EMBED",
+            "-C",
+            "link-arg=/MANIFESTINPUT:$manifestPath"
+          ) -join [char]31
+
+          function Get-LatestLibTestExe {
+            $depsDir = Join-Path (Get-Location) "target\debug\deps"
+            Get-ChildItem -Path $depsDir -Filter "mediaflow_lib-*.exe" |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1
+          }
+
+          function Show-WindowsCrashDiagnostics {
+            $libTestExe = Get-LatestLibTestExe
+
+            Write-Host "::group::Windows test crash diagnostics"
+            if ($libTestExe) {
+              Write-Host "lib test executable: $($libTestExe.FullName)"
+
+              $cdb = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Debuggers\x64\cdb.exe"
+              if (Test-Path $cdb) {
+                & $cdb -c "g;qd" $libTestExe.FullName
+              }
+
+              $dumpbin = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
+              if ($dumpbin) {
+                & $dumpbin.Source /dependents $libTestExe.FullName
+              }
+            }
+            Write-Host "::endgroup::"
+          }
+
+          function Invoke-LibHarness {
+            param([string[]]$Args)
+
+            $libTestExe = Get-LatestLibTestExe
+            if (-not $libTestExe) {
+              throw "Could not locate compiled mediaflow_lib test executable"
+            }
+
+            & $libTestExe.FullName @Args
+            if ($LASTEXITCODE -eq 0) {
+              return
+            }
+
+            Show-WindowsCrashDiagnostics
+            throw "Windows lib test harness failed with exit code $LASTEXITCODE"
+          }
+
+          # Avoid the Tauri bin test target on Windows: it collides with the embedded app manifest.
+          cargo test --no-run --lib
+
           $depsDir = Join-Path (Get-Location) "target\debug\deps"
           $vulkanDll = Join-Path $env:VULKAN_SDK "Bin\vulkan-1.dll"
+
           if (!(Test-Path $vulkanDll)) {
-            throw "Missing Vulkan runtime DLL: $vulkanDll"
+            throw "Missing Vulkan loader DLL: $vulkanDll"
           }
-          Copy-Item $vulkanDll (Join-Path $depsDir "vulkan-1.dll") -Force
-          Write-Host "Copied vulkan-1.dll to $depsDir"
+
+          $vulkanDllInDeps = Join-Path $depsDir "vulkan-1.dll"
+          Copy-Item $vulkanDll $vulkanDllInDeps -Force
+          Write-Host "Copied Vulkan loader to $vulkanDllInDeps"
+
+          $pathEntries = @(
+            $depsDir,
+            (Split-Path -Parent $vulkanDll)
+          ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+
+          $env:PATH = (($pathEntries -join ';') + ';' + $env:PATH)
+
+          where.exe ffmpeg
+          where.exe ffprobe
+          where.exe vulkan-1.dll
+          if ($LASTEXITCODE -ne 0) {
+            throw "vulkan-1.dll not found on PATH after setup"
+          }
+
+          Invoke-LibHarness
+          Invoke-LibHarness "--ignored"
 
       - name: Run Rust tests
+        if: runner.os != 'Windows'
         working-directory: src-tauri
         run: |
           cargo test
-          cargo test btbn_latest_page_contains_download_url_for_supported_variant -- --ignored
-          cargo test evermeet_release_endpoints_are_reachable -- --ignored
+          cargo test -- --ignored
 
       - name: Build Tauri app
         run: pnpm tauri build
