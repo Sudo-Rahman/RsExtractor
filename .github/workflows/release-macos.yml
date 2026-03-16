@@ -25,6 +25,7 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
       APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
     steps:
       - name: Checkout
@@ -139,15 +140,25 @@ jobs:
           DMG_PATH=$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -name '*.dmg' -print -quit)
           UPDATER_TAR_PATH=$(find src-tauri/target/universal-apple-darwin/release/bundle/macos -name '*.app.tar.gz' -print -quit)
           UPDATER_SIG_PATH=$(find src-tauri/target/universal-apple-darwin/release/bundle/macos -name '*.app.tar.gz.sig' -print -quit)
+          APP_PATH=$(find src-tauri/target/universal-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)
 
           test -n "$DMG_PATH"
           test -n "$UPDATER_TAR_PATH"
           test -n "$UPDATER_SIG_PATH"
+          test -n "$APP_PATH"
 
+          echo "APP_PATH=${APP_PATH}" >> "$GITHUB_ENV"
           echo "DMG_PATH=${DMG_PATH}" >> "$GITHUB_ENV"
           echo "UPDATER_TAR_PATH=${UPDATER_TAR_PATH}" >> "$GITHUB_ENV"
           echo "UPDATER_SIG_PATH=${UPDATER_SIG_PATH}" >> "$GITHUB_ENV"
           echo "UPDATER_TAR_NAME=$(basename "$UPDATER_TAR_PATH")" >> "$GITHUB_ENV"
+
+      - name: Verify code signing and notarization
+        run: |
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+          xcrun stapler validate "$DMG_PATH"
+          spctl -a -vv --type exec "$APP_PATH"
 
       - name: Ensure GitHub release exists
         if: github.ref_type == 'tag'
