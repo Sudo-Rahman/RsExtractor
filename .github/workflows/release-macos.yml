@@ -26,6 +26,7 @@ jobs:
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
       APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
 
     steps:
       - name: Checkout
@@ -62,6 +63,7 @@ jobs:
 
       - name: Validate version metadata
         run: |
+          APP_VERSION="$(node -p 'require(\"./package.json\").version')"
           node <<'NODE'
           const fs = require('node:fs');
 
@@ -95,7 +97,7 @@ jobs:
             }
           }
           NODE
-          echo "APP_VERSION=$(node -p \"require('./package.json').version\")" >> "$GITHUB_ENV"
+          echo "APP_VERSION=${APP_VERSION}" >> "$GITHUB_ENV"
 
       - name: Prepare Apple signing
         env:
