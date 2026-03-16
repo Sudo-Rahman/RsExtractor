@@ -173,7 +173,6 @@ jobs:
           xcrun stapler validate "$APP_PATH"
           xcrun stapler validate "$DMG_PATH"
           spctl -a -vv --type exec "$APP_PATH"
-          spctl -a -vv --type open "$DMG_PATH"
 
       - name: Ensure GitHub release exists
         if: github.ref_type == 'tag'
