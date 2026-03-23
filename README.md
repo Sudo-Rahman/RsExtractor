@@ -60,9 +60,13 @@ It combines FFmpeg-powered media processing with AI-assisted tools in one interf
 
 ## Requirements
 
-- FFmpeg and FFprobe available on system PATH, or configured in Settings.
+- macOS app bundles include static FFmpeg and FFprobe binaries.
+- On Linux and Windows, FFmpeg and FFprobe should be available on system PATH, or configured in Settings.
 
 ### Install FFmpeg
+
+If you are using the macOS release bundle, FFmpeg and FFprobe are already included.
+The commands below are mainly for local development or if you want to override the bundled binaries.
 
 - macOS: `brew install ffmpeg`
 - Ubuntu/Debian: `sudo apt install ffmpeg`

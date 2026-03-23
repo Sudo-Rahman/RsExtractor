@@ -533,7 +533,7 @@
         logAndToast.error({
           source: 'system',
           title: 'FFmpeg not found',
-          details: 'FFmpeg is not installed or not found in PATH. Please install FFmpeg to use this application.'
+          details: 'FFmpeg is not available in the app bundle or on PATH. Please install FFmpeg or set its path in Settings.'
         });
       }
     } catch (e) {
@@ -706,7 +706,7 @@
           <AlertCircle class="size-4" />
           <AlertTitle>FFmpeg not available</AlertTitle>
           <AlertDescription>
-            Install FFmpeg to use this application.
+            Install FFmpeg or set its path in Settings to use this application.
           </AlertDescription>
         </Alert>
       </div>

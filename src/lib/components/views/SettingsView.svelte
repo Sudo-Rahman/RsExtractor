@@ -225,7 +225,7 @@
           <Card.Title>FFmpeg</Card.Title>
         </div>
         <Card.Description>
-          Configure FFmpeg and FFprobe paths for multimedia processing
+          Configure FFmpeg and FFprobe paths, or leave them blank to use the bundled binaries on macOS.
         </Card.Description>
       </Card.Header>
       <Card.Content class="space-y-4">
@@ -257,7 +257,7 @@
           <div class="flex gap-2">
             <Input
               id="ffmpeg-path"
-              placeholder="Leave empty to use system PATH"
+              placeholder="Leave empty to use bundled binaries or system PATH"
               value={settingsStore.settings.ffmpegPath}
               oninput={(e) => void handleFFmpegPathInput(e.currentTarget.value)}
               class="flex-1"
@@ -267,7 +267,7 @@
             </Button>
           </div>
           <p class="text-xs text-muted-foreground">
-            If empty, the application will use FFmpeg from system PATH
+            On macOS, MediaFlow will use the bundled FFmpeg first and then fall back to system PATH.
           </p>
         </div>
 
@@ -277,7 +277,7 @@
           <div class="flex gap-2">
             <Input
               id="ffprobe-path"
-              placeholder="Leave empty to use system PATH"
+              placeholder="Leave empty to use bundled binaries or system PATH"
               value={settingsStore.settings.ffprobePath}
               oninput={(e) => void handleFFprobePathInput(e.currentTarget.value)}
               class="flex-1"
@@ -286,6 +286,9 @@
               <FolderOpen class="size-4" />
             </Button>
           </div>
+          <p class="text-xs text-muted-foreground">
+            On macOS, MediaFlow will use the bundled FFprobe first and then fall back to system PATH.
+          </p>
           {#if ffmpegError}
             <p class="text-xs text-destructive">{ffmpegError}</p>
           {/if}
