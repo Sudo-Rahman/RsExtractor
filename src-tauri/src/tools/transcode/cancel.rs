@@ -1,0 +1,160 @@
+use crate::shared::process::terminate_process;
+
+fn remove_output_file(path: &str) {
+    let _ = std::fs::remove_file(path);
+}
+
+/// Cancel a specific transcode by input path.
+#[tauri::command]
+pub(crate) async fn cancel_transcode_file(input_path: String) -> Result<(), String> {
+    let pid = {
+        match super::state::TRANSCODE_PROCESS_IDS.lock() {
+            Ok(mut guard) => guard.remove(&input_path),
+            Err(_) => return Err("Failed to acquire process lock".to_string()),
+        }
+    };
+
+    let output_path = {
+        match super::state::TRANSCODE_OUTPUT_PATHS.lock() {
+            Ok(mut guard) => guard.remove(&input_path),
+            Err(_) => None,
+        }
+    };
+
+    if let Some(pid) = pid {
+        terminate_process(pid);
+    }
+
+    if let Some(path) = output_path {
+        remove_output_file(&path);
+    }
+
+    Ok(())
+}
+
+/// Cancel all ongoing transcodes.
+#[tauri::command]
+pub(crate) async fn cancel_transcode() -> Result<(), String> {
+    let pids: Vec<u32> = {
+        match super::state::TRANSCODE_PROCESS_IDS.lock() {
+            Ok(mut guard) => {
+                let pids: Vec<u32> = guard.values().copied().collect();
+                guard.clear();
+                pids
+            }
+            Err(_) => return Err("Failed to acquire process lock".to_string()),
+        }
+    };
+
+    let output_paths: Vec<String> = {
+        match super::state::TRANSCODE_OUTPUT_PATHS.lock() {
+            Ok(mut guard) => {
+                let paths: Vec<String> = guard.values().cloned().collect();
+                guard.clear();
+                paths
+            }
+            Err(_) => Vec::new(),
+        }
+    };
+
+    for pid in pids {
+        terminate_process(pid);
+    }
+
+    for path in output_paths {
+        remove_output_file(&path);
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serial_test::serial;
+
+    use super::{cancel_transcode, cancel_transcode_file};
+
+    #[tokio::test]
+    #[serial]
+    async fn cancel_transcode_cleans_state_and_output_path() {
+        let temp = tempfile::tempdir().expect("failed to create tempdir");
+        let output = temp.path().join("transcode-out.mp4");
+        std::fs::write(&output, b"partial").expect("failed to create output file");
+        let input = "/tmp/test-video-transcode-file.mkv".to_string();
+
+        {
+            let mut pids = super::super::state::TRANSCODE_PROCESS_IDS
+                .lock()
+                .expect("failed to lock pids");
+            pids.insert(input.clone(), 0);
+        }
+        {
+            let mut outputs = super::super::state::TRANSCODE_OUTPUT_PATHS
+                .lock()
+                .expect("failed to lock outputs");
+            outputs.insert(input.clone(), output.to_string_lossy().to_string());
+        }
+
+        cancel_transcode_file(input.clone())
+            .await
+            .expect("cancel transcode should succeed");
+
+        assert!(!output.exists());
+        assert!(
+            !super::super::state::TRANSCODE_PROCESS_IDS
+                .lock()
+                .expect("failed to lock pids")
+                .contains_key(&input)
+        );
+        assert!(
+            !super::super::state::TRANSCODE_OUTPUT_PATHS
+                .lock()
+                .expect("failed to lock outputs")
+                .contains_key(&input)
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn cancel_transcode_file_cleans_all_tracked_transcodes() {
+        let temp = tempfile::tempdir().expect("failed to create tempdir");
+        let out_a = temp.path().join("a.mp4");
+        let out_b = temp.path().join("b.mp4");
+        std::fs::write(&out_a, b"partial").expect("failed to create output file a");
+        std::fs::write(&out_b, b"partial").expect("failed to create output file b");
+
+        {
+            let mut pids = super::super::state::TRANSCODE_PROCESS_IDS
+                .lock()
+                .expect("failed to lock pids");
+            pids.insert("video-a".to_string(), 0);
+            pids.insert("video-b".to_string(), 0);
+        }
+        {
+            let mut outputs = super::super::state::TRANSCODE_OUTPUT_PATHS
+                .lock()
+                .expect("failed to lock outputs");
+            outputs.insert("video-a".to_string(), out_a.to_string_lossy().to_string());
+            outputs.insert("video-b".to_string(), out_b.to_string_lossy().to_string());
+        }
+
+        cancel_transcode()
+            .await
+            .expect("cancel all should succeed");
+
+        assert!(!out_a.exists());
+        assert!(!out_b.exists());
+        assert!(
+            super::super::state::TRANSCODE_PROCESS_IDS
+                .lock()
+                .expect("failed to lock pids")
+                .is_empty()
+        );
+        assert!(
+            super::super::state::TRANSCODE_OUTPUT_PATHS
+                .lock()
+                .expect("failed to lock outputs")
+                .is_empty()
+        );
+    }
+}

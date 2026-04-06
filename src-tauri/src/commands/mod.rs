@@ -21,3 +21,7 @@ pub(crate) use crate::tools::tokens::count as tokens;
 pub(crate) use crate::tools::transcription::cancel as transcription_cancel;
 pub(crate) use crate::tools::transcription::transcode_opus as transcription_transcode;
 pub(crate) use crate::tools::transcription::waveform as transcription_waveform;
+pub(crate) use crate::tools::transcode::analysis as transcode_analysis;
+pub(crate) use crate::tools::transcode::cancel as transcode_cancel;
+pub(crate) use crate::tools::transcode::capabilities as transcode_capabilities;
+pub(crate) use crate::tools::transcode::transcode;

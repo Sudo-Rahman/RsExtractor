@@ -1,7 +1,7 @@
 <script lang="ts">
   import * as Sidebar from '$lib/components/ui/sidebar';
   import { Badge } from '$lib/components/ui/badge';
-  import { FileOutput, GitMerge, Info, Settings, Languages, PenLine, AudioLines, ScanText } from '@lucide/svelte';
+  import { FileOutput, FileVideo, GitMerge, Info, Settings, Languages, PenLine, AudioLines, ScanText } from '@lucide/svelte';
   import type { ComponentProps } from 'svelte';
   import {OS} from "$lib/utils";
 
@@ -22,6 +22,11 @@
       id: 'merge',
       title: 'Merge',
       icon: GitMerge,
+    },
+    {
+      id: 'transcode',
+      title: 'Transcode',
+      icon: FileVideo,
     },
     {
       id: 'audio-to-subs',

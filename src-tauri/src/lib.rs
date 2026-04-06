@@ -38,8 +38,8 @@ pub fn run() {
             commands::sleep_inhibit::release_sleep_inhibit,
             // Audio transcription commands
             commands::transcription_transcode::transcode_to_opus,
-            commands::transcription_cancel::cancel_transcode,
-            commands::transcription_cancel::cancel_transcode_file,
+            commands::transcription_cancel::cancel_audio_transcode,
+            commands::transcription_cancel::cancel_audio_transcode_file,
             commands::data::save_rsext_data,
             commands::data::load_rsext_data,
             commands::data::delete_rsext_data,
@@ -53,7 +53,13 @@ pub fn run() {
             commands::ocr_subtitles::generate_subtitles_from_ocr,
             commands::ocr_export::export_ocr_subtitles,
             commands::ocr_cancel::cancel_ocr_operation,
-            commands::ocr_models::check_ocr_models
+            commands::ocr_models::check_ocr_models,
+            // General transcode commands
+            commands::transcode_capabilities::get_transcode_capabilities,
+            commands::transcode::transcode_media,
+            commands::transcode_cancel::cancel_transcode,
+            commands::transcode_cancel::cancel_transcode_file,
+            commands::transcode_analysis::extract_transcode_analysis_frames
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
