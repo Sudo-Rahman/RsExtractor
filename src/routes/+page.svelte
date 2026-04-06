@@ -792,10 +792,11 @@
         {/if}
 
         {#if transcodeHeaderState?.showModeToggle}
-          <div class="flex items-center gap-1 rounded-md border bg-muted/30 p-1">
+          <div class="inline-flex h-9 items-center gap-1 rounded-md border bg-muted/30 p-1">
             <Button
               variant={transcodeHeaderState.mode === 'ai' ? 'default' : 'ghost'}
               size="sm"
+              class="h-7 rounded-sm px-3"
               onclick={() => transcodeStore.setMode('ai')}
             >
               <Wand2 class="size-4 mr-2" />
@@ -804,6 +805,7 @@
             <Button
               variant={transcodeHeaderState.mode === 'advanced' ? 'default' : 'ghost'}
               size="sm"
+              class="h-7 rounded-sm px-3"
               onclick={() => transcodeStore.setMode('advanced')}
             >
               <Sparkles class="size-4 mr-2" />
@@ -832,6 +834,8 @@
           Export
         </Button>
       {/if}
+
+      <Separator orientation="vertical" class="h-6 ml-1 mr-1" />
 
       <!-- Logs button -->
       <Button
