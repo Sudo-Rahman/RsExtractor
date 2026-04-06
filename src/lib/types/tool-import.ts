@@ -3,6 +3,7 @@ import type { SubtitleFile } from './translation';
 export type ToolId =
   | 'extract'
   | 'merge'
+  | 'transcode'
   | 'translate'
   | 'rename'
   | 'audio-to-subs'

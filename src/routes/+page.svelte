@@ -13,7 +13,7 @@
   import * as HoverCard from '$lib/components/ui/hover-card';
   import { VersionedExportDialog } from '$lib/components/shared';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
-  import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView, AudioToSubsView, VideoOcrView } from '$lib/components/views';
+  import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView, AudioToSubsView, VideoOcrView, TranscodeView } from '$lib/components/views';
   import { TranslationExportDialog } from '$lib/components/translation';
   import { getFormattedOutput } from '$lib/services/deepgram';
   import {
@@ -26,17 +26,17 @@
     type VersionedExportRequest,
   } from '$lib/services/versioned-export';
   import { LogsSheet } from '$lib/components/logs';
-  import { AlertCircle, ArrowLeft, ScrollText, Home, LayoutGrid, Table, Download, AudioLines, ScanText, Languages, FileOutput, GitMerge, PenLine } from '@lucide/svelte';
+  import { AlertCircle, ArrowLeft, ScrollText, Home, LayoutGrid, Table, Download, AudioLines, ScanText, Languages, FileOutput, FileVideo, GitMerge, PenLine } from '@lucide/svelte';
   import { OCR_OUTPUT_FORMATS } from '$lib/types';
   import { formatFileSize } from '$lib/utils/format';
   import { OS, formatTransferRate, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
   import { useSidebar } from "$lib/components/ui/sidebar";
   import { logStore } from '$lib/stores/logs.svelte';
-  import { audioToSubsStore, videoOcrStore, translationStore, extractionStore, mergeStore, renameStore } from '$lib/stores';
+  import { audioToSubsStore, videoOcrStore, translationStore, extractionStore, mergeStore, renameStore, transcodeStore } from '$lib/stores';
   import { logAndToast } from '$lib/utils/log-toast';
 
   // Current view state
-  let currentView = $state<'extract' | 'merge' | 'translate' | 'rename' | 'audio-to-subs' | 'video-ocr' | 'info' | 'settings'>('extract');
+  let currentView = $state<'extract' | 'merge' | 'transcode' | 'translate' | 'rename' | 'audio-to-subs' | 'video-ocr' | 'info' | 'settings'>('extract');
   let ffmpegAvailable = $state<boolean | null>(null);
   let unlistenDragDrop: (() => void) | null = null;
 
@@ -59,6 +59,7 @@
   // References to views for drag & drop forwarding
   let extractViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let mergeViewRef: { handleFileDrop: (paths: string[]) => Promise<void>; showMainView: () => void } | undefined = $state();
+  let transcodeViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let infoViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let translateViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let renameViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
@@ -74,7 +75,7 @@
   const isMacOS = OS() === 'MacOS';
 
   interface ToolProgressMetric {
-    toolId: 'audio-to-subs' | 'video-ocr' | 'translate' | 'extract' | 'merge' | 'rename';
+    toolId: 'audio-to-subs' | 'video-ocr' | 'translate' | 'extract' | 'merge' | 'rename' | 'transcode';
     label: string;
     doneUnits: number;
     totalUnits: number;
@@ -285,6 +286,28 @@
     };
   });
 
+  const transcodeMetric = $derived.by((): ToolProgressMetric => {
+    const runtime = transcodeStore.runtimeProgress;
+    const totalUnits = runtime.totalFiles;
+    const doneUnits = Math.min(
+      totalUnits,
+      Math.max(0, runtime.completedFiles) + (clampPercentage(runtime.currentFileProgress) / 100),
+    );
+    const speedText = runtime.currentSpeedBytesPerSec && runtime.currentSpeedBytesPerSec > 0
+      ? ` · ${formatTransferRate(runtime.currentSpeedBytesPerSec)}`
+      : '';
+    return {
+      toolId: 'transcode',
+      label: 'Transcode',
+      doneUnits,
+      totalUnits,
+      percentage: ratioToPercentage(doneUnits, totalUnits),
+      active: transcodeStore.isProcessing && totalUnits > 0,
+      detailText: `${Math.min(Math.round(doneUnits), totalUnits)}/${totalUnits} files${speedText}`,
+      icon: FileVideo,
+    };
+  });
+
   const renameMetric = $derived.by((): ToolProgressMetric => {
     const progress = renameStore.progress;
     const totalUnits = progress.total;
@@ -315,7 +338,7 @@
   });
 
   const activeToolMetrics = $derived.by(() => {
-    return [audioMetric, videoOcrMetric, translationMetric, extractionMetric, mergeMetric, renameMetric]
+    return [audioMetric, videoOcrMetric, translationMetric, extractionMetric, mergeMetric, transcodeMetric, renameMetric]
       .filter((metric) => metric.active);
   });
 
@@ -513,6 +536,7 @@
   const viewTitles: Record<string, string> = {
     extract: 'Track Extraction',
     merge: 'Track Merge',
+    transcode: 'Transcode',
     'audio-to-subs': 'Audio to Subs',
     'video-ocr': 'Video OCR',
     translate: 'AI Translation',
@@ -573,6 +597,8 @@
         await extractViewRef.handleFileDrop(event.payload.paths);
       } else if (currentView === 'merge' && mergeViewRef) {
         await mergeViewRef.handleFileDrop(event.payload.paths);
+      } else if (currentView === 'transcode' && transcodeViewRef) {
+        await transcodeViewRef.handleFileDrop(event.payload.paths);
       } else if (currentView === 'info' && infoViewRef) {
         await infoViewRef.handleFileDrop(event.payload.paths);
       } else if (currentView === 'translate' && translateViewRef) {
@@ -588,7 +614,7 @@
   }
 
   function handleNavigate(viewId: string) {
-    currentView = viewId as 'extract' | 'merge' | 'translate' | 'rename' | 'audio-to-subs' | 'video-ocr' | 'info' | 'settings';
+    currentView = viewId as 'extract' | 'merge' | 'transcode' | 'translate' | 'rename' | 'audio-to-subs' | 'video-ocr' | 'info' | 'settings';
     if (currentView !== 'translate') {
       translationExportDialogOpen = false;
     }
@@ -782,6 +808,11 @@
           viewMode={mergeViewMode}
           onHeaderStateChange={handleMergeHeaderStateChange}
         />
+      </div>
+
+      <!-- Transcode View -->
+      <div class="absolute inset-0" style="display: {currentView === 'transcode' ? 'block' : 'none'}">
+        <TranscodeView bind:this={transcodeViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
       </div>
       
       <!-- Audio to Subs View - persists when switching views -->

@@ -2,7 +2,7 @@ use crate::shared::process::terminate_process;
 
 /// Cancel a specific file's transcode by input path
 #[tauri::command]
-pub(crate) async fn cancel_transcode_file(input_path: String) -> Result<(), String> {
+pub(crate) async fn cancel_audio_transcode_file(input_path: String) -> Result<(), String> {
     let pid = {
         match super::TRANSCODE_PROCESS_IDS.lock() {
             Ok(mut guard) => guard.remove(&input_path),
@@ -19,7 +19,7 @@ pub(crate) async fn cancel_transcode_file(input_path: String) -> Result<(), Stri
 
 /// Cancel all ongoing transcodes
 #[tauri::command]
-pub(crate) async fn cancel_transcode() -> Result<(), String> {
+pub(crate) async fn cancel_audio_transcode() -> Result<(), String> {
     let pids: Vec<u32> = {
         match super::TRANSCODE_PROCESS_IDS.lock() {
             Ok(mut guard) => {
@@ -42,11 +42,11 @@ pub(crate) async fn cancel_transcode() -> Result<(), String> {
 mod tests {
     use serial_test::serial;
 
-    use super::{cancel_transcode, cancel_transcode_file};
+    use super::{cancel_audio_transcode, cancel_audio_transcode_file};
 
     #[tokio::test]
     #[serial]
-    async fn cancel_transcode_file_removes_single_entry() {
+    async fn cancel_audio_transcode_file_removes_single_entry() {
         let input = "/tmp/transcode-a.wav".to_string();
         {
             let mut guard = super::super::TRANSCODE_PROCESS_IDS
@@ -55,7 +55,7 @@ mod tests {
             guard.insert(input.clone(), 0);
         }
 
-        cancel_transcode_file(input.clone())
+        cancel_audio_transcode_file(input.clone())
             .await
             .expect("cancel transcode file should succeed");
 
@@ -69,7 +69,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn cancel_transcode_clears_all_entries() {
+    async fn cancel_audio_transcode_clears_all_entries() {
         {
             let mut guard = super::super::TRANSCODE_PROCESS_IDS
                 .lock()
@@ -78,7 +78,9 @@ mod tests {
             guard.insert("b".to_string(), 0);
         }
 
-        cancel_transcode().await.expect("cancel all should succeed");
+        cancel_audio_transcode()
+            .await
+            .expect("cancel all should succeed");
 
         assert!(
             super::super::TRANSCODE_PROCESS_IDS

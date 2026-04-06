@@ -9,3 +9,4 @@ export * from './video-ocr';
 export * from './rsext';
 export * from './tool-import';
 export * from './progress';
+export * from './transcode';

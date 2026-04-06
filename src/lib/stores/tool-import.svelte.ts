@@ -22,6 +22,7 @@ interface SourceRule {
 const TARGET_RULES: Record<ToolId, SourceRule[]> = {
   extract: [],
   merge: [{ sourceId: 'extraction_outputs', allowKinds: ['track_audio', 'track_subtitle', 'track_video'] }],
+  transcode: [],
   translate: [
     { sourceId: 'extraction_outputs', allowKinds: ['track_subtitle', 'subtitle'] },
     { sourceId: 'ocr_versions', allowKinds: 'any' },

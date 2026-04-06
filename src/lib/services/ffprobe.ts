@@ -8,6 +8,37 @@ import { log } from '$lib/utils/log-toast';
  */
 const DEFAULT_SCAN_CONCURRENCY = 3;
 
+function parseDerivedBitDepth(stream: FFprobeStream): number | undefined {
+  const explicit = stream.bits_per_raw_sample ? parseInt(stream.bits_per_raw_sample, 10) : undefined;
+  if (explicit && Number.isFinite(explicit) && explicit > 0) {
+    return explicit;
+  }
+
+  const formatCandidates = [stream.pix_fmt, stream.sample_fmt].filter(
+    (value): value is string => Boolean(value),
+  );
+
+  for (const candidate of formatCandidates) {
+    if (candidate.includes('p010')) {
+      return 10;
+    }
+
+    const numericMatch = candidate.match(/(\d{2})(?:le|be)?$/i) ?? candidate.match(/[a-z]+(\d{2})/i);
+    if (numericMatch) {
+      const parsed = parseInt(numericMatch[1], 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+  }
+
+  if (stream.codec_type === 'video' && stream.pix_fmt) {
+    return 8;
+  }
+
+  return undefined;
+}
+
 /**
  * Parse FFprobe output and convert to our Track format
  */
@@ -25,6 +56,8 @@ function parseStream(stream: FFprobeStream): Track | null {
     type,
     codec: stream.codec_name,
     codecLong: stream.codec_long_name,
+    profile: stream.profile,
+    level: stream.level,
     language: stream.tags?.language,
     title: stream.tags?.title,
     bitrate: stream.bit_rate ? parseInt(stream.bit_rate) : 
@@ -34,6 +67,8 @@ function parseStream(stream: FFprobeStream): Track | null {
     numberOfFrames: stream.tags?.NUMBER_OF_FRAMES ? parseInt(stream.tags.NUMBER_OF_FRAMES) : undefined,
     default: stream.disposition?.default === 1,
     forced: stream.disposition?.forced === 1,
+    bitsPerRawSample: stream.bits_per_raw_sample ? parseInt(stream.bits_per_raw_sample, 10) : undefined,
+    derivedBitDepth: parseDerivedBitDepth(stream),
   };
 
   // Video specific
@@ -47,6 +82,8 @@ function parseStream(stream: FFprobeStream): Track | null {
     track.pixelFormat = stream.pix_fmt;
     track.colorRange = stream.color_range;
     track.colorSpace = stream.color_space;
+    track.colorTransfer = stream.color_transfer;
+    track.colorPrimaries = stream.color_primaries;
     track.aspectRatio = stream.display_aspect_ratio;
   }
 
@@ -54,6 +91,8 @@ function parseStream(stream: FFprobeStream): Track | null {
   if (type === 'audio') {
     track.channels = stream.channels;
     track.sampleRate = stream.sample_rate ? parseInt(stream.sample_rate) : undefined;
+    track.sampleFormat = stream.sample_fmt;
+    track.channelLayout = stream.channel_layout;
   }
 
   return track;
@@ -175,4 +214,3 @@ export async function scanFiles(
   
   return results;
 }
-

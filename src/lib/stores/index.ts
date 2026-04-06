@@ -11,3 +11,4 @@ export { videoOcrStore } from './video-ocr.svelte';
 export { renameStore } from './rename.svelte';
 export { createRenameWorkspaceStore } from './rename.svelte';
 export { toolImportStore } from './tool-import.svelte';
+export { transcodeStore } from './transcode.svelte';

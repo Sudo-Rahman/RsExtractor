@@ -8,6 +8,8 @@ export interface Track {
   type: TrackType;
   codec: string;
   codecLong?: string;
+  profile?: string;
+  level?: number;
   language?: string;
   title?: string;
   bitrate?: number;
@@ -21,10 +23,16 @@ export interface Track {
   pixelFormat?: string;
   colorRange?: string;
   colorSpace?: string;
+  colorTransfer?: string;
+  colorPrimaries?: string;
   aspectRatio?: string;
+  bitsPerRawSample?: number;
+  derivedBitDepth?: number;
   // Audio specific
   channels?: number;
   sampleRate?: number;
+  sampleFormat?: string;
+  channelLayout?: string;
   // Subtitle specific
   forced?: boolean;
   default?: boolean;
@@ -72,15 +80,19 @@ export interface FFprobeStream {
   index: number;
   codec_name: string;
   codec_long_name?: string;
+  profile?: string;
   codec_type: string;
   width?: number;
   height?: number;
   sample_rate?: string;
+  sample_fmt?: string;
   channels?: number;
+  channel_layout?: string;
   bit_rate?: string;
   r_frame_rate?: string;
   pix_fmt?: string;
   level?: number;
+  bits_per_raw_sample?: string;
   color_range?: string;
   color_space?: string;
   color_transfer?: string;

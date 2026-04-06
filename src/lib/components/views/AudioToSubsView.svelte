@@ -969,7 +969,7 @@
   async function cancelTranscodeAndCleanup(file: AudioFile): Promise<void> {
     // Cancel FFmpeg transcoding for this specific file
     try {
-      await invoke('cancel_transcode_file', { inputPath: file.path });
+      await invoke('cancel_audio_transcode_file', { inputPath: file.path });
     } catch (error) {
       console.error('Failed to cancel transcode:', error);
     }
@@ -1009,7 +1009,7 @@
   async function handleCancelAll() {
     // Cancel all ongoing transcodes
     try {
-      await invoke('cancel_transcode');
+      await invoke('cancel_audio_transcode');
     } catch (error) {
       console.error('Failed to cancel transcodes:', error);
     }
@@ -1074,7 +1074,7 @@
     }
 
     try {
-      await invoke('cancel_transcode');
+      await invoke('cancel_audio_transcode');
     } catch (error) {
       console.error('Failed to cancel transcodes before clearing list:', error);
     }

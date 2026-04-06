@@ -7,6 +7,19 @@ const API_REQUEST_TIMEOUT = 600_000;
 
 export type LlmResponseMode = 'json' | 'text';
 
+export interface LlmTextContentPart {
+  type: 'text';
+  text: string;
+}
+
+export interface LlmImageContentPart {
+  type: 'image';
+  mimeType: string;
+  data: string;
+}
+
+export type LlmContentPart = LlmTextContentPart | LlmImageContentPart;
+
 export interface LlmUsage {
   promptTokens: number;
   completionTokens: number;
@@ -30,6 +43,7 @@ export interface LlmRequest {
   model: string;
   systemPrompt: string;
   userPrompt: string;
+  userContentParts?: LlmContentPart[];
   temperature?: number;
   responseMode?: LlmResponseMode;
   signal?: AbortSignal;
@@ -60,10 +74,96 @@ interface ProviderCallParams {
   model: string;
   systemPrompt: string;
   userPrompt: string;
+  userContentParts: LlmContentPart[];
   temperature: number;
   responseMode: LlmResponseMode;
   signal?: AbortSignal;
   logSource?: LogSource;
+}
+
+function ensureContentParts(params: ProviderCallParams): LlmContentPart[] {
+  if (params.userContentParts.length > 0) {
+    return params.userContentParts;
+  }
+
+  return [{ type: 'text', text: params.userPrompt }];
+}
+
+function buildOpenAiContent(parts: LlmContentPart[]): Array<Record<string, unknown>> {
+  return parts.map((part) => {
+    if (part.type === 'text') {
+      return {
+        type: 'text',
+        text: part.text,
+      };
+    }
+
+    return {
+      type: 'image_url',
+      image_url: {
+        url: `data:${part.mimeType};base64,${part.data}`,
+      },
+    };
+  });
+}
+
+function buildAnthropicContent(parts: LlmContentPart[]): Array<Record<string, unknown>> {
+  return parts.map((part) => {
+    if (part.type === 'text') {
+      return {
+        type: 'text',
+        text: part.text,
+      };
+    }
+
+    return {
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: part.mimeType,
+        data: part.data,
+      },
+    };
+  });
+}
+
+function buildGoogleParts(parts: LlmContentPart[]): Array<Record<string, unknown>> {
+  return parts.map((part) => {
+    if (part.type === 'text') {
+      return { text: part.text };
+    }
+
+    return {
+      inlineData: {
+        mimeType: part.mimeType,
+        data: part.data,
+      },
+    };
+  });
+}
+
+function extractAnthropicText(content: unknown): string {
+  if (!Array.isArray(content)) {
+    return '';
+  }
+
+  return content
+    .filter((part): part is { type?: string; text?: string } => Boolean(part) && typeof part === 'object')
+    .filter((part) => part.type === 'text' && typeof part.text === 'string')
+    .map((part) => part.text)
+    .join('\n');
+}
+
+function extractGoogleText(parts: unknown): string {
+  if (!Array.isArray(parts)) {
+    return '';
+  }
+
+  return parts
+    .filter((part): part is { text?: string } => Boolean(part) && typeof part === 'object')
+    .map((part) => part.text)
+    .filter((text): text is string => typeof text === 'string' && text.length > 0)
+    .join('\n');
 }
 
 function parseAPIError(
@@ -244,6 +344,7 @@ function buildAbortErrorResponse(
 
 async function callOpenAi(params: ProviderCallParams): Promise<LlmResponse> {
   const providerLabel = 'OpenAI';
+  const contentParts = ensureContentParts(params);
 
   try {
     const response = await fetchWithTimeout(
@@ -258,7 +359,7 @@ async function callOpenAi(params: ProviderCallParams): Promise<LlmResponse> {
           model: params.model,
           messages: [
             { role: 'system', content: params.systemPrompt },
-            { role: 'user', content: params.userPrompt },
+            { role: 'user', content: buildOpenAiContent(contentParts) },
           ],
           temperature: params.temperature,
           ...(params.responseMode === 'json' ? { response_format: { type: 'json_object' } } : {}),
@@ -326,6 +427,7 @@ async function callOpenAi(params: ProviderCallParams): Promise<LlmResponse> {
 
 async function callAnthropic(params: ProviderCallParams): Promise<LlmResponse> {
   const providerLabel = 'Anthropic';
+  const contentParts = ensureContentParts(params);
 
   try {
     const response = await fetchWithTimeout(
@@ -340,7 +442,7 @@ async function callAnthropic(params: ProviderCallParams): Promise<LlmResponse> {
         body: JSON.stringify({
           model: params.model,
           system: params.systemPrompt,
-          messages: [{ role: 'user', content: params.userPrompt }],
+          messages: [{ role: 'user', content: buildAnthropicContent(contentParts) }],
         }),
         signal: params.signal,
       },
@@ -380,7 +482,7 @@ async function callAnthropic(params: ProviderCallParams): Promise<LlmResponse> {
       : undefined;
 
     return {
-      content: data.content?.[0]?.text || '',
+      content: extractAnthropicText(data.content),
       finishReason,
       truncated: finishReason === 'max_tokens',
       usage,
@@ -412,6 +514,7 @@ async function callAnthropic(params: ProviderCallParams): Promise<LlmResponse> {
 
 async function callGoogle(params: ProviderCallParams): Promise<LlmResponse> {
   const providerLabel = 'Google AI';
+  const contentParts = ensureContentParts(params);
 
   try {
     const response = await fetchWithTimeout(
@@ -427,7 +530,7 @@ async function callGoogle(params: ProviderCallParams): Promise<LlmResponse> {
           },
           contents: [
             {
-              parts: [{ text: params.userPrompt }],
+              parts: buildGoogleParts(contentParts),
             },
           ],
           generationConfig: {
@@ -476,7 +579,7 @@ async function callGoogle(params: ProviderCallParams): Promise<LlmResponse> {
       : undefined;
 
     return {
-      content: data.candidates?.[0]?.content?.parts?.[0]?.text || '',
+      content: extractGoogleText(data.candidates?.[0]?.content?.parts),
       finishReason,
       truncated: finishReason === 'MAX_TOKENS',
       usage,
@@ -508,6 +611,7 @@ async function callGoogle(params: ProviderCallParams): Promise<LlmResponse> {
 
 async function callOpenRouter(params: ProviderCallParams): Promise<LlmResponse> {
   const providerLabel = 'OpenRouter';
+  const contentParts = ensureContentParts(params);
 
   try {
     const response = await fetchWithTimeout(
@@ -524,9 +628,10 @@ async function callOpenRouter(params: ProviderCallParams): Promise<LlmResponse> 
           model: params.model,
           messages: [
             { role: 'system', content: params.systemPrompt },
-            { role: 'user', content: params.userPrompt },
+            { role: 'user', content: buildOpenAiContent(contentParts) },
           ],
           temperature: params.temperature,
+          ...(params.responseMode === 'json' ? { response_format: { type: 'json_object' } } : {}),
         }),
         signal: params.signal,
       },
@@ -611,6 +716,7 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
     model: request.model,
     systemPrompt: request.systemPrompt,
     userPrompt: request.userPrompt,
+    userContentParts: request.userContentParts ?? [],
     temperature: request.temperature ?? 0.3,
     responseMode: request.responseMode ?? 'json',
     signal: request.signal,
