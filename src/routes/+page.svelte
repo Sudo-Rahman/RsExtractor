@@ -26,7 +26,7 @@
     type VersionedExportRequest,
   } from '$lib/services/versioned-export';
   import { LogsSheet } from '$lib/components/logs';
-  import { AlertCircle, ArrowLeft, ScrollText, Home, LayoutGrid, Table, Download, AudioLines, ScanText, Languages, FileOutput, FileVideo, GitMerge, PenLine } from '@lucide/svelte';
+  import { AlertCircle, ArrowLeft, Copy, ScrollText, Home, LayoutGrid, Table, Download, AudioLines, ScanText, Languages, FileOutput, FileVideo, GitMerge, PenLine, Sparkles, Wand2 } from '@lucide/svelte';
   import { OCR_OUTPUT_FORMATS } from '$lib/types';
   import { formatFileSize } from '$lib/utils/format';
   import { OS, formatTransferRate, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
@@ -59,7 +59,10 @@
   // References to views for drag & drop forwarding
   let extractViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let mergeViewRef: { handleFileDrop: (paths: string[]) => Promise<void>; showMainView: () => void } | undefined = $state();
-  let transcodeViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let transcodeViewRef: {
+    handleFileDrop: (paths: string[]) => Promise<void>;
+    applySelectedProfileToAll: () => void;
+  } | undefined = $state();
   let infoViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let translateViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let renameViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
@@ -70,6 +73,14 @@
     description?: string;
     showModeButtons: boolean;
     showBackButton: boolean;
+  } | null>(null);
+  let transcodeHeaderState = $state<{
+    readyCount: number;
+    conflictCount: number;
+    hasFiles: boolean;
+    mode: 'ai' | 'advanced';
+    showModeToggle: boolean;
+    showApplyToAll: boolean;
   } | null>(null);
 
   const isMacOS = OS() === 'MacOS';
@@ -559,6 +570,7 @@
   const showMergeBackButton = $derived(
     currentView === 'merge' && Boolean(mergeHeaderState?.showBackButton),
   );
+  const showTranscodeHeaderActions = $derived(currentView === 'transcode');
 
   onMount(() => {
     initApp();
@@ -639,6 +651,23 @@
 
   function handleMergeHeaderBack() {
     mergeViewRef?.showMainView();
+  }
+
+  function handleTranscodeHeaderStateChange(
+    state: {
+      readyCount: number;
+      conflictCount: number;
+      hasFiles: boolean;
+      mode: 'ai' | 'advanced';
+      showModeToggle: boolean;
+      showApplyToAll: boolean;
+    } | null,
+  ) {
+    transcodeHeaderState = state;
+  }
+
+  function handleApplyTranscodeProfileToAll(): void {
+    transcodeViewRef?.applySelectedProfileToAll();
   }
 </script>
 
@@ -751,6 +780,46 @@
         <Separator orientation="vertical" class="h-6 mr-2" />
       {/if}
 
+      {#if showTranscodeHeaderActions}
+        {#if transcodeHeaderState?.hasFiles}
+          <div class="rounded-md border bg-muted/30 px-3 py-1.5 text-xs">
+            <span class="font-medium text-foreground">{transcodeHeaderState.readyCount} ready</span>
+            <span class="mx-1 text-muted-foreground">·</span>
+            <span class={transcodeHeaderState.conflictCount > 0 ? 'font-medium text-destructive' : 'text-muted-foreground'}>
+              {transcodeHeaderState.conflictCount} conflict{transcodeHeaderState.conflictCount === 1 ? '' : 's'}
+            </span>
+          </div>
+        {/if}
+
+        {#if transcodeHeaderState?.showModeToggle}
+          <div class="flex items-center gap-1 rounded-md border bg-muted/30 p-1">
+            <Button
+              variant={transcodeHeaderState.mode === 'ai' ? 'default' : 'ghost'}
+              size="sm"
+              onclick={() => transcodeStore.setMode('ai')}
+            >
+              <Wand2 class="size-4 mr-2" />
+              AI
+            </Button>
+            <Button
+              variant={transcodeHeaderState.mode === 'advanced' ? 'default' : 'ghost'}
+              size="sm"
+              onclick={() => transcodeStore.setMode('advanced')}
+            >
+              <Sparkles class="size-4 mr-2" />
+              Advanced
+            </Button>
+          </div>
+        {/if}
+
+        {#if transcodeHeaderState?.showApplyToAll}
+          <Button variant="outline" size="sm" onclick={handleApplyTranscodeProfileToAll}>
+            <Copy class="size-4 mr-2" />
+            Apply to All
+          </Button>
+        {/if}
+      {/if}
+
       {#if showGlobalExportButton}
         <Button
           variant="outline"
@@ -812,7 +881,11 @@
 
       <!-- Transcode View -->
       <div class="absolute inset-0" style="display: {currentView === 'transcode' ? 'block' : 'none'}">
-        <TranscodeView bind:this={transcodeViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
+        <TranscodeView
+          bind:this={transcodeViewRef}
+          onNavigateToSettings={() => handleNavigate('settings')}
+          onHeaderStateChange={handleTranscodeHeaderStateChange}
+        />
       </div>
       
       <!-- Audio to Subs View - persists when switching views -->

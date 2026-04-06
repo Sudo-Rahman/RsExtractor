@@ -1,6 +1,7 @@
 <script lang="ts" module>
   export interface TranscodeViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
+    applySelectedProfileToAll: () => void;
   }
 </script>
 
@@ -115,9 +116,17 @@
 
   interface Props {
     onNavigateToSettings?: () => void;
+    onHeaderStateChange?: (state: {
+      readyCount: number;
+      conflictCount: number;
+      hasFiles: boolean;
+      mode: 'ai' | 'advanced';
+      showModeToggle: boolean;
+      showApplyToAll: boolean;
+    } | null) => void;
   }
 
-  let { onNavigateToSettings }: Props = $props();
+  let { onNavigateToSettings, onHeaderStateChange }: Props = $props();
 
   const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.mov', '.webm', '.m4v', '.avi', '.mxf'];
   const AUDIO_EXTENSIONS = ['.m4a', '.aac', '.mp3', '.flac', '.opus', '.wav', '.ogg', '.ac3', '.eac3', '.mka'];
@@ -580,6 +589,7 @@
   onDestroy(() => {
     unlistenTranscodeProgress?.();
     outputNamingWorkspace.destroy();
+    onHeaderStateChange?.(null);
   });
 
   $effect(() => {
@@ -593,6 +603,17 @@
     });
   });
 
+  $effect(() => {
+    onHeaderStateChange?.({
+      readyCount: readyQueueFiles.length,
+      conflictCount: outputConflictCount,
+      hasFiles: transcodeStore.files.length > 0,
+      mode: transcodeStore.mode,
+      showModeToggle: transcodeInternalView === 'main' && Boolean(selectedFile),
+      showApplyToAll: transcodeInternalView === 'main' && Boolean(selectedFile),
+    });
+  });
+
   export async function handleFileDrop(paths: string[]): Promise<void> {
     const supportedPaths = paths.filter((path) => SUPPORTED_EXTENSIONS.includes(getExtensionFromPath(path)));
     if (supportedPaths.length === 0) {
@@ -601,6 +622,10 @@
     }
 
     await addFiles(supportedPaths);
+  }
+
+  export function applySelectedProfileToAll(): void {
+    handleApplyCurrentToAll();
   }
 
   async function handleAddFiles(): Promise<void> {
@@ -1342,7 +1367,7 @@
           </Card.Root>
         </div>
       {:else}
-        <div class="border-b px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div class="border-b px-4 py-3">
           <div class="min-w-0">
             <div class="flex items-center gap-2">
               <h2 class="font-semibold truncate">{selectedFile.name}</h2>
@@ -1357,29 +1382,6 @@
             <p class="text-sm text-muted-foreground truncate mt-1">
               {describeTrackSummary(selectedFile)}
             </p>
-          </div>
-
-          <div class="flex items-center gap-2">
-            <Button
-              variant={transcodeStore.mode === 'ai' ? 'default' : 'outline'}
-              size="sm"
-              onclick={() => transcodeStore.setMode('ai')}
-            >
-              <Wand2 class="size-4 mr-2" />
-              AI
-            </Button>
-            <Button
-              variant={transcodeStore.mode === 'advanced' ? 'default' : 'outline'}
-              size="sm"
-              onclick={() => transcodeStore.setMode('advanced')}
-            >
-              <Sparkles class="size-4 mr-2" />
-              Advanced
-            </Button>
-            <Button variant="outline" size="sm" onclick={handleApplyCurrentToAll}>
-              <Save class="size-4 mr-2" />
-              Apply to All
-            </Button>
           </div>
         </div>
 
