@@ -2,6 +2,7 @@
   import { Plus, Trash2, TextCursorInput, Type, Replace, Regex, Eraser, CaseSensitive, Hash, MoveHorizontal, Clock, CircleOff, Text } from '@lucide/svelte';
   import { cn } from '$lib/utils';
   import type { RenameRule, RuleType, RuleConfig } from '$lib/types/rename';
+  import type { RenameWorkspaceStore } from '$lib/stores/rename.svelte';
   import { RULE_TYPE_LABELS, RULE_TYPE_DESCRIPTIONS } from '$lib/types/rename';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
@@ -24,6 +25,7 @@
   
 
   interface RenameRuleEditorProps {
+    workspace: RenameWorkspaceStore;
     rules: RenameRule[];
     onAddRule: (type: RuleType) => void;
     onRemoveRule: (id: string) => void;
@@ -36,6 +38,7 @@
   }
 
   let { 
+    workspace,
     rules, 
     onAddRule,
     onRemoveRule,
@@ -149,7 +152,7 @@
 
   <!-- Presets bar -->
   <div class="p-2 border-b shrink-0">
-    <RenamePresets />
+    <RenamePresets {workspace} />
   </div>
 
   <!-- Rules list -->

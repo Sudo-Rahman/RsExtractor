@@ -1,19 +1,34 @@
 <script lang="ts" module>
   import { FileVideo, FileAudio, Subtitles, Video, Volume2, Trash2, Plus, Wand2, Link, Unlink, Settings2, GripVertical, Clock, Layers } from '@lucide/svelte';
+  export interface MergeHeaderState {
+    title: string;
+    description?: string;
+    showModeButtons: boolean;
+    showBackButton: boolean;
+  }
   export interface MergeViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
+    showMainView: () => void;
   }
 </script>
 
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
+  import { FolderOpen } from '@lucide/svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
   import { toast } from 'svelte-sonner';
   import { flip } from 'svelte/animate';
 
-  import { mergeStore, toolImportStore } from '$lib/stores';
+  import { createRenameWorkspaceStore, mergeStore, toolImportStore } from '$lib/stores';
+  import { fetchFileMetadata } from '$lib/services/file-metadata';
+  import {
+    getBaseName,
+    getDirectoryFromPath,
+    getExtension,
+    type ResolveRenameTargetPathContext,
+  } from '$lib/services/rename';
   import { scanFiles } from '$lib/services/ffprobe';
   import { dndzone } from '$lib/utils/dnd';
   import { logAndToast } from '$lib/utils/log-toast';
@@ -24,24 +39,32 @@
     type MergeTrack,
     type MergeTrackConfig,
     type MergeProgressEvent,
+    type MergeVideoFile,
+    type RenameFile,
   } from '$lib/types';
   import type { ImportItem, ImportSourceId, ImportableKind } from '$lib/types/tool-import';
 
   interface Props {
     viewMode?: 'home' | 'groups' | 'table';
+    onHeaderStateChange?: (state: MergeHeaderState | null) => void;
   }
 
-  let { viewMode = 'home' }: Props = $props();
+  let {
+    viewMode = 'home',
+    onHeaderStateChange,
+  }: Props = $props();
 
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
+  import { Label } from '$lib/components/ui/label';
   import * as Card from '$lib/components/ui/card';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import * as Tabs from '$lib/components/ui/tabs';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
   import { ProcessingRemoveDialog, ToolImportButton } from '$lib/components/shared';
   import { MergeTrackSettings, MergeOutputPanel, MergeTrackGroups, MergeTrackTable, MergeFileList } from '$lib/components/merge';
+  import { RenameWorkspace } from '$lib/components/rename';
 
   // Constants
   const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
@@ -52,10 +75,34 @@
   const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((ext) => ext.slice(1).toUpperCase());
   type ForcedImportType = 'video' | 'subtitle' | 'audio';
 
+  function resolveMergeOutputTargetPath(
+    file: RenameFile,
+    context: ResolveRenameTargetPathContext,
+  ): string {
+    const nextPath = context.buildDefaultPath(file);
+    if (nextPath !== file.originalPath) {
+      return nextPath;
+    }
+
+    return context.buildDefaultPath({
+      ...file,
+      newName: `${file.newName}_merged`,
+    });
+  }
+
   // Track settings dialog
   let settingsOpen = $state(false);
   let editingTrackId = $state<string | null>(null);
   let editingTrackType = $state<'imported' | 'source'>('imported');
+  let mergeInternalView = $state<'main' | 'output-naming'>('main');
+  const outputNamingWorkspace = createRenameWorkspaceStore({
+    mode: 'rename',
+    includeOutputDirInTargetPath: true,
+    targetPathOptions: {
+      extension: '.mkv',
+      resolveTargetPath: resolveMergeOutputTargetPath,
+    },
+  });
 
   // Merge cancellation state
   let currentMergingId = $state<string | null>(null);
@@ -90,6 +137,13 @@
     if (!currentMergingId) return '';
     return mergeStore.videoFiles.find(v => v.id === currentMergingId)?.name || '';
   });
+  const selectedOutputVideoIds = $derived(() => new Set(outputNamingWorkspace.selectedFiles.map((file) => file.id)));
+  const selectedVideosToMerge = $derived(() =>
+    mergeStore.videosReadyForMerge.filter((video) => selectedOutputVideoIds().has(video.id)),
+  );
+  const selectedTracksToMergeCount = $derived(() =>
+    selectedVideosToMerge().reduce((sum, video) => sum + video.attachedTracks.length, 0),
+  );
 
   onMount(async () => {
     unlistenMergeProgress = await listen<MergeProgressEvent>('merge-progress', (event) => {
@@ -116,6 +170,7 @@
 
   onDestroy(() => {
     unlistenMergeProgress?.();
+    outputNamingWorkspace.destroy();
   });
 
   // DnD items - mutable state required by svelte-dnd-action
@@ -138,6 +193,44 @@
     attachedItems = mergeStore.selectedVideoId
       ? mergeStore.getAttachedTracks(mergeStore.selectedVideoId).map(t => ({ ...t }))
       : [];
+  });
+
+  function createMergeOutputRenameFile(video: MergeVideoFile): RenameFile {
+    const baseName = getBaseName(video.name);
+    return {
+      id: video.id,
+      originalPath: video.path,
+      originalName: baseName,
+      extension: getExtension(video.name),
+      newName: baseName,
+      selected: true,
+      status: 'pending',
+      size: video.size,
+      modifiedAt: video.modifiedAt,
+      createdAt: video.createdAt,
+    };
+  }
+
+  function buildMergeOutputPath(video: MergeVideoFile): string {
+    const namingFile = outputNamingWorkspace.files.find((file) => file.id === video.id)
+      ?? createMergeOutputRenameFile(video);
+    return outputNamingWorkspace.getTargetPath(namingFile);
+  }
+
+  $effect(() => {
+    const nextFiles = mergeStore.videoFiles.map((video) => createMergeOutputRenameFile(video));
+    untrack(() => {
+      outputNamingWorkspace.replaceFiles(nextFiles, { preserveSelection: true });
+    });
+  });
+
+  $effect(() => {
+    const mergeOutputDir = mergeStore.outputConfig.outputDir;
+    untrack(() => {
+      if (outputNamingWorkspace.outputDir !== mergeOutputDir) {
+        outputNamingWorkspace.setOutputDir(mergeOutputDir);
+      }
+    });
   });
 
   function appendMergedOutputs(paths: string[]) {
@@ -303,16 +396,25 @@
 
     // Scan all video files in parallel
     if (videoPaths.length > 0) {
-      const scannedFiles = await scanFiles(videoPaths, 3);
+      const [scannedFiles, metadataEntries] = await Promise.all([
+        scanFiles(videoPaths, 3),
+        Promise.all(
+          videoPaths.map(async (path) => [path, await fetchFileMetadata(path)] as const),
+        ),
+      ]);
+      const metadataByPath = new Map(metadataEntries);
 
       for (const scanned of scannedFiles) {
         const fileId = videoFileIds.get(scanned.path);
         if (!fileId) continue;
+        const metadata = metadataByPath.get(scanned.path);
 
         if (scanned.status === 'error') {
           mergeStore.updateVideoFile(fileId, {
             status: 'error',
-            error: scanned.error
+            error: scanned.error,
+            modifiedAt: metadata?.modifiedAt,
+            createdAt: metadata?.createdAt,
           });
         } else {
           const tracks: MergeTrack[] = scanned.tracks.map(t => ({
@@ -336,6 +438,8 @@
 
           mergeStore.updateVideoFile(fileId, {
             size: scanned.size,
+            modifiedAt: metadata?.modifiedAt,
+            createdAt: metadata?.createdAt,
             duration: scanned.duration,
             tracks,
             status: 'ready'
@@ -437,20 +541,41 @@
       title: 'Select output directory'
     });
     if (selected && typeof selected === 'string') {
-      mergeStore.setOutputPath(selected);
+      mergeStore.setOutputDir(selected);
+      outputNamingWorkspace.setOutputDir(selected);
     }
   }
 
+  function handleClearOutputDir() {
+    mergeStore.setOutputDir('');
+    outputNamingWorkspace.setOutputDir('');
+  }
+
+  function handleOpenOutputNaming() {
+    mergeInternalView = 'output-naming';
+  }
+
+  function handleBackToMerge() {
+    mergeInternalView = 'main';
+  }
+
+  export function showMainView() {
+    handleBackToMerge();
+  }
+
   async function handleMerge() {
-    const outputPath = mergeStore.outputConfig.outputPath;
-    if (!outputPath) {
-      toast.error('Please select an output directory');
+    const videosToMerge = selectedVideosToMerge();
+    if (videosToMerge.length === 0) {
+      toast.warning('No videos ready to merge.');
       return;
     }
 
-    const videosToMerge = mergeStore.videosReadyForMerge;
-    if (videosToMerge.length === 0) {
-      toast.warning('No videos ready to merge.');
+    const selectedNamingFiles = outputNamingWorkspace.files.filter((file) =>
+      videosToMerge.some((video) => video.id === file.id) && file.selected,
+    );
+    const conflictCount = outputNamingWorkspace.getConflicts(selectedNamingFiles).size;
+    if (conflictCount > 0) {
+      toast.error('Please resolve output naming conflicts before merging.');
       return;
     }
 
@@ -476,28 +601,7 @@
       mergeStore.setFileProcessing(video.path);
       mergeStore.setCurrentRuntimeFile(video.id, video.path, video.name);
       const attachedTracks = mergeStore.getAttachedTracks(video.id);
-
-      let outputFilename = video.name;
-      if (!mergeStore.outputConfig.useSourceFilename) {
-        // Update pattern replacement to use season/episode properly
-        outputFilename = mergeStore.outputConfig.outputNamePattern
-          .replace('{filename}', video.name.replace(/\.[^.]+$/, ''))
-          .replace('{episode}', video.episodeNumber?.toString() || '')
-          .replace('{season}', video.seasonNumber?.toString() || '');
-      }
-      if (!outputFilename.endsWith('.mkv')) {
-        outputFilename = outputFilename.replace(/\.[^.]+$/, '') + '.mkv';
-      }
-
-      let fullOutputPath = `${outputPath}/${outputFilename}`;
-
-      // Check if output path is the same as input path (FFmpeg cannot edit files in-place)
-      if (fullOutputPath === video.path) {
-        // Add "_merged" suffix before extension
-        const nameWithoutExt = outputFilename.replace(/\.mkv$/, '');
-        outputFilename = `${nameWithoutExt}_merged.mkv`;
-        fullOutputPath = `${outputPath}/${outputFilename}`;
-      }
+      const fullOutputPath = buildMergeOutputPath(video);
 
       // Build attached track args (external tracks to add)
       const trackArgs = attachedTracks.map(track => ({
@@ -665,7 +769,14 @@
   }
 
   async function handleOpenFolder() {
-    await invoke('open_folder', { path: mergeStore.outputConfig.outputPath });
+    const basePath = mergeStore.outputConfig.outputDir || mergedOutputItems[0]?.path;
+    if (!basePath) {
+      toast.info('No output folder available yet');
+      return;
+    }
+
+    const folderPath = mergeStore.outputConfig.outputDir || getDirectoryFromPath(basePath);
+    await invoke('open_folder', { path: folderPath });
   }
 
   function handleClearAll() {
@@ -794,9 +905,84 @@
   });
 
   const groupedSourceTracks = $derived(() => groupTracksByType(selectedVideoTracks()));
+
+  $effect(() => {
+    onHeaderStateChange?.(
+      mergeInternalView === 'output-naming'
+        ? {
+            title: 'Output Naming',
+            showModeButtons: false,
+            showBackButton: true,
+          }
+        : null,
+    );
+  });
+
+  onDestroy(() => {
+    onHeaderStateChange?.(null);
+  });
 </script>
 
-{#if viewMode === 'groups'}
+{#if mergeInternalView === 'output-naming'}
+  <div class="h-full">
+    <RenameWorkspace
+      workspace={outputNamingWorkspace}
+      showImportButton={false}
+      onClearAll={handleRequestClearAll}
+      onRemoveFile={handleRequestRemoveFile}
+      emptyStateTitle="No videos in the merge batch"
+      emptyStateSubtitle="Add videos in Merge to configure output names."
+    >
+      {#snippet actionPanel()}
+        <div class="space-y-2">
+          <Label class="text-xs uppercase tracking-wide text-muted-foreground">Output Folder</Label>
+          <Button
+            variant="outline"
+            class="w-full justify-start gap-2 h-auto py-2 text-left"
+            onclick={handleSelectOutputDir}
+          >
+            <FolderOpen class="size-4 shrink-0" />
+            <span class="truncate flex-1 text-sm">
+              {#if outputNamingWorkspace.outputDir}
+                {outputNamingWorkspace.outputDir}
+              {:else}
+                <span class="text-muted-foreground">Use each source folder</span>
+              {/if}
+            </span>
+          </Button>
+          <p class="text-xs text-muted-foreground">
+            Optional. Leave empty to save merged files next to each source video.
+          </p>
+          {#if outputNamingWorkspace.outputDir}
+            <Button
+              variant="ghost"
+              size="sm"
+              class="h-auto px-0 text-xs text-muted-foreground hover:text-foreground"
+              onclick={handleClearOutputDir}
+            >
+              Use source folders
+            </Button>
+          {/if}
+        </div>
+
+        <div class="rounded-md bg-muted/50 p-3 space-y-2">
+          <div class="flex items-center justify-between text-sm">
+            <span class="text-muted-foreground">Selected videos</span>
+            <Badge variant={selectedVideosToMerge().length > 0 ? 'default' : 'secondary'}>
+              {selectedVideosToMerge().length}
+            </Badge>
+          </div>
+          <div class="flex items-center justify-between text-sm">
+            <span class="text-muted-foreground">Attached tracks</span>
+            <Badge variant={selectedTracksToMergeCount() > 0 ? 'default' : 'secondary'}>
+              {selectedTracksToMergeCount()}
+            </Badge>
+          </div>
+        </div>
+      {/snippet}
+    </RenameWorkspace>
+  </div>
+{:else if viewMode === 'groups'}
   <!-- Groups View: Full width -->
   <div class="h-full">
     <MergeTrackGroups />
@@ -1106,12 +1292,13 @@
     <div class="w-80 border-l p-4 overflow-auto">
       <MergeOutputPanel
         outputConfig={mergeStore.outputConfig}
-        enabledTracksCount={mergeStore.totalTracksToMerge}
-        videosCount={mergeStore.videosReadyForMerge.length}
+        enabledTracksCount={selectedTracksToMergeCount()}
+        videosCount={selectedVideosToMerge().length}
         completedFiles={mergeStore.runtimeProgress.completedFiles}
         status={mergeStore.status}
         onSelectOutputDir={handleSelectOutputDir}
-        onOutputNameChange={(name) => mergeStore.setOutputNamePattern(name)}
+        onClearOutputDir={handleClearOutputDir}
+        onEditOutputNames={handleOpenOutputNaming}
         onMerge={handleMerge}
         onOpenFolder={handleOpenFolder}
         onCancel={handleCancelAll}

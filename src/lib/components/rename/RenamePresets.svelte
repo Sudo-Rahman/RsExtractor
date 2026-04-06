@@ -1,7 +1,7 @@
 <script lang="ts">
   import { FolderOpen, Save, Star, Trash2, ChevronDown, Check } from '@lucide/svelte';
   import type { RulePreset } from '$lib/types/rename';
-  import { renameStore } from '$lib/stores/rename.svelte';
+  import type { RenameWorkspaceStore } from '$lib/stores/rename.svelte';
   import { toast } from 'svelte-sonner';
 
   import { Button } from '$lib/components/ui/button';
@@ -14,10 +14,14 @@
 
 
   interface RenamePresetsProps {
+    workspace: RenameWorkspaceStore;
     class?: string;
   }
 
-  let { class: className = '' }: RenamePresetsProps = $props();
+  let {
+    workspace,
+    class: className = '',
+  }: RenamePresetsProps = $props();
 
   // Dialog states
   let saveDialogOpen = $state(false);
@@ -31,13 +35,13 @@
 
   // Load presets on mount
   $effect(() => {
-    renameStore.loadPresets();
+    workspace.loadPresets();
   });
 
-  const presets = $derived(renameStore.presets);
+  const presets = $derived(workspace.presets);
   const builtInPresets = $derived(presets.filter(p => p.isBuiltIn));
   const userPresets = $derived(presets.filter(p => !p.isBuiltIn));
-  const hasRules = $derived(renameStore.rules.length > 0);
+  const hasRules = $derived(workspace.rules.length > 0);
 
   async function handleSavePreset() {
     if (!presetName.trim()) {
@@ -47,7 +51,7 @@
 
     isSaving = true;
     try {
-      const result = await renameStore.saveAsPreset(presetName.trim(), presetDescription.trim());
+      const result = await workspace.saveAsPreset(presetName.trim(), presetDescription.trim());
       if (result) {
         toast.success(`Preset "${presetName}" saved`);
         saveDialogOpen = false;
@@ -65,7 +69,7 @@
   }
 
   function handleLoadPreset(preset: RulePreset) {
-    renameStore.applyPreset(preset.id);
+    workspace.applyPreset(preset.id);
     toast.success(`Loaded "${preset.name}"`);
   }
 
@@ -77,7 +81,7 @@
   async function confirmDelete() {
     if (!presetToDelete) return;
     
-    const success = await renameStore.deletePreset(presetToDelete.id);
+    const success = await workspace.deletePreset(presetToDelete.id);
     if (success) {
       toast.success(`Deleted "${presetToDelete.name}"`);
     } else {
@@ -188,7 +192,7 @@
       </div>
       
       <div class="text-sm text-muted-foreground">
-        {renameStore.rules.length} rule{renameStore.rules.length !== 1 ? 's' : ''} will be saved
+        {workspace.rules.length} rule{workspace.rules.length !== 1 ? 's' : ''} will be saved
       </div>
     </div>
 

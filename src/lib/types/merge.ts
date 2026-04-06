@@ -8,6 +8,8 @@ export interface MergeVideoFile {
   path: string;
   name: string;
   size: number;
+  modifiedAt?: Date;
+  createdAt?: Date;
   duration?: number;
   tracks: MergeTrack[];
   status: 'pending' | 'scanning' | 'ready' | 'error';
@@ -73,10 +75,7 @@ export interface MergeTrackConfig {
 }
 
 export interface MergeOutputConfig {
-  outputPath: string;
-  // Use source filename pattern or custom
-  useSourceFilename: boolean;
-  outputNamePattern: string;
+  outputDir: string;
   title?: string;
 }
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ArrowRight, Trash2, CheckCircle, XCircle, AlertTriangle, Loader2 } from '@lucide/svelte';
+  import { getBaseName, getExtension, getFileNameFromPath } from '$lib/services/rename';
   import { cn } from '$lib/utils';
   import { formatTransferRate } from '$lib/utils/format';
   import type { RenameFile } from '$lib/types/rename';
@@ -18,6 +19,7 @@
     onToggleSelection?: (id: string) => void;
     onToggleAll?: () => void;
     onRemove?: (id: string) => void;
+    getTargetPath?: (file: RenameFile) => string;
     class?: string;
   }
 
@@ -31,11 +33,35 @@
     onToggleSelection, 
     onToggleAll,
     onRemove,
+    getTargetPath,
     class: className = '' 
   }: RenameTableProps = $props();
 
   function hasChanged(file: RenameFile): boolean {
+    if (getTargetPath) {
+      return getTargetPath(file) !== file.originalPath;
+    }
+
     return file.originalName !== file.newName;
+  }
+
+  function getTargetDetails(file: RenameFile): { path: string; name: string; extension: string } {
+    if (!getTargetPath) {
+      return {
+        path: `${file.newName}${file.extension}`,
+        name: file.newName,
+        extension: file.extension,
+      };
+    }
+
+    const path = getTargetPath(file);
+    const filename = getFileNameFromPath(path);
+
+    return {
+      path,
+      name: getBaseName(filename),
+      extension: getExtension(filename),
+    };
   }
 
   function getStatusInfo(file: RenameFile) {
@@ -79,6 +105,7 @@
   <div class="flex-1 overflow-y-auto overflow-x-hidden">
     {#each files as file (file.id)}
       {@const changed = hasChanged(file)}
+      {@const target = getTargetDetails(file)}
       {@const status = getStatusInfo(file)}
       {@const isCurrentProcessingRow = file.id === currentProcessingFileId && file.status === 'processing'}
       {@const processingProgressValue = Math.min(100, Math.max(0, currentProcessingProgress))}
@@ -135,11 +162,11 @@
                   !file.selected && 'text-muted-foreground',
                   changed && file.selected && 'text-primary font-medium'
                 )}>
-                  {file.newName}<span class="text-muted-foreground/70">{file.extension}</span>
+                  {target.name}<span class="text-muted-foreground/70">{target.extension}</span>
                 </p>
               </Tooltip.Trigger>
               <Tooltip.Content side="top" class="max-w-md">
-                <p class="break-all font-mono text-xs">{file.newName}{file.extension}</p>
+                <p class="break-all font-mono text-xs">{target.path}</p>
               </Tooltip.Content>
             </Tooltip.Root>
           </div>

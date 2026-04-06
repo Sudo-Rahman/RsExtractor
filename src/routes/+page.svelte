@@ -26,7 +26,7 @@
     type VersionedExportRequest,
   } from '$lib/services/versioned-export';
   import { LogsSheet } from '$lib/components/logs';
-  import { AlertCircle, ScrollText, Home, LayoutGrid, Table, Download, AudioLines, ScanText, Languages, FileOutput, GitMerge, PenLine } from '@lucide/svelte';
+  import { AlertCircle, ArrowLeft, ScrollText, Home, LayoutGrid, Table, Download, AudioLines, ScanText, Languages, FileOutput, GitMerge, PenLine } from '@lucide/svelte';
   import { OCR_OUTPUT_FORMATS } from '$lib/types';
   import { formatFileSize } from '$lib/utils/format';
   import { OS, formatTransferRate, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
@@ -58,12 +58,18 @@
 
   // References to views for drag & drop forwarding
   let extractViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
-  let mergeViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let mergeViewRef: { handleFileDrop: (paths: string[]) => Promise<void>; showMainView: () => void } | undefined = $state();
   let infoViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let translateViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let renameViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let audioToSubsViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let videoOcrViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let mergeHeaderState = $state<{
+    title: string;
+    description?: string;
+    showModeButtons: boolean;
+    showBackButton: boolean;
+  } | null>(null);
 
   const isMacOS = OS() === 'MacOS';
 
@@ -515,6 +521,21 @@
     settings: 'Settings'
   };
 
+  const activeHeaderTitle = $derived(
+    currentView === 'merge' && mergeHeaderState?.title
+      ? mergeHeaderState.title
+      : viewTitles[currentView],
+  );
+  const activeHeaderDescription = $derived(
+    currentView === 'merge' ? mergeHeaderState?.description : undefined,
+  );
+  const showMergeModeButtons = $derived(
+    currentView === 'merge' && (mergeHeaderState?.showModeButtons ?? true),
+  );
+  const showMergeBackButton = $derived(
+    currentView === 'merge' && Boolean(mergeHeaderState?.showBackButton),
+  );
+
   onMount(() => {
     initApp();
 
@@ -578,6 +599,21 @@
       ocrExportDialogOpen = false;
     }
   }
+
+  function handleMergeHeaderStateChange(
+    state: {
+      title: string;
+      description?: string;
+      showModeButtons: boolean;
+      showBackButton: boolean;
+    } | null,
+  ) {
+    mergeHeaderState = state;
+  }
+
+  function handleMergeHeaderBack() {
+    mergeViewRef?.showMainView();
+  }
 </script>
 
 <Sidebar.Provider>
@@ -589,13 +625,20 @@
   <Sidebar.Inset class="flex flex-col h-screen overflow-hidden w-[calc(100%-var(--sidebar-width))]">
     <!-- Header -->
     <header
-      class="flex h-14 shrink-0 items-center gap-2 border-b px-4"
+      class="flex min-h-14 shrink-0 items-center gap-2 border-b px-4 py-2"
       data-tauri-drag-region={isMacOS}
     >
       <Sidebar.Trigger class="{!useSidebar().open && isMacOS ? 'ml-20' : '-ml-1'} transition-all duration-300" />
       <Separator orientation="vertical" class="mr-2 data-[orientation=vertical]:h-4" />
-      <div class="flex-1 flex items-center" data-tauri-drag-region={isMacOS}>
-        <h1 data-tauri-drag-region={isMacOS} class="text-lg font-semibold">{viewTitles[currentView]}</h1>
+      <div class="flex-1 min-w-0 flex items-center" data-tauri-drag-region={isMacOS}>
+        <div class="min-w-0" data-tauri-drag-region={isMacOS}>
+          <h1 data-tauri-drag-region={isMacOS} class="text-lg font-semibold truncate">{activeHeaderTitle}</h1>
+          {#if activeHeaderDescription}
+            <p data-tauri-drag-region={isMacOS} class="text-sm text-muted-foreground truncate">
+              {activeHeaderDescription}
+            </p>
+          {/if}
+        </div>
       </div>
       {#if globalToolProgress.active}
         <HoverCard.Root openDelay={150} closeDelay={100}>
@@ -636,7 +679,7 @@
       {/if}
 
       <!-- Merge view mode buttons (only visible in merge view) -->
-      {#if currentView === 'merge'}
+      {#if showMergeModeButtons}
         <div class="flex items-center gap-1 mr-2">
           <Button
             variant={mergeViewMode === 'home' ? 'secondary' : 'ghost'}
@@ -666,6 +709,19 @@
             Table
           </Button>
         </div>
+        <Separator orientation="vertical" class="h-6 mr-2" />
+      {/if}
+
+      {#if showMergeBackButton}
+        <Button
+          variant="outline"
+          size="sm"
+          class="mr-2"
+          onclick={handleMergeHeaderBack}
+        >
+          <ArrowLeft class="size-4 mr-2" />
+          Back to Merge
+        </Button>
         <Separator orientation="vertical" class="h-6 mr-2" />
       {/if}
 
@@ -721,7 +777,11 @@
       
       <!-- Merge View -->
       <div class="absolute inset-0" style="display: {currentView === 'merge' ? 'block' : 'none'}">
-        <MergeView bind:this={mergeViewRef} viewMode={mergeViewMode} />
+        <MergeView
+          bind:this={mergeViewRef}
+          viewMode={mergeViewMode}
+          onHeaderStateChange={handleMergeHeaderStateChange}
+        />
       </div>
       
       <!-- Audio to Subs View - persists when switching views -->

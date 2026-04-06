@@ -351,16 +351,19 @@ export function applyAllRules(
 }
 
 /**
- * Detect conflicts (duplicate new names)
- * Returns a map of conflicting names to the file IDs that share that name
+ * Detect conflicts (duplicate target paths)
+ * Returns a map of conflicting paths to the file IDs that share that target
  */
-export function detectConflicts(files: RenameFile[]): Map<string, string[]> {
+export function detectConflicts(
+  files: RenameFile[],
+  options?: string | BuildNewPathOptions,
+): Map<string, string[]> {
   const nameCount = new Map<string, string[]>();
   
   for (const file of files) {
     if (!file.selected) continue;
     
-    const fullName = file.newName + file.extension;
+    const fullName = resolveRenameTargetPath(file, options);
     const existing = nameCount.get(fullName) || [];
     existing.push(file.id);
     nameCount.set(fullName, existing);
@@ -458,10 +461,71 @@ export async function copyFileWithNewName(
 /**
  * Build the new full path for a file
  */
-export function buildNewPath(file: RenameFile, outputDir?: string): string {
+export interface BuildNewPathOptions {
+  outputDir?: string;
+  extension?: string;
+  resolveTargetPath?: (
+    file: RenameFile,
+    context: ResolveRenameTargetPathContext,
+  ) => string;
+}
+
+export interface ResolveRenameTargetPathContext {
+  outputDir?: string;
+  extension?: string;
+  buildDefaultPath: (fileOverride?: RenameFile) => string;
+}
+
+function normalizeBuildNewPathOptions(
+  options?: string | BuildNewPathOptions,
+): BuildNewPathOptions {
+  if (!options) {
+    return {};
+  }
+
+  if (typeof options === 'string') {
+    return { outputDir: options };
+  }
+
+  return options;
+}
+
+function buildDefaultNewPath(file: RenameFile, options: { outputDir?: string; extension?: string }): string {
+  const { outputDir, extension } = options;
   const dir = outputDir || getDirectoryFromPath(file.originalPath);
   const separator = file.originalPath.includes('\\') ? '\\' : '/';
-  return dir + separator + file.newName + file.extension;
+  const nextExtension = extension ?? file.extension;
+  return dir + separator + file.newName + nextExtension;
+}
+
+export function resolveRenameTargetPath(
+  file: RenameFile,
+  options?: string | BuildNewPathOptions,
+): string {
+  const { outputDir, extension, resolveTargetPath } = normalizeBuildNewPathOptions(options);
+  const buildDefaultPath = (fileOverride: RenameFile = file): string =>
+    buildDefaultNewPath(fileOverride, { outputDir, extension });
+
+  if (!resolveTargetPath) {
+    return buildDefaultPath(file);
+  }
+
+  return resolveTargetPath(file, {
+    outputDir,
+    extension,
+    buildDefaultPath,
+  });
+}
+
+export function buildNewPath(file: RenameFile, options?: string | BuildNewPathOptions): string {
+  return resolveRenameTargetPath(file, options);
+}
+
+export function hasRenameTargetChange(
+  file: RenameFile,
+  options?: string | BuildNewPathOptions,
+): boolean {
+  return resolveRenameTargetPath(file, options) !== file.originalPath;
 }
 
 /**

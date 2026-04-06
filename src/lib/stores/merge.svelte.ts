@@ -21,9 +21,7 @@ let sourceTrackConfigs = $state<Map<string, MergeTrackConfig>>(new Map());
 let selectedVideoId = $state<string | null>(null);
 let fileRunStates = $state<Map<string, FileRunState>>(new Map());
 let outputConfig = $state<MergeOutputConfig>({
-  outputPath: '',
-  useSourceFilename: true,
-  outputNamePattern: '{filename}_merged',
+  outputDir: '',
 });
 let status = $state<'idle' | 'processing' | 'completed' | 'error'>('idle');
 let progress = $state(0);
@@ -385,16 +383,8 @@ export const mergeStore = {
   },
 
   // Output configuration
-  setOutputPath(path: string) {
-    outputConfig = { ...outputConfig, outputPath: path };
-  },
-
-  setUseSourceFilename(value: boolean) {
-    outputConfig = { ...outputConfig, useSourceFilename: value };
-  },
-
-  setOutputNamePattern(pattern: string) {
-    outputConfig = { ...outputConfig, outputNamePattern: pattern };
+  setOutputDir(dir: string) {
+    outputConfig = { ...outputConfig, outputDir: dir };
   },
 
   // Status management
@@ -550,9 +540,7 @@ export const mergeStore = {
     selectedVideoId = null;
     fileRunStates = new Map();
     outputConfig = {
-      outputPath: '',
-      useSourceFilename: true,
-      outputNamePattern: '{filename}_merged',
+      outputDir: '',
     };
     status = 'idle';
     runtimeProgress = resetRuntimeProgressState();

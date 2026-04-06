@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { Folder, FolderOpen, Play, Loader2, CheckCircle, X } from '@lucide/svelte';
+  import { Folder, FolderOpen, PenLine, Play, Loader2, CheckCircle, RotateCcw, X } from '@lucide/svelte';
   import type { MergeOutputConfig } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
   import { Progress } from '$lib/components/ui/progress';
   import { Label } from '$lib/components/ui/label';
   import { Badge } from '$lib/components/ui/badge';
-  import { Checkbox } from '$lib/components/ui/checkbox';
   import * as Card from '$lib/components/ui/card';
   import * as Alert from '$lib/components/ui/alert';
   import { formatTransferRate } from '$lib/utils';
@@ -17,7 +16,8 @@
     completedFiles?: number;
     status: 'idle' | 'processing' | 'completed' | 'error';
     onSelectOutputDir?: () => void;
-    onOutputNameChange?: (name: string) => void;
+    onClearOutputDir?: () => void;
+    onEditOutputNames?: () => void;
     onMerge?: () => void;
     onOpenFolder?: () => void;
     onCancel?: () => void;
@@ -35,7 +35,8 @@
     completedFiles = 0,
     status,
     onSelectOutputDir,
-    onOutputNameChange,
+    onClearOutputDir,
+    onEditOutputNames,
     onMerge,
     onOpenFolder,
     onCancel,
@@ -48,10 +49,9 @@
 
   const isProcessing = $derived(status === 'processing');
   const isCompleted = $derived(status === 'completed');
-  // Can merge if we have videos and an output path (attached tracks are optional - user may just want to modify metadata or remove tracks)
+  // Attached tracks are optional - user may just want to modify metadata or remove tracks.
   const canMerge = $derived(
     videosCount > 0 &&
-    outputConfig.outputPath &&
     !isProcessing
   );
 </script>
@@ -69,7 +69,7 @@
         <div class="flex-1 flex items-center gap-2 rounded-md border bg-muted/50 px-3 py-2 text-sm min-w-0">
           <Folder class="size-4 text-muted-foreground shrink-0" />
           <span class="truncate text-muted-foreground">
-            {outputConfig.outputPath || 'No folder selected'}
+            {outputConfig.outputDir || 'Use each source folder'}
           </span>
         </div>
         <Button variant="outline" size="icon" onclick={onSelectOutputDir}>
@@ -77,18 +77,37 @@
           <span class="sr-only">Browse</span>
         </Button>
       </div>
+      <p class="text-xs text-muted-foreground">
+        Optional. Leave empty to save merged files next to each source video.
+      </p>
+      {#if outputConfig.outputDir}
+        <Button
+          variant="ghost"
+          size="sm"
+          class="h-auto px-0 text-xs text-muted-foreground hover:text-foreground"
+          onclick={onClearOutputDir}
+          disabled={!onClearOutputDir}
+        >
+          <RotateCcw class="size-3.5 mr-1.5" />
+          Use source folders
+        </Button>
+      {/if}
     </div>
 
-    <!-- Use source filename -->
-    <div class="flex items-center gap-3">
-      <Checkbox
-        id="use-source"
-        checked={outputConfig.useSourceFilename}
-        disabled
-      />
-      <Label for="use-source" class="font-normal text-sm">
-        Keep original filename
-      </Label>
+    <div class="space-y-2">
+      <Label>Output names</Label>
+      <Button
+        variant="outline"
+        class="w-full justify-start gap-2"
+        onclick={onEditOutputNames}
+        disabled={!onEditOutputNames || isProcessing}
+      >
+        <PenLine class="size-4" />
+        Edit Output Names
+      </Button>
+      <p class="text-xs text-muted-foreground">
+        Open the shared rename workspace to preview rules, selection, and final FFmpeg output paths.
+      </p>
     </div>
 
     <!-- Summary -->
@@ -145,7 +164,7 @@
   </Card.Content>
   <Card.Footer class="flex flex-col gap-2">
     {#if isCompleted}
-      <Button class="w-full" variant="outline" onclick={onOpenFolder}>
+      <Button class="w-full" variant="outline" onclick={onOpenFolder} disabled={!onOpenFolder}>
         <FolderOpen class="size-4 mr-2" />
         Open folder
       </Button>

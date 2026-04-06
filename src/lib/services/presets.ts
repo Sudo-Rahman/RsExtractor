@@ -9,12 +9,47 @@ import { BUILT_IN_PRESETS } from '$lib/types/rename';
 const PRESETS_STORE_KEY = 'userPresets';
 
 let store: Store | null = null;
+const presetChangeListeners = new Set<(presets: RulePreset[]) => void>();
 
 async function getStore(): Promise<Store> {
   if (!store) {
     store = await Store.load('rename-presets.json');
   }
   return store;
+}
+
+function clonePresetRules(rules: RulePreset['rules']): RulePreset['rules'] {
+  return rules.map((rule) => ({
+    ...rule,
+    config: { ...rule.config },
+  }));
+}
+
+function clonePreset(preset: RulePreset): RulePreset {
+  return {
+    ...preset,
+    rules: clonePresetRules(preset.rules),
+  };
+}
+
+function clonePresets(presets: RulePreset[]): RulePreset[] {
+  return presets.map((preset) => clonePreset(preset));
+}
+
+function emitPresetChanges(presets: RulePreset[]): void {
+  const nextPresets = clonePresets(presets);
+  for (const listener of presetChangeListeners) {
+    listener(nextPresets);
+  }
+}
+
+export function subscribeToPresetChanges(
+  listener: (presets: RulePreset[]) => void,
+): () => void {
+  presetChangeListeners.add(listener);
+  return () => {
+    presetChangeListeners.delete(listener);
+  };
 }
 
 /**
@@ -31,7 +66,7 @@ export async function loadUserPresets(): Promise<RulePreset[]> {
   try {
     const s = await getStore();
     const presets = await s.get<RulePreset[]>(PRESETS_STORE_KEY);
-    return presets ?? [];
+    return clonePresets(presets ?? []);
   } catch (error) {
     console.error('Failed to load user presets:', error);
     return [];
@@ -44,8 +79,9 @@ export async function loadUserPresets(): Promise<RulePreset[]> {
 async function saveUserPresets(presets: RulePreset[]): Promise<void> {
   try {
     const s = await getStore();
-    await s.set(PRESETS_STORE_KEY, presets);
+    await s.set(PRESETS_STORE_KEY, clonePresets(presets));
     await s.save();
+    emitPresetChanges(presets);
   } catch (error) {
     console.error('Failed to save user presets:', error);
     throw new Error('Failed to save presets');
@@ -75,7 +111,7 @@ export async function savePreset(
     name,
     description,
     isBuiltIn: false,
-    rules: rules.map(({ type, enabled, config }) => ({ type, enabled, config })),
+    rules: rules.map(({ type, enabled, config }) => ({ type, enabled, config: { ...config } })),
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -83,7 +119,7 @@ export async function savePreset(
   userPresets.push(newPreset);
   await saveUserPresets(userPresets);
 
-  return newPreset;
+  return clonePreset(newPreset);
 }
 
 /**
@@ -111,15 +147,15 @@ export async function updatePreset(
     ...preset,
     ...updates,
     rules: updates.rules
-      ? updates.rules.map(({ type, enabled, config }) => ({ type, enabled, config }))
-      : preset.rules,
+      ? updates.rules.map(({ type, enabled, config }) => ({ type, enabled, config: { ...config } }))
+      : clonePresetRules(preset.rules),
     updatedAt: Date.now(),
   };
 
   userPresets[index] = updatedPreset;
   await saveUserPresets(userPresets);
 
-  return updatedPreset;
+  return clonePreset(updatedPreset);
 }
 
 /**
