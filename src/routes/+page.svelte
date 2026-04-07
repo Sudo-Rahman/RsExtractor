@@ -13,6 +13,8 @@
   import * as HoverCard from '$lib/components/ui/hover-card';
   import { VersionedExportDialog } from '$lib/components/shared';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
+  import AppHeader from '$lib/components/layout/app-header.svelte';
+  import { setToolHeader } from '$lib/components/layout/tool-header-context.svelte';
   import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView, AudioToSubsView, VideoOcrView, TranscodeView } from '$lib/components/views';
   import { TranslationExportDialog } from '$lib/components/translation';
   import { getFormattedOutput } from '$lib/services/deepgram';
@@ -26,8 +28,9 @@
     type VersionedExportRequest,
   } from '$lib/services/versioned-export';
   import { LogsSheet } from '$lib/components/logs';
-  import { AlertCircle, ArrowLeft, Copy, ScrollText, Home, LayoutGrid, Table, Download, AudioLines, ScanText, Languages, FileOutput, FileVideo, GitMerge, PenLine, Sparkles, Wand2 } from '@lucide/svelte';
+  import { AlertCircle, ScrollText, Download, AudioLines, ScanText, Languages, FileOutput, FileVideo, GitMerge, PenLine } from '@lucide/svelte';
   import { OCR_OUTPUT_FORMATS } from '$lib/types';
+  import type { ToolId } from '$lib/types/tool-import';
   import { formatFileSize } from '$lib/utils/format';
   import { OS, formatTransferRate, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
   import { useSidebar } from "$lib/components/ui/sidebar";
@@ -35,13 +38,13 @@
   import { audioToSubsStore, videoOcrStore, translationStore, extractionStore, mergeStore, renameStore, transcodeStore } from '$lib/stores';
   import { logAndToast } from '$lib/utils/log-toast';
 
+  type ViewId = ToolId | 'settings';
+
   // Current view state
-  let currentView = $state<'extract' | 'merge' | 'transcode' | 'translate' | 'rename' | 'audio-to-subs' | 'video-ocr' | 'info' | 'settings'>('extract');
+  let currentView = $state<ViewId>('extract');
   let ffmpegAvailable = $state<boolean | null>(null);
   let unlistenDragDrop: (() => void) | null = null;
 
-  // Merge view mode state (only applicable when currentView === 'merge')
-  let mergeViewMode = $state<'home' | 'groups' | 'table'>('home');
   let translationExportDialogOpen = $state(false);
   let audioExportDialogOpen = $state(false);
   let ocrExportDialogOpen = $state(false);
@@ -58,36 +61,16 @@
 
   // References to views for drag & drop forwarding
   let extractViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
-  let mergeViewRef: { handleFileDrop: (paths: string[]) => Promise<void>; showMainView: () => void } | undefined = $state();
-  let transcodeViewRef: {
-    handleFileDrop: (paths: string[]) => Promise<void>;
-    applySelectedProfileToAll: () => void;
-    showMainView: () => void;
-  } | undefined = $state();
+  let mergeViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let transcodeViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let infoViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let translateViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let renameViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let audioToSubsViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let videoOcrViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
-  let mergeHeaderState = $state<{
-    title: string;
-    description?: string;
-    showModeButtons: boolean;
-    showBackButton: boolean;
-  } | null>(null);
-  let transcodeHeaderState = $state<{
-    title?: string;
-    description?: string;
-    readyCount: number;
-    conflictCount: number;
-    hasFiles: boolean;
-    mode: 'ai' | 'advanced';
-    showModeToggle: boolean;
-    showApplyToAll: boolean;
-    showBackButton: boolean;
-  } | null>(null);
 
   const isMacOS = OS() === 'MacOS';
+  const toolHeader = setToolHeader();
 
   interface ToolProgressMetric {
     toolId: 'audio-to-subs' | 'video-ocr' | 'translate' | 'extract' | 'merge' | 'rename' | 'transcode';
@@ -548,7 +531,7 @@
     });
   }
 
-  const viewTitles: Record<string, string> = {
+  const viewTitles: Record<ViewId, string> = {
     extract: 'Track Extraction',
     merge: 'Track Merge',
     transcode: 'Transcode',
@@ -560,41 +543,17 @@
     settings: 'Settings'
   };
 
+  const activeToolHeader = $derived.by(() =>
+    currentView === 'settings' ? undefined : toolHeader.getHeader(currentView),
+  );
   const activeHeaderTitle = $derived.by(() => {
-    if (currentView === 'merge' && mergeHeaderState?.title) {
-      return mergeHeaderState.title;
-    }
-
-    if (currentView === 'transcode' && transcodeHeaderState?.title) {
-      return transcodeHeaderState.title;
+    if (activeToolHeader?.title) {
+      return activeToolHeader.title;
     }
 
     return viewTitles[currentView];
   });
-  const activeHeaderDescription = $derived.by(() => {
-    if (currentView === 'merge') {
-      return mergeHeaderState?.description;
-    }
-
-    if (currentView === 'transcode') {
-      return transcodeHeaderState?.description;
-    }
-
-    return undefined;
-  });
-  const showMergeModeButtons = $derived(
-    currentView === 'merge' && (mergeHeaderState?.showModeButtons ?? true),
-  );
-  const showMergeBackButton = $derived(
-    currentView === 'merge' && Boolean(mergeHeaderState?.showBackButton),
-  );
-  const showTranscodeBackButton = $derived(
-    currentView === 'transcode' && Boolean(transcodeHeaderState?.showBackButton),
-  );
-  const showTranscodeHeaderActions = $derived(
-    currentView === 'transcode' &&
-      Boolean(transcodeHeaderState?.showModeToggle || transcodeHeaderState?.showApplyToAll),
-  );
+  const activeHeaderDescription = $derived(activeToolHeader?.description);
 
   onMount(() => {
     initApp();
@@ -650,7 +609,7 @@
   }
 
   function handleNavigate(viewId: string) {
-    currentView = viewId as 'extract' | 'merge' | 'transcode' | 'translate' | 'rename' | 'audio-to-subs' | 'video-ocr' | 'info' | 'settings';
+    currentView = viewId as ViewId;
     if (currentView !== 'translate') {
       translationExportDialogOpen = false;
     }
@@ -661,45 +620,6 @@
       ocrExportDialogOpen = false;
     }
   }
-
-  function handleMergeHeaderStateChange(
-    state: {
-      title: string;
-      description?: string;
-      showModeButtons: boolean;
-      showBackButton: boolean;
-    } | null,
-  ) {
-    mergeHeaderState = state;
-  }
-
-  function handleMergeHeaderBack() {
-    mergeViewRef?.showMainView();
-  }
-
-  function handleTranscodeHeaderBack() {
-    transcodeViewRef?.showMainView();
-  }
-
-  function handleTranscodeHeaderStateChange(
-    state: {
-      title?: string;
-      description?: string;
-      readyCount: number;
-      conflictCount: number;
-      hasFiles: boolean;
-      mode: 'ai' | 'advanced';
-      showModeToggle: boolean;
-      showApplyToAll: boolean;
-      showBackButton: boolean;
-    } | null,
-  ) {
-    transcodeHeaderState = state;
-  }
-
-  function handleApplyTranscodeProfileToAll(): void {
-    transcodeViewRef?.applySelectedProfileToAll();
-  }
 </script>
 
 <Sidebar.Provider>
@@ -709,183 +629,94 @@
   />
 
   <Sidebar.Inset class="flex flex-col h-screen overflow-hidden w-[calc(100%-var(--sidebar-width))]">
-    <!-- Header -->
-    <header
-      class="flex min-h-14 shrink-0 items-center gap-2 border-b px-4 py-2"
-      data-tauri-drag-region={isMacOS}
+    <AppHeader
+      title={activeHeaderTitle}
+      description={activeHeaderDescription}
+      {isMacOS}
     >
-      <Sidebar.Trigger class="{!useSidebar().open && isMacOS ? 'ml-20' : '-ml-1'} transition-all duration-300" />
-      <Separator orientation="vertical" class="mr-2 data-[orientation=vertical]:h-4" />
-      <div class="flex-1 min-w-0 flex items-center" data-tauri-drag-region={isMacOS}>
-        <div class="min-w-0" data-tauri-drag-region={isMacOS}>
-          <h1 data-tauri-drag-region={isMacOS} class="text-lg font-semibold truncate">{activeHeaderTitle}</h1>
-          {#if activeHeaderDescription}
-            <p data-tauri-drag-region={isMacOS} class="text-sm text-muted-foreground truncate">
-              {activeHeaderDescription}
-            </p>
-          {/if}
-        </div>
-      </div>
-      {#if globalToolProgress.active}
-        <HoverCard.Root openDelay={150} closeDelay={100}>
-          <HoverCard.Trigger
-            class="block w-38 rounded-md border bg-muted/40 px-2 py-1.5 transition-colors hover:bg-muted/60"
-            title={`Global progress: ${Math.round(globalToolProgress.percentage)}%`}
-          >
-            <div class="flex items-center gap-2">
-              <Progress value={globalToolProgress.percentage} class="h-2 flex-1" />
-              <span class="text-[11px] font-medium tabular-nums">{Math.round(globalToolProgress.percentage)}%</span>
-            </div>
-          </HoverCard.Trigger>
-          <HoverCard.Content align="end" class="w-80 p-3">
-            <div class="mb-2 border-b pb-2">
-              <div class="mb-2 flex items-center justify-between">
-                <p class="text-[11px] uppercase tracking-wide text-muted-foreground">Global Progress</p>
-                <p class="text-sm font-medium">{Math.round(globalToolProgress.percentage)}%</p>
+      {#snippet leading()}
+        <Sidebar.Trigger class="{!useSidebar().open && isMacOS ? 'ml-20' : '-ml-1'} transition-all duration-300" />
+        <Separator orientation="vertical" class="mr-2 data-[orientation=vertical]:h-4" />
+      {/snippet}
+
+      {#snippet status()}
+        {#if globalToolProgress.active}
+          <HoverCard.Root openDelay={150} closeDelay={100}>
+            <HoverCard.Trigger
+              class="block w-38 rounded-md border bg-muted/40 px-2 py-1.5 transition-colors hover:bg-muted/60"
+              title={`Global progress: ${Math.round(globalToolProgress.percentage)}%`}
+            >
+              <div class="flex items-center gap-2">
+                <Progress value={globalToolProgress.percentage} class="h-2 flex-1" />
+                <span class="text-[11px] font-medium tabular-nums">{Math.round(globalToolProgress.percentage)}%</span>
               </div>
-              <Progress value={globalToolProgress.percentage} class="h-2" />
-              <p class="mt-1 text-[11px] text-muted-foreground">{globalToolProgress.tools.length} tools active</p>
-            </div>
-            <div class="space-y-2">
-              {#each globalToolProgress.tools as metric (metric.toolId)}
-                {@const ToolIcon = metric.icon}
-                <div class="rounded-md border bg-muted/30 px-2 py-1.5">
-                  <div class="mb-1 flex items-center gap-2">
-                    <ToolIcon class="size-4 text-muted-foreground" />
-                    <p class="truncate text-xs font-medium flex-1">{metric.label}</p>
-                    <p class="text-[11px] font-medium tabular-nums">{Math.round(metric.percentage)}%</p>
-                  </div>
-                  <Progress value={metric.percentage} class="h-1.5" />
-                  <p class="mt-1 truncate text-[11px] text-muted-foreground">{metric.detailText}</p>
+            </HoverCard.Trigger>
+            <HoverCard.Content align="end" class="w-80 p-3">
+              <div class="mb-2 border-b pb-2">
+                <div class="mb-2 flex items-center justify-between">
+                  <p class="text-[11px] uppercase tracking-wide text-muted-foreground">Global Progress</p>
+                  <p class="text-sm font-medium">{Math.round(globalToolProgress.percentage)}%</p>
                 </div>
-              {/each}
-            </div>
-          </HoverCard.Content>
-        </HoverCard.Root>
-      {/if}
+                <Progress value={globalToolProgress.percentage} class="h-2" />
+                <p class="mt-1 text-[11px] text-muted-foreground">{globalToolProgress.tools.length} tools active</p>
+              </div>
+              <div class="space-y-2">
+                {#each globalToolProgress.tools as metric (metric.toolId)}
+                  {@const ToolIcon = metric.icon}
+                  <div class="rounded-md border bg-muted/30 px-2 py-1.5">
+                    <div class="mb-1 flex items-center gap-2">
+                      <ToolIcon class="size-4 text-muted-foreground" />
+                      <p class="truncate text-xs font-medium flex-1">{metric.label}</p>
+                      <p class="text-[11px] font-medium tabular-nums">{Math.round(metric.percentage)}%</p>
+                    </div>
+                    <Progress value={metric.percentage} class="h-1.5" />
+                    <p class="mt-1 truncate text-[11px] text-muted-foreground">{metric.detailText}</p>
+                  </div>
+                {/each}
+              </div>
+            </HoverCard.Content>
+          </HoverCard.Root>
+        {/if}
+      {/snippet}
 
-      <!-- Merge view mode buttons (only visible in merge view) -->
-      {#if showMergeModeButtons}
-        <div class="flex items-center gap-1 mr-2">
+      {#snippet actions()}
+        {#if activeToolHeader?.actions}
+          {@render activeToolHeader.actions()}
+        {/if}
+      {/snippet}
+
+      {#snippet trailing()}
+        {#if showGlobalExportButton}
           <Button
-            variant={mergeViewMode === 'home' ? 'secondary' : 'ghost'}
+            variant="outline"
             size="sm"
-            onclick={() => mergeViewMode = 'home'}
-            title="Home view"
+            onclick={handleOpenGlobalExportDialog}
+            disabled={globalExportDisabled}
+            title={globalExportTitle}
           >
-            <Home class="size-4 mr-1" />
-            Home
+            <Download class="size-4 mr-2" />
+            Export
           </Button>
-          <Button
-            variant={mergeViewMode === 'groups' ? 'secondary' : 'ghost'}
-            size="sm"
-            onclick={() => mergeViewMode = 'groups'}
-            title="Groups view"
-          >
-            <LayoutGrid class="size-4 mr-1" />
-            Groups
-          </Button>
-          <Button
-            variant={mergeViewMode === 'table' ? 'secondary' : 'ghost'}
-            size="sm"
-            onclick={() => mergeViewMode = 'table'}
-            title="Table view"
-          >
-            <Table class="size-4 mr-1" />
-            Table
-          </Button>
-        </div>
-        <Separator orientation="vertical" class="h-6 mr-2" />
-      {/if}
-
-      {#if showMergeBackButton}
-        <Button
-          variant="outline"
-          size="sm"
-          class="mr-2"
-          onclick={handleMergeHeaderBack}
-        >
-          <ArrowLeft class="size-4 mr-2" />
-          Back to Merge
-        </Button>
-        <Separator orientation="vertical" class="h-6 mr-2" />
-      {/if}
-
-      {#if showTranscodeBackButton}
-        <Button
-          variant="outline"
-          size="sm"
-          class="mr-2"
-          onclick={handleTranscodeHeaderBack}
-        >
-          <ArrowLeft class="size-4 mr-2" />
-          Back to Transcode
-        </Button>
-      {/if}
-
-      {#if showTranscodeHeaderActions}
-        {#if transcodeHeaderState?.showModeToggle}
-          <div class="inline-flex h-9 items-center gap-1 rounded-md border bg-muted/30 p-1">
-            <Button
-              variant={transcodeHeaderState.mode === 'ai' ? 'default' : 'ghost'}
-              size="sm"
-              class="h-7 rounded-sm px-3"
-              onclick={() => transcodeStore.setMode('ai')}
-            >
-              <Wand2 class="size-4 mr-2" />
-              AI
-            </Button>
-            <Button
-              variant={transcodeHeaderState.mode === 'advanced' ? 'default' : 'ghost'}
-              size="sm"
-              class="h-7 rounded-sm px-3"
-              onclick={() => transcodeStore.setMode('advanced')}
-            >
-              <Sparkles class="size-4 mr-2" />
-              Advanced
-            </Button>
-          </div>
         {/if}
 
-        {#if transcodeHeaderState?.showApplyToAll}
-          <Button variant="outline" size="sm" onclick={handleApplyTranscodeProfileToAll}>
-            <Copy class="size-4 mr-2" />
-            Apply to All
-          </Button>
-        {/if}
-      {/if}
+        <Separator orientation="vertical" class="h-6 ml-1 mr-1" />
 
-      {#if showGlobalExportButton}
         <Button
-          variant="outline"
-          size="sm"
-          onclick={handleOpenGlobalExportDialog}
-          disabled={globalExportDisabled}
-          title={globalExportTitle}
+          variant="ghost"
+          size="icon"
+          onclick={() => logStore.open()}
+          class="relative"
+          title="View logs"
         >
-          <Download class="size-4 mr-2" />
-          Export
+          <ScrollText class="size-4" />
+          {#if logStore.unreadErrorCount > 0}
+            <span class="absolute -top-1 -right-1 size-4 bg-destructive text-white rounded-full text-[10px] font-medium flex items-center justify-center">
+              {logStore.unreadErrorCount > 9 ? '9+' : logStore.unreadErrorCount}
+            </span>
+          {/if}
         </Button>
-      {/if}
-
-      <Separator orientation="vertical" class="h-6 ml-1 mr-1" />
-
-      <!-- Logs button -->
-      <Button
-        variant="ghost"
-        size="icon"
-        onclick={() => logStore.open()}
-        class="relative"
-        title="View logs"
-      >
-        <ScrollText class="size-4" />
-        {#if logStore.unreadErrorCount > 0}
-          <span class="absolute -top-1 -right-1 size-4 bg-destructive text-white rounded-full text-[10px] font-medium flex items-center justify-center">
-            {logStore.unreadErrorCount > 9 ? '9+' : logStore.unreadErrorCount}
-          </span>
-        {/if}
-      </Button>
-    </header>
+      {/snippet}
+    </AppHeader>
 
     <!-- FFmpeg warning -->
     {#if ffmpegAvailable === false && currentView !== 'settings'}
@@ -911,8 +742,6 @@
       <div class="absolute inset-0" style="display: {currentView === 'merge' ? 'block' : 'none'}">
         <MergeView
           bind:this={mergeViewRef}
-          viewMode={mergeViewMode}
-          onHeaderStateChange={handleMergeHeaderStateChange}
         />
       </div>
 
@@ -921,7 +750,6 @@
         <TranscodeView
           bind:this={transcodeViewRef}
           onNavigateToSettings={() => handleNavigate('settings')}
-          onHeaderStateChange={handleTranscodeHeaderStateChange}
         />
       </div>
       
