@@ -62,6 +62,7 @@
   let transcodeViewRef: {
     handleFileDrop: (paths: string[]) => Promise<void>;
     applySelectedProfileToAll: () => void;
+    showMainView: () => void;
   } | undefined = $state();
   let infoViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let translateViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
@@ -75,12 +76,15 @@
     showBackButton: boolean;
   } | null>(null);
   let transcodeHeaderState = $state<{
+    title?: string;
+    description?: string;
     readyCount: number;
     conflictCount: number;
     hasFiles: boolean;
     mode: 'ai' | 'advanced';
     showModeToggle: boolean;
     showApplyToAll: boolean;
+    showBackButton: boolean;
   } | null>(null);
 
   const isMacOS = OS() === 'MacOS';
@@ -556,21 +560,41 @@
     settings: 'Settings'
   };
 
-  const activeHeaderTitle = $derived(
-    currentView === 'merge' && mergeHeaderState?.title
-      ? mergeHeaderState.title
-      : viewTitles[currentView],
-  );
-  const activeHeaderDescription = $derived(
-    currentView === 'merge' ? mergeHeaderState?.description : undefined,
-  );
+  const activeHeaderTitle = $derived.by(() => {
+    if (currentView === 'merge' && mergeHeaderState?.title) {
+      return mergeHeaderState.title;
+    }
+
+    if (currentView === 'transcode' && transcodeHeaderState?.title) {
+      return transcodeHeaderState.title;
+    }
+
+    return viewTitles[currentView];
+  });
+  const activeHeaderDescription = $derived.by(() => {
+    if (currentView === 'merge') {
+      return mergeHeaderState?.description;
+    }
+
+    if (currentView === 'transcode') {
+      return transcodeHeaderState?.description;
+    }
+
+    return undefined;
+  });
   const showMergeModeButtons = $derived(
     currentView === 'merge' && (mergeHeaderState?.showModeButtons ?? true),
   );
   const showMergeBackButton = $derived(
     currentView === 'merge' && Boolean(mergeHeaderState?.showBackButton),
   );
-  const showTranscodeHeaderActions = $derived(currentView === 'transcode');
+  const showTranscodeBackButton = $derived(
+    currentView === 'transcode' && Boolean(transcodeHeaderState?.showBackButton),
+  );
+  const showTranscodeHeaderActions = $derived(
+    currentView === 'transcode' &&
+      Boolean(transcodeHeaderState?.showModeToggle || transcodeHeaderState?.showApplyToAll),
+  );
 
   onMount(() => {
     initApp();
@@ -653,14 +677,21 @@
     mergeViewRef?.showMainView();
   }
 
+  function handleTranscodeHeaderBack() {
+    transcodeViewRef?.showMainView();
+  }
+
   function handleTranscodeHeaderStateChange(
     state: {
+      title?: string;
+      description?: string;
       readyCount: number;
       conflictCount: number;
       hasFiles: boolean;
       mode: 'ai' | 'advanced';
       showModeToggle: boolean;
       showApplyToAll: boolean;
+      showBackButton: boolean;
     } | null,
   ) {
     transcodeHeaderState = state;
@@ -780,8 +811,19 @@
         <Separator orientation="vertical" class="h-6 mr-2" />
       {/if}
 
-      {#if showTranscodeHeaderActions}
+      {#if showTranscodeBackButton}
+        <Button
+          variant="outline"
+          size="sm"
+          class="mr-2"
+          onclick={handleTranscodeHeaderBack}
+        >
+          <ArrowLeft class="size-4 mr-2" />
+          Back to Transcode
+        </Button>
+      {/if}
 
+      {#if showTranscodeHeaderActions}
         {#if transcodeHeaderState?.showModeToggle}
           <div class="inline-flex h-9 items-center gap-1 rounded-md border bg-muted/30 p-1">
             <Button
