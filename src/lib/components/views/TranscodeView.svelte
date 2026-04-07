@@ -1392,7 +1392,7 @@
               <Card.Header class="pb-3">
                 <Card.Title>AI Assist</Card.Title>
                 <Card.Description>
-                  Analyze each file with screenshots, FFprobe metadata, and the machine FFmpeg capabilities.
+                  Let AI recommend the best transcode settings for each file.
                 </Card.Description>
               </Card.Header>
               <Card.Content class="space-y-4">

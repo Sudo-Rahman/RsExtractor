@@ -229,6 +229,35 @@ fn apply_safe_additional_args(
     Ok(())
 }
 
+fn validate_libaom_cpu_used(preset: &str) -> Result<(), String> {
+    let parsed = preset
+        .parse::<u8>()
+        .map_err(|_| "libaom-av1 preset must be an integer from 0 to 8".to_string())?;
+
+    if parsed > 8 {
+        return Err("libaom-av1 preset must be an integer from 0 to 8".to_string());
+    }
+
+    Ok(())
+}
+
+fn apply_video_preset_arg(
+    args: &mut Vec<String>,
+    encoder_id: &str,
+    preset: &str,
+) -> Result<(), String> {
+    if encoder_id == "libaom-av1" {
+        validate_libaom_cpu_used(preset)?;
+        args.push("-cpu-used".to_string());
+        args.push(preset.to_string());
+        return Ok(());
+    }
+
+    args.push("-preset".to_string());
+    args.push(preset.to_string());
+    Ok(())
+}
+
 fn build_transcode_args(
     request: &TranscodeRequest,
     streams: &[Value],
@@ -281,7 +310,9 @@ fn build_transcode_args(
             }
             "transcode" => {
                 let Some(encoder_id) = request.video.encoder_id.as_deref() else {
-                    return Err("A video encoder is required when video transcoding is enabled".to_string());
+                    return Err(
+                        "A video encoder is required when video transcoding is enabled".to_string(),
+                    );
                 };
 
                 args.push("-c:v".to_string());
@@ -332,8 +363,7 @@ fn build_transcode_args(
 
                 if let Some(preset) = request.video.preset.as_deref() {
                     if !preset.trim().is_empty() {
-                        args.push("-preset".to_string());
-                        args.push(preset.trim().to_string());
+                        apply_video_preset_arg(&mut args, encoder_id, preset.trim())?;
                     }
                 }
 
@@ -364,7 +394,10 @@ fn build_transcode_args(
             }
             "transcode" => {
                 let Some(encoder_id) = request.audio.encoder_id.as_deref() else {
-                    return Err("An audio encoder is required when audio transcoding is enabled".to_string());
+                    return Err(
+                        "An audio encoder is required when audio transcoding is enabled"
+                            .to_string(),
+                    );
                 };
 
                 args.push("-c:a".to_string());
@@ -417,10 +450,14 @@ fn build_transcode_args(
             }
             "convert_text" => {
                 let Some(encoder_id) = request.subtitles.encoder_id.as_deref() else {
-                    return Err("A subtitle encoder is required when subtitle conversion is enabled".to_string());
+                    return Err(
+                        "A subtitle encoder is required when subtitle conversion is enabled"
+                            .to_string(),
+                    );
                 };
 
-                for (output_index, codec_name) in mapped_subtitle_output_indices.iter().enumerate() {
+                for (output_index, codec_name) in mapped_subtitle_output_indices.iter().enumerate()
+                {
                     if !is_text_subtitle_codec(codec_name)
                         && !can_copy_subtitle_codec(&request.container_id, codec_name)
                     {
@@ -450,7 +487,10 @@ fn build_transcode_args(
         if duration_us > 0 {
             let duration_seconds = duration_us as f64 / 1_000_000.0;
             args.push("-metadata".to_string());
-            args.push(format!("mediaflow.duration_seconds={:.3}", duration_seconds));
+            args.push(format!(
+                "mediaflow.duration_seconds={:.3}",
+                duration_seconds
+            ));
         }
     }
 
@@ -472,8 +512,8 @@ pub(crate) async fn transcode_media_with_bins(
     validate_output_path_matches_container(request)?;
 
     let probe_json = probe_file_with_ffprobe(ffprobe_path, &request.input_path).await?;
-    let probe_value: Value =
-        serde_json::from_str(&probe_json).map_err(|error| format!("Invalid probe JSON: {}", error))?;
+    let probe_value: Value = serde_json::from_str(&probe_json)
+        .map_err(|error| format!("Invalid probe JSON: {}", error))?;
     let streams = probe_value
         .get("streams")
         .and_then(|value| value.as_array())
@@ -490,7 +530,12 @@ pub(crate) async fn transcode_media_with_bins(
         Command::new(ffmpeg_path).args(&args).output(),
     )
     .await
-    .map_err(|_| format!("Transcode timeout after {} seconds", TRANSCODE_TIMEOUT.as_secs()))?
+    .map_err(|_| {
+        format!(
+            "Transcode timeout after {} seconds",
+            TRANSCODE_TIMEOUT.as_secs()
+        )
+    })?
     .map_err(|error| format!("Failed to execute ffmpeg: {}", error))?;
 
     if !output.status.success() {
@@ -519,8 +564,8 @@ pub(crate) async fn transcode_media(
     let ffprobe_path = resolve_ffprobe_path(&app)?;
 
     let probe_json = probe_file_with_ffprobe(&ffprobe_path, &request.input_path).await?;
-    let probe_value: Value =
-        serde_json::from_str(&probe_json).map_err(|error| format!("Invalid probe JSON: {}", error))?;
+    let probe_value: Value = serde_json::from_str(&probe_json)
+        .map_err(|error| format!("Invalid probe JSON: {}", error))?;
     let streams = probe_value
         .get("streams")
         .and_then(|value| value.as_array())
@@ -591,7 +636,10 @@ pub(crate) async fn transcode_media(
                 guard.remove(&input_path_for_cleanup);
             }
             let _ = std::fs::remove_file(&output_path_for_cleanup);
-            format!("Transcode timeout after {} seconds", TRANSCODE_TIMEOUT.as_secs())
+            format!(
+                "Transcode timeout after {} seconds",
+                TRANSCODE_TIMEOUT.as_secs()
+            )
         })?
         .map_err(|error| {
             if let Ok(mut guard) = super::state::TRANSCODE_PROCESS_IDS.lock() {
@@ -631,9 +679,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        build_transcode_args, transcode_media_with_bins, TranscodeAdditionalArg,
-        TranscodeAudioSettings, TranscodeRequest, TranscodeSubtitleSettings,
-        TranscodeVideoSettings,
+        TranscodeAdditionalArg, TranscodeAudioSettings, TranscodeRequest,
+        TranscodeSubtitleSettings, TranscodeVideoSettings, build_transcode_args,
+        transcode_media_with_bins,
     };
 
     fn build_request(output_path: &str) -> TranscodeRequest {
@@ -682,14 +730,17 @@ mod tests {
             json!({ "codec_type": "subtitle", "codec_name": "hdmv_pgs_subtitle" }),
         ];
 
-        let args = build_transcode_args(&request, &streams, Some(10_000_000))
-            .expect("args should build");
+        let args =
+            build_transcode_args(&request, &streams, Some(10_000_000)).expect("args should build");
 
         assert!(args.windows(2).any(|window| window == ["-c:v", "libx264"]));
         assert!(args.windows(2).any(|window| window == ["-c:a", "aac"]));
         assert!(args.windows(2).any(|window| window == ["-c:s:0", "srt"]));
         assert!(args.windows(2).any(|window| window == ["-c:s:1", "copy"]));
-        assert!(args.windows(2).any(|window| window == ["-progress", "pipe:1"]));
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["-progress", "pipe:1"])
+        );
     }
 
     #[test]
@@ -703,8 +754,8 @@ mod tests {
         }];
         let streams = vec![json!({ "codec_type": "video", "codec_name": "h264" })];
 
-        let error = build_transcode_args(&request, &streams, None)
-            .expect_err("blocked arg should fail");
+        let error =
+            build_transcode_args(&request, &streams, None).expect_err("blocked arg should fail");
         assert!(error.contains("not allowed"));
     }
 
@@ -721,6 +772,50 @@ mod tests {
         let error = build_transcode_args(&request, &streams, None)
             .expect_err("subrip copy to mp4 should fail");
         assert!(error.contains("cannot copy subtitle codec"));
+    }
+
+    #[test]
+    fn build_transcode_args_maps_libaom_preset_to_cpu_used() {
+        let mut request = build_request("/tmp/output.mkv");
+        request.container_id = "mkv".to_string();
+        request.video.encoder_id = Some("libaom-av1".to_string());
+        request.video.preset = Some("4".to_string());
+        let streams = vec![json!({ "codec_type": "video", "codec_name": "h264" })];
+
+        let args =
+            build_transcode_args(&request, &streams, None).expect("libaom args should build");
+
+        assert!(args.windows(2).any(|window| window == ["-cpu-used", "4"]));
+        assert!(!args.iter().any(|arg| arg == "-preset"));
+    }
+
+    #[test]
+    fn build_transcode_args_rejects_invalid_libaom_preset() {
+        let mut request = build_request("/tmp/output.mkv");
+        request.container_id = "mkv".to_string();
+        request.video.encoder_id = Some("libaom-av1".to_string());
+        request.video.preset = Some("9".to_string());
+        let streams = vec![json!({ "codec_type": "video", "codec_name": "h264" })];
+
+        let error = build_transcode_args(&request, &streams, None)
+            .expect_err("invalid libaom preset should fail");
+
+        assert!(error.contains("libaom-av1 preset must be an integer from 0 to 8"));
+    }
+
+    #[test]
+    fn build_transcode_args_keeps_svtav1_preset_mapping() {
+        let mut request = build_request("/tmp/output.mkv");
+        request.container_id = "mkv".to_string();
+        request.video.encoder_id = Some("libsvtav1".to_string());
+        request.video.preset = Some("6".to_string());
+        let streams = vec![json!({ "codec_type": "video", "codec_name": "h264" })];
+
+        let args =
+            build_transcode_args(&request, &streams, None).expect("svtav1 args should build");
+
+        assert!(args.windows(2).any(|window| window == ["-preset", "6"]));
+        assert!(!args.iter().any(|arg| arg == "-cpu-used"));
     }
 
     #[test]
