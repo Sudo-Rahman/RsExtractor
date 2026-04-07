@@ -2,6 +2,19 @@
   export interface TranscodeViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
     applySelectedProfileToAll: () => void;
+    showMainView: () => void;
+  }
+
+  export interface TranscodeHeaderState {
+    title?: string;
+    description?: string;
+    readyCount: number;
+    conflictCount: number;
+    hasFiles: boolean;
+    mode: 'ai' | 'advanced';
+    showModeToggle: boolean;
+    showApplyToAll: boolean;
+    showBackButton: boolean;
   }
 </script>
 
@@ -11,7 +24,6 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
   import {
-    ArrowLeft,
     CheckCircle,
     FileVideo,
     FolderOpen,
@@ -116,14 +128,7 @@
 
   interface Props {
     onNavigateToSettings?: () => void;
-    onHeaderStateChange?: (state: {
-      readyCount: number;
-      conflictCount: number;
-      hasFiles: boolean;
-      mode: 'ai' | 'advanced';
-      showModeToggle: boolean;
-      showApplyToAll: boolean;
-    } | null) => void;
+    onHeaderStateChange?: (state: TranscodeHeaderState | null) => void;
   }
 
   let { onNavigateToSettings, onHeaderStateChange }: Props = $props();
@@ -605,12 +610,16 @@
 
   $effect(() => {
     onHeaderStateChange?.({
+      title: transcodeInternalView === 'output-naming' ? 'Output Naming' : undefined,
+      description: transcodeInternalView === 'output-naming'
+        ? '': undefined,
       readyCount: readyQueueFiles.length,
       conflictCount: outputConflictCount,
       hasFiles: transcodeStore.files.length > 0,
       mode: transcodeStore.mode,
       showModeToggle: transcodeInternalView === 'main' && Boolean(selectedFile),
       showApplyToAll: transcodeInternalView === 'main' && Boolean(selectedFile),
+      showBackButton: transcodeInternalView === 'output-naming',
     });
   });
 
@@ -626,6 +635,10 @@
 
   export function applySelectedProfileToAll(): void {
     handleApplyCurrentToAll();
+  }
+
+  export function showMainView(): void {
+    transcodeInternalView = 'main';
   }
 
   async function handleAddFiles(): Promise<void> {
@@ -1116,75 +1129,62 @@
 </script>
 
 {#if transcodeInternalView === 'output-naming'}
-  <div class="h-full flex flex-col overflow-hidden">
-    <div class="border-b px-4 py-3 flex items-center justify-between">
-      <div>
-        <h2 class="font-semibold">Output Naming</h2>
-        <p class="text-sm text-muted-foreground">Rename output files before the batch starts.</p>
-      </div>
-      <Button variant="outline" size="sm" onclick={() => transcodeInternalView = 'main'}>
-        <ArrowLeft class="size-4 mr-2" />
-        Back to Transcode
-      </Button>
-    </div>
-
-    <div class="flex-1 min-h-0">
-      <RenameWorkspace
-        workspace={outputNamingWorkspace}
-        showImportButton={false}
-        onClearAll={handleClearAll}
-        onRemoveFile={handleRemoveFile}
-        emptyStateTitle="No files in the transcode queue"
-        emptyStateSubtitle="Add files in Transcode to prepare output names."
-      >
-        {#snippet actionPanel()}
-          <div class="space-y-3">
-            <div class="space-y-2">
-              <Label class="text-xs uppercase tracking-wide text-muted-foreground">Output Folder</Label>
+  <div class="h-full overflow-hidden">
+    <RenameWorkspace
+      workspace={outputNamingWorkspace}
+      showImportButton={false}
+      onClearAll={handleClearAll}
+      onRemoveFile={handleRemoveFile}
+      emptyStateTitle="No files in the transcode queue"
+      emptyStateSubtitle="Add files in Transcode to prepare output names."
+    >
+      {#snippet actionPanel()}
+        <div class="space-y-3">
+          <div class="space-y-2">
+            <Label class="text-xs uppercase tracking-wide text-muted-foreground">Output Folder</Label>
+            <Button
+              variant="outline"
+              class="w-full justify-start gap-2 h-auto py-2 text-left"
+              onclick={handleSelectOutputDir}
+            >
+              <FolderOpen class="size-4 shrink-0" />
+              <span class="truncate flex-1 text-sm">
+                {#if outputNamingWorkspace.outputDir}
+                  {outputNamingWorkspace.outputDir}
+                {:else}
+                  <span class="text-muted-foreground">Use each source folder</span>
+                {/if}
+              </span>
+            </Button>
+            {#if outputNamingWorkspace.outputDir}
               <Button
-                variant="outline"
-                class="w-full justify-start gap-2 h-auto py-2 text-left"
-                onclick={handleSelectOutputDir}
+                variant="ghost"
+                size="sm"
+                class="h-auto px-0 text-xs text-muted-foreground hover:text-foreground"
+                onclick={handleClearOutputDir}
               >
-                <FolderOpen class="size-4 shrink-0" />
-                <span class="truncate flex-1 text-sm">
-                  {#if outputNamingWorkspace.outputDir}
-                    {outputNamingWorkspace.outputDir}
-                  {:else}
-                    <span class="text-muted-foreground">Use each source folder</span>
-                  {/if}
-                </span>
+                Use source folders
               </Button>
-              {#if outputNamingWorkspace.outputDir}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="h-auto px-0 text-xs text-muted-foreground hover:text-foreground"
-                  onclick={handleClearOutputDir}
-                >
-                  Use source folders
-                </Button>
-              {/if}
-            </div>
+            {/if}
+          </div>
 
-            <div class="rounded-md border bg-muted/30 p-3 space-y-2">
-              <div class="flex items-center justify-between text-sm">
-                <span class="text-muted-foreground">Selected outputs</span>
-                <Badge variant={outputNamingWorkspace.selectedCount > 0 ? 'default' : 'secondary'}>
-                  {outputNamingWorkspace.selectedCount}
-                </Badge>
-              </div>
-              <div class="flex items-center justify-between text-sm">
-                <span class="text-muted-foreground">Conflicts</span>
-                <Badge variant={outputConflictCount > 0 ? 'destructive' : 'secondary'}>
-                  {outputConflictCount}
-                </Badge>
-              </div>
+          <div class="rounded-md border bg-muted/30 p-3 space-y-2">
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-muted-foreground">Selected outputs</span>
+              <Badge variant={outputNamingWorkspace.selectedCount > 0 ? 'default' : 'secondary'}>
+                {outputNamingWorkspace.selectedCount}
+              </Badge>
+            </div>
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-muted-foreground">Conflicts</span>
+              <Badge variant={outputConflictCount > 0 ? 'destructive' : 'secondary'}>
+                {outputConflictCount}
+              </Badge>
             </div>
           </div>
-        {/snippet}
-      </RenameWorkspace>
-    </div>
+        </div>
+      {/snippet}
+    </RenameWorkspace>
   </div>
 {:else}
   <div class="h-full flex overflow-hidden">
