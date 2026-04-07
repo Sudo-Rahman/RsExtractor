@@ -3,10 +3,11 @@ import { readFile } from '@tauri-apps/plugin-fs';
 import { settingsStore } from '$lib/stores';
 import type {
   TranscodeAiIntent,
+  TranscodeAiErrorResponse,
   TranscodeAiRecommendation,
+  TranscodeAiSuccessResponse,
   TranscodeCapabilities,
   TranscodeFile,
-  TranscodeProfile,
 } from '$lib/types';
 import type { LLMProvider } from '$lib/types';
 import { callLlm, type LlmContentPart } from './llm-client';
@@ -56,18 +57,24 @@ async function buildImageContentParts(paths: string[]): Promise<LlmContentPart[]
 function buildAiSystemPrompt(): string {
   return [
     'You are MediaFlow, an expert FFmpeg transcoding assistant.',
+    'Your scope is strictly limited to the Transcode tool in MediaFlow.',
+    'Only handle requests about transcoding settings, codec choices, quality, compatibility, containers, subtitles, audio handling, speed, archival tradeoffs, and FFmpeg options relevant to this tool.',
+    'If the optional user instruction asks for anything unrelated to Transcode, transcoding, or output configuration, do not answer that request and do not continue with profile generation.',
+    'For unrelated or out-of-scope user instructions, return a JSON error response with status "error", errorCode "out_of_scope", and a short errorMessage.',
     'Return valid JSON only.',
     'Recommend a practical transcoding profile based on visual content, source metadata, and machine capabilities.',
     'The attached frames are full-resolution, lossless PNG screenshots extracted from the source file.',
     'Inspect the frames carefully for grain, animation, dark scenes, compression artifacts, line art, motion complexity, and fine texture retention needs.',
     'Never invent unsupported encoders, profiles, pixel formats, or containers.',
     'Respect the machine capability list exactly.',
+    'If the optional user instruction is relevant to Transcode, follow it when practical and when it does not conflict with machine capabilities, source limitations, or container compatibility.',
     'Never recommend a lossless or higher-fidelity audio target when the source audio is already lossy.',
     'Do not increase audio bitrate, channels, or sample rate beyond the source unless there is a clear compatibility reason.',
     'For lossy source audio in archive mode, prefer copy when practical.',
     'Subtitle strategy rules: use "copy", "convert_text", or "disable". Image subtitles must remain copy or disable.',
     'JSON schema:',
-    '{"containerId":string,"video":{"mode":"copy|transcode|disable","encoderId"?:string,"profile"?:string,"level"?:string,"pixelFormat"?:string,"qualityMode":"crf|bitrate|qp","crf"?:number,"qp"?:number,"bitrateKbps"?:number,"preset"?:string},"audio":{"mode":"copy|transcode|disable","encoderId"?:string,"bitrateKbps"?:number,"channels"?:number,"sampleRate"?:number},"subtitles":{"mode":"copy|convert_text|disable","encoderId"?:string},"rationale":string}',
+    '{"status":"ok","containerId":string,"video":{"mode":"copy|transcode|disable","encoderId"?:string,"profile"?:string,"level"?:string,"pixelFormat"?:string,"qualityMode":"crf|bitrate|qp","crf"?:number,"qp"?:number,"bitrateKbps"?:number,"preset"?:string},"audio":{"mode":"copy|transcode|disable","encoderId"?:string,"bitrateKbps"?:number,"channels"?:number,"sampleRate"?:number},"subtitles":{"mode":"copy|convert_text|disable","encoderId"?:string},"rationale":string}',
+    '{"status":"error","errorCode":"out_of_scope","errorMessage":string}',
   ].join('\n');
 }
 
@@ -75,6 +82,7 @@ function buildAiTextPrompt(
   file: TranscodeFile,
   capabilities: TranscodeCapabilities,
   intent: TranscodeAiIntent,
+  userInstruction?: string,
 ): string {
   const primaryAudioTrack = file.tracks.find((track) => track.type === 'audio');
   const audioQualityHint = primaryAudioTrack
@@ -91,6 +99,9 @@ function buildAiTextPrompt(
     'Analysis frames:',
     '- 6 full-resolution, lossless PNG screenshots are attached below this prompt.',
     '- Use them to judge grain/noise, animation vs live action, dark scenes, gradients, compression artifacts, and texture complexity.',
+    '',
+    'Optional user instruction:',
+    userInstruction?.trim() ? userInstruction.trim() : 'None provided.',
     '',
     'Machine capabilities JSON:',
     JSON.stringify(capabilities, null, 2),
@@ -115,17 +126,25 @@ function buildAiTextPrompt(
     '- If the source audio is lossy, never recommend FLAC, PCM, ALAC, WAVPACK, or other lossless upgrades.',
     '- If the source audio is lossy, do not recommend a higher audio bitrate, higher sample rate, or more channels than the source.',
     '- Prefer copying already-lossy source audio when that best preserves the original quality envelope.',
+    '- If the optional user instruction is unrelated to transcoding or output configuration, return the out_of_scope JSON error instead of a profile.',
   ].join('\n');
 }
 
-function isValidProfileResponse(value: unknown): value is {
-  containerId: string;
-  video: Partial<TranscodeProfile['video']>;
-  audio: Partial<TranscodeProfile['audio']>;
-  subtitles: Partial<TranscodeProfile['subtitles']>;
-  rationale?: string;
-} {
-  return value !== null && typeof value === 'object' && 'containerId' in value;
+function isAiErrorResponse(value: unknown): value is TranscodeAiErrorResponse {
+  return value !== null
+    && typeof value === 'object'
+    && 'status' in value
+    && (value as { status?: unknown }).status === 'error'
+    && (value as { errorCode?: unknown }).errorCode === 'out_of_scope'
+    && typeof (value as { errorMessage?: unknown }).errorMessage === 'string';
+}
+
+function isAiSuccessResponse(value: unknown): value is TranscodeAiSuccessResponse {
+  return value !== null
+    && typeof value === 'object'
+    && 'status' in value
+    && (value as { status?: unknown }).status === 'ok'
+    && typeof (value as { containerId?: unknown }).containerId === 'string';
 }
 
 export interface AnalyzeTranscodeProfileOptions {
@@ -134,6 +153,7 @@ export interface AnalyzeTranscodeProfileOptions {
   provider: LLMProvider;
   model: string;
   intent: TranscodeAiIntent;
+  userInstruction?: string;
   signal?: AbortSignal;
 }
 
@@ -146,7 +166,12 @@ export async function analyzeTranscodeProfile(
   }
 
   const imageParts = await buildImageContentParts(options.file.analysisFrames.slice(0, 6));
-  const textPrompt = buildAiTextPrompt(options.file, options.capabilities, options.intent);
+  const textPrompt = buildAiTextPrompt(
+    options.file,
+    options.capabilities,
+    options.intent,
+    options.userInstruction,
+  );
   const userContentParts: LlmContentPart[] = [{ type: 'text', text: textPrompt }, ...imageParts];
 
   const llmResponse = await callLlm({
@@ -170,7 +195,11 @@ export async function analyzeTranscodeProfile(
   }
 
   const parsed = JSON.parse(llmResponse.content);
-  if (!isValidProfileResponse(parsed)) {
+  if (isAiErrorResponse(parsed)) {
+    throw new Error(parsed.errorMessage);
+  }
+
+  if (!isAiSuccessResponse(parsed)) {
     throw new Error('The AI response did not match the expected profile schema');
   }
 
