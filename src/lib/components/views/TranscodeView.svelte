@@ -2246,16 +2246,16 @@
 </Dialog.Root>
 
 <Dialog.Root bind:open={infoDialogOpen}>
-  <Dialog.Content class="max-w-4xl">
+  <Dialog.Content class="sm:max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
     <Dialog.Header>
       <Dialog.Title>{infoDialogFile?.name ?? 'File information'}</Dialog.Title>
       <Dialog.Description>Important stream details detected by FFprobe.</Dialog.Description>
     </Dialog.Header>
 
     {#if infoDialogFile}
-      <div class="max-h-[70vh] overflow-auto pr-1 space-y-4">
-        <div class="grid gap-4 md:grid-cols-2">
-          <Card.Root>
+      <div class="min-h-0 flex-1 space-y-4 overflow-auto pr-1">
+        <div class="grid min-w-0 gap-4 md:grid-cols-2">
+          <Card.Root class="min-w-0">
             <Card.Header class="pb-3">
               <Card.Title>Overview</Card.Title>
             </Card.Header>
@@ -2283,7 +2283,7 @@
             </Card.Content>
           </Card.Root>
 
-          <Card.Root>
+          <Card.Root class="min-w-0">
             <Card.Header class="pb-3">
               <Card.Title>Track Summary</Card.Title>
             </Card.Header>
@@ -2315,7 +2315,7 @@
 
         {#if getPrimaryVideoTrack(infoDialogFile)}
           {@const videoTrack = getPrimaryVideoTrack(infoDialogFile)}
-          <Card.Root>
+          <Card.Root class="min-w-0">
             <Card.Header class="pb-3">
               <Card.Title>Primary Video</Card.Title>
             </Card.Header>
@@ -2374,7 +2374,7 @@
 
         {#if getPrimaryAudioTrack(infoDialogFile)}
           {@const audioTrack = getPrimaryAudioTrack(infoDialogFile)}
-          <Card.Root>
+          <Card.Root class="min-w-0">
             <Card.Header class="pb-3">
               <Card.Title>Primary Audio</Card.Title>
             </Card.Header>
@@ -2408,7 +2408,7 @@
         {/if}
 
         {#if getTracksByType(infoDialogFile, 'subtitle').length > 0}
-          <Card.Root>
+          <Card.Root class="min-w-0">
             <Card.Header class="pb-3">
               <Card.Title>Subtitles</Card.Title>
             </Card.Header>
@@ -2435,7 +2435,7 @@
           </Card.Root>
         {/if}
 
-        <Card.Root>
+        <Card.Root class="min-w-0">
           <Card.Header class="pb-3">
             <Card.Title>Readable FFprobe Summary</Card.Title>
           </Card.Header>
