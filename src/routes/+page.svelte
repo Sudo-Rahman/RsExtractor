@@ -781,15 +781,6 @@
       {/if}
 
       {#if showTranscodeHeaderActions}
-        {#if transcodeHeaderState?.hasFiles}
-          <div class="rounded-md border bg-muted/30 px-3 py-1.5 text-xs">
-            <span class="font-medium text-foreground">{transcodeHeaderState.readyCount} ready</span>
-            <span class="mx-1 text-muted-foreground">·</span>
-            <span class={transcodeHeaderState.conflictCount > 0 ? 'font-medium text-destructive' : 'text-muted-foreground'}>
-              {transcodeHeaderState.conflictCount} conflict{transcodeHeaderState.conflictCount === 1 ? '' : 's'}
-            </span>
-          </div>
-        {/if}
 
         {#if transcodeHeaderState?.showModeToggle}
           <div class="inline-flex h-9 items-center gap-1 rounded-md border bg-muted/30 p-1">

@@ -49,6 +49,7 @@ let activeTab = $state<TranscodeTab>('video');
 let aiProvider = $state<LLMProvider>(DEFAULT_PROVIDER);
 let aiModel = $state<string>(DEFAULT_MODEL);
 let aiIntent = $state<TranscodeAiIntent>('quality');
+let aiUserPrompt = $state('');
 let fileRunStates = $state<Map<string, FileRunState>>(new Map());
 let runtimeProgress = $state<TranscodeRuntimeProgress>({
   totalFiles: 0,
@@ -220,6 +221,10 @@ export const transcodeStore = {
     return aiIntent;
   },
 
+  get aiUserPrompt() {
+    return aiUserPrompt;
+  },
+
   get status() {
     return status;
   },
@@ -284,6 +289,10 @@ export const transcodeStore = {
 
   setAiIntent(intent: TranscodeAiIntent) {
     aiIntent = intent;
+  },
+
+  setAiUserPrompt(nextPrompt: string) {
+    aiUserPrompt = nextPrompt;
   },
 
   setCapabilitiesLoading() {
@@ -603,6 +612,7 @@ export const transcodeStore = {
     aiProvider = DEFAULT_PROVIDER;
     aiModel = DEFAULT_MODEL;
     aiIntent = 'quality';
+    aiUserPrompt = '';
     fileRunStates = new Map();
     runtimeProgress = resetRuntimeProgressState();
     status = 'idle';

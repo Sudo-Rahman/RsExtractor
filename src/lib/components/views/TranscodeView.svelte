@@ -839,6 +839,7 @@
             provider: transcodeStore.aiProvider,
             model: transcodeStore.aiModel,
             intent: transcodeStore.aiIntent,
+            userInstruction: transcodeStore.aiUserPrompt,
           });
 
           transcodeStore.setAiRecommendation(file.id, recommendation);
@@ -1430,6 +1431,20 @@
                   </div>
                 </div>
 
+                <div class="space-y-2">
+                  <Label class="text-sm font-medium" for="transcode-ai-user-prompt">Optional instruction</Label>
+                  <Textarea
+                    id="transcode-ai-user-prompt"
+                    value={transcodeStore.aiUserPrompt}
+                    class="min-h-24 text-sm"
+                    placeholder="Example: Prefer AV1 if it is supported and still practical for this source."
+                    oninput={(event) => transcodeStore.setAiUserPrompt(event.currentTarget.value)}
+                  />
+                  <p class="text-xs text-muted-foreground">
+                    Use this to steer codec or quality choices. Requests unrelated to transcoding will be rejected.
+                  </p>
+                </div>
+
                 <div class="flex flex-wrap gap-2">
                   <Button onclick={() => void handleAnalyzeAi('selected')} disabled={isAnalyzingAi || selectedFile.status !== 'ready'}>
                     {#if isAnalyzingAi}
@@ -1449,7 +1464,12 @@
                   </Button>
                 </div>
 
-                {#if selectedFile.aiRecommendation}
+                {#if selectedFile.aiStatus === 'error' && selectedFile.aiError}
+                  <div class="rounded-lg border border-destructive/40 bg-destructive/5 p-4 space-y-2">
+                    <p class="font-medium text-destructive">AI request rejected</p>
+                    <p class="text-sm text-muted-foreground">{selectedFile.aiError}</p>
+                  </div>
+                {:else if selectedFile.aiRecommendation}
                   <div class="rounded-lg border bg-muted/30 p-4 space-y-3">
                     <div class="flex items-center justify-between gap-3">
                       <div>

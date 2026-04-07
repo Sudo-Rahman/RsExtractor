@@ -121,6 +121,21 @@ export interface TranscodeAiRecommendation {
   createdAt: number;
 }
 
+export interface TranscodeAiErrorResponse {
+  status: 'error';
+  errorCode: 'out_of_scope';
+  errorMessage: string;
+}
+
+export interface TranscodeAiSuccessResponse {
+  status: 'ok';
+  containerId: string;
+  video: Partial<TranscodeProfile['video']>;
+  audio: Partial<TranscodeProfile['audio']>;
+  subtitles: Partial<TranscodeProfile['subtitles']>;
+  rationale?: string;
+}
+
 export interface TranscodeFile {
   id: string;
   path: string;
