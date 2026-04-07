@@ -55,25 +55,33 @@
         </Select.Root>
       </div>
 
-      <div class="space-y-2">
-        <Label>Subtitle encoder</Label>
-        <Select.Root
-          type="single"
-          value={file.profile.subtitles.encoderId}
-          onValueChange={(value) => {
-            updateProfile((profile) => {
-              profile.subtitles.encoderId = value;
-            });
-          }}
-        >
-          <Select.Trigger class="w-full">{selectedSubtitleEncoder?.label ?? 'Select encoder'}</Select.Trigger>
-          <Select.Content>
-            {#each availableSubtitleEncoders as encoder (encoder.id)}
-              <Select.Item value={encoder.id}>{encoder.label}</Select.Item>
-            {/each}
-          </Select.Content>
-        </Select.Root>
-      </div>
+      {#if file.profile.subtitles.mode === 'convert_text'}
+        <div class="space-y-2">
+          <Label>Subtitle encoder</Label>
+          <Select.Root
+            type="single"
+            value={file.profile.subtitles.encoderId}
+            onValueChange={(value) => {
+              updateProfile((profile) => {
+                profile.subtitles.encoderId = value;
+              });
+            }}
+          >
+            <Select.Trigger class="w-full">{selectedSubtitleEncoder?.label ?? 'Select encoder'}</Select.Trigger>
+            <Select.Content>
+              {#each availableSubtitleEncoders as encoder (encoder.id)}
+                <Select.Item value={encoder.id}>{encoder.label}</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+        </div>
+      {:else}
+        <div class="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+          {file.profile.subtitles.mode === 'copy'
+            ? 'Subtitle tracks will be copied without conversion.'
+            : 'Subtitles are disabled for this output.'}
+        </div>
+      {/if}
     </div>
 
     <div class="rounded-md border bg-muted/30 p-3 text-sm space-y-2">
@@ -90,13 +98,15 @@
   </div>
 {/if}
 
-<TranscodeAdditionalOverrides
-  tab="subtitles"
-  title="Additional Overrides"
-  description="Optional safe FFmpeg flags for subtitle handling."
-  emptyMessage="No subtitle overrides added."
-  commonFlags={commonOverrideFlags}
-  args={file.profile.subtitles.additionalArgs}
-  createId={createId}
-  updateProfile={updateProfile}
-/>
+{#if selectedSubtitleTracks.length > 0 && file.profile.subtitles.mode === 'convert_text'}
+  <TranscodeAdditionalOverrides
+    tab="subtitles"
+    title="Additional Overrides"
+    description="Optional safe FFmpeg flags for subtitle handling."
+    emptyMessage="No subtitle overrides added."
+    commonFlags={commonOverrideFlags}
+    args={file.profile.subtitles.additionalArgs}
+    createId={createId}
+    updateProfile={updateProfile}
+  />
+{/if}

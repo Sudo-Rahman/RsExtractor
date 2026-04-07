@@ -48,6 +48,24 @@
   function handleAnalyzeAll(): void {
     void onAnalyzeAll?.();
   }
+
+  function formatVideoSummary(file: TranscodeFile): string {
+    return file.profile.video.mode === 'transcode' && file.profile.video.encoderId
+      ? `${file.profile.video.mode} · ${file.profile.video.encoderId}`
+      : file.profile.video.mode;
+  }
+
+  function formatAudioSummary(file: TranscodeFile): string {
+    return file.profile.audio.mode === 'transcode' && file.profile.audio.encoderId
+      ? `${file.profile.audio.mode} · ${file.profile.audio.encoderId}`
+      : file.profile.audio.mode;
+  }
+
+  function formatSubtitleSummary(file: TranscodeFile): string {
+    return file.profile.subtitles.mode === 'convert_text' && file.profile.subtitles.encoderId
+      ? `${file.profile.subtitles.mode} · ${file.profile.subtitles.encoderId}`
+      : file.profile.subtitles.mode;
+  }
 </script>
 
 <Card.Root>
@@ -145,9 +163,9 @@
         <Textarea value={selectedFile.aiRecommendation.rationale} readonly class="min-h-24 text-sm" />
         <div class="rounded-md border bg-background p-3 text-sm space-y-1">
           <p><span class="font-medium">Container:</span> {selectedFile.profile.containerId.toUpperCase()}</p>
-          <p><span class="font-medium">Video:</span> {selectedFile.profile.video.mode}{selectedFile.profile.video.encoderId ? ` · ${selectedFile.profile.video.encoderId}` : ''}</p>
-          <p><span class="font-medium">Audio:</span> {selectedFile.profile.audio.mode}{selectedFile.profile.audio.encoderId ? ` · ${selectedFile.profile.audio.encoderId}` : ''}</p>
-          <p><span class="font-medium">Subtitles:</span> {selectedFile.profile.subtitles.mode}{selectedFile.profile.subtitles.encoderId ? ` · ${selectedFile.profile.subtitles.encoderId}` : ''}</p>
+          <p><span class="font-medium">Video:</span> {formatVideoSummary(selectedFile)}</p>
+          <p><span class="font-medium">Audio:</span> {formatAudioSummary(selectedFile)}</p>
+          <p><span class="font-medium">Subtitles:</span> {formatSubtitleSummary(selectedFile)}</p>
         </div>
       </div>
     {:else}

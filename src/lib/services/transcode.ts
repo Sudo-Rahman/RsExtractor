@@ -438,7 +438,7 @@ export function buildDefaultSubtitleSettings(
 
   return {
     mode: hasSubtitleTracks && encoderId ? 'convert_text' : hasSubtitleTracks ? 'copy' : 'disable',
-    encoderId,
+    encoderId: hasSubtitleTracks ? encoderId : undefined,
     additionalArgs: [],
   };
 }
