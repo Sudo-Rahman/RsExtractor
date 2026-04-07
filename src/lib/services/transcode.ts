@@ -77,10 +77,23 @@ const SVT_AV1_PRESET_OPTIONS: TranscodePresetOption[] = [
   { value: '13', label: '13 · Fastest' },
 ];
 
+const LIBAOM_AV1_PRESET_OPTIONS: TranscodePresetOption[] = [
+  { value: '0', label: '0 · Finest Quality' },
+  { value: '1', label: '1 · Very High Quality' },
+  { value: '2', label: '2 · High Quality' },
+  { value: '3', label: '3 · Quality' },
+  { value: '4', label: '4 · Balanced' },
+  { value: '5', label: '5 · Faster Balanced' },
+  { value: '6', label: '6 · Fast' },
+  { value: '7', label: '7 · Faster' },
+  { value: '8', label: '8 · Fastest' },
+];
+
 const VIDEO_PRESET_OPTIONS_BY_ENCODER: Record<string, TranscodePresetOption[]> = {
   libx264: X26X_PRESET_OPTIONS,
   libx265: X26X_PRESET_OPTIONS,
   libsvtav1: SVT_AV1_PRESET_OPTIONS,
+  'libaom-av1': LIBAOM_AV1_PRESET_OPTIONS,
 };
 
 const TEXT_SUBTITLE_CODECS = new Set([
@@ -272,6 +285,10 @@ export function getDefaultVideoPresetValue(encoderId?: string): string | undefin
     return undefined;
   }
 
+  if (encoderId === 'libaom-av1') {
+    return '4';
+  }
+
   if (encoderId === 'libsvtav1') {
     return '6';
   }
@@ -386,8 +403,8 @@ export function buildDefaultVideoSettings(
     crf: encoder?.supportsCrf ? (encoder.codec === 'hevc' ? 22 : 20) : undefined,
     qp: encoder?.supportsQp && !encoder?.supportsCrf ? 20 : undefined,
     bitrateKbps: !encoder?.supportsCrf && !encoder?.supportsQp ? 5000 : undefined,
-    preset: encoder?.supportsPreset
-      ? getDefaultVideoPresetValue(encoderId) ?? (encoder.isHardware ? 'fast' : 'medium')
+    preset: getVideoPresetOptions(encoderId).length > 0
+      ? getDefaultVideoPresetValue(encoderId) ?? (encoder?.isHardware ? 'fast' : 'medium')
       : undefined,
     additionalArgs: [],
   };
@@ -501,7 +518,7 @@ export function clampTranscodeProfile(
       if (next.video.qualityMode === 'qp' && !encoder?.supportsQp) {
         next.video.qualityMode = encoder?.supportsCrf ? 'crf' : 'bitrate';
       }
-      if (!encoder?.supportsPreset) {
+      if (getVideoPresetOptions(next.video.encoderId).length === 0) {
         next.video.preset = undefined;
       } else {
         next.video.preset = clampVideoPresetValue(next.video.encoderId, next.video.preset);
