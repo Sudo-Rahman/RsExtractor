@@ -1,20 +1,6 @@
 <script lang="ts" module>
   export interface TranscodeViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
-    applySelectedProfileToAll: () => void;
-    showMainView: () => void;
-  }
-
-  export interface TranscodeHeaderState {
-    title?: string;
-    description?: string;
-    readyCount: number;
-    conflictCount: number;
-    hasFiles: boolean;
-    mode: 'ai' | 'advanced';
-    showModeToggle: boolean;
-    showApplyToAll: boolean;
-    showBackButton: boolean;
   }
 </script>
 
@@ -23,7 +9,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
-  import { Save } from '@lucide/svelte';
+  import { ArrowLeft, Copy, Save, Sparkles, Wand2 } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
 
   import { createRenameWorkspaceStore, transcodeStore } from '$lib/stores';
@@ -63,6 +49,7 @@
   } from '$lib/types';
   import { logAndToast } from '$lib/utils/log-toast';
 
+  import { useToolHeader } from '$lib/components/layout/tool-header-context.svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Tabs from '$lib/components/ui/tabs';
   import {
@@ -82,10 +69,9 @@
 
   interface Props {
     onNavigateToSettings?: () => void;
-    onHeaderStateChange?: (state: TranscodeHeaderState | null) => void;
   }
 
-  let { onNavigateToSettings, onHeaderStateChange }: Props = $props();
+  let { onNavigateToSettings }: Props = $props();
 
   const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.mov', '.webm', '.m4v', '.avi', '.mxf'];
   const AUDIO_EXTENSIONS = ['.m4a', '.aac', '.mp3', '.flac', '.opus', '.wav', '.ogg', '.ac3', '.eac3', '.mka'];
@@ -96,6 +82,7 @@
     audio: ['-compression_level', '-cutoff', '-frame_duration', '-application'],
     subtitles: ['-fix_sub_duration'],
   };
+  const toolHeader = useToolHeader();
 
   let infoDialogOpen = $state(false);
   let infoDialogFileId = $state<string | null>(null);
@@ -748,14 +735,6 @@
     await addFiles(supportedPaths);
   }
 
-  export function applySelectedProfileToAll(): void {
-    handleApplyCurrentToAll();
-  }
-
-  export function showMainView(): void {
-    transcodeInternalView = 'main';
-  }
-
   async function handleAddFiles(): Promise<void> {
     const selected = await open({
       multiple: true,
@@ -825,7 +804,7 @@
     isDestroyed = true;
     unlistenTranscodeProgress?.();
     outputNamingWorkspace.destroy();
-    onHeaderStateChange?.(null);
+    toolHeader.clearHeader('transcode');
   });
 
   $effect(() => {
@@ -840,21 +819,55 @@
   });
 
   $effect(() => {
-    onHeaderStateChange?.({
+    toolHeader.setHeader('transcode', {
       title: transcodeInternalView === 'output-naming' ? 'Output Naming' : undefined,
       description: transcodeInternalView === 'output-naming'
         ? 'Review selected outputs and resolve naming conflicts before transcoding.'
         : undefined,
-      readyCount: readyQueueFiles.length,
-      conflictCount: outputConflictCount,
-      hasFiles: transcodeStore.files.length > 0,
-      mode: transcodeStore.mode,
-      showModeToggle: transcodeInternalView === 'main' && Boolean(selectedFile),
-      showApplyToAll: transcodeInternalView === 'main' && Boolean(selectedFile),
-      showBackButton: transcodeInternalView === 'output-naming',
+      actions: transcodeHeaderActions,
     });
   });
 </script>
+
+{#snippet transcodeHeaderActions()}
+  {#if transcodeInternalView === 'output-naming'}
+    <Button
+      variant="outline"
+      size="sm"
+      class="mr-2"
+      onclick={() => transcodeInternalView = 'main'}
+    >
+      <ArrowLeft class="size-4 mr-2" />
+      Back to Transcode
+    </Button>
+  {:else if selectedFile}
+    <div class="inline-flex h-9 items-center gap-1 rounded-md border bg-muted/30 p-1">
+      <Button
+        variant={transcodeStore.mode === 'ai' ? 'default' : 'ghost'}
+        size="sm"
+        class="h-7 rounded-sm px-3"
+        onclick={() => transcodeStore.setMode('ai')}
+      >
+        <Wand2 class="size-4 mr-2" />
+        AI
+      </Button>
+      <Button
+        variant={transcodeStore.mode === 'advanced' ? 'default' : 'ghost'}
+        size="sm"
+        class="h-7 rounded-sm px-3"
+        onclick={() => transcodeStore.setMode('advanced')}
+      >
+        <Sparkles class="size-4 mr-2" />
+        Advanced
+      </Button>
+    </div>
+
+    <Button variant="outline" size="sm" onclick={handleApplyCurrentToAll}>
+      <Copy class="size-4 mr-2" />
+      Apply to All
+    </Button>
+  {/if}
+{/snippet}
 
 {#if transcodeInternalView === 'output-naming'}
   <TranscodeOutputNamingView

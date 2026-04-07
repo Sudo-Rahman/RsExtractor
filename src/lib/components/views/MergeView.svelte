@@ -1,20 +1,14 @@
 <script lang="ts" module>
   import { FileVideo, FileAudio, Subtitles, Video, Volume2, Trash2, Plus, Wand2, Link, Unlink, Settings2, GripVertical, Clock, Layers } from '@lucide/svelte';
-  export interface MergeHeaderState {
-    title: string;
-    description?: string;
-    showModeButtons: boolean;
-    showBackButton: boolean;
-  }
+
   export interface MergeViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
-    showMainView: () => void;
   }
 </script>
 
 <script lang="ts">
   import { onDestroy, onMount, untrack } from 'svelte';
-  import { FolderOpen } from '@lucide/svelte';
+  import { ArrowLeft, FolderOpen, Home, LayoutGrid, Table } from '@lucide/svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
@@ -32,6 +26,7 @@
   import { scanFiles } from '$lib/services/ffprobe';
   import { dndzone } from '$lib/utils/dnd';
   import { logAndToast } from '$lib/utils/log-toast';
+  import { useToolHeader } from '$lib/components/layout/tool-header-context.svelte';
 
   import {
     getCodecFromExtension,
@@ -43,16 +38,6 @@
     type RenameFile,
   } from '$lib/types';
   import type { ImportItem, ImportSourceId, ImportableKind } from '$lib/types/tool-import';
-
-  interface Props {
-    viewMode?: 'home' | 'groups' | 'table';
-    onHeaderStateChange?: (state: MergeHeaderState | null) => void;
-  }
-
-  let {
-    viewMode = 'home',
-    onHeaderStateChange,
-  }: Props = $props();
 
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -74,6 +59,7 @@
   const FLIP_DURATION_MS = 200;
   const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((ext) => ext.slice(1).toUpperCase());
   type ForcedImportType = 'video' | 'subtitle' | 'audio';
+  const toolHeader = useToolHeader();
 
   function resolveMergeOutputTargetPath(
     file: RenameFile,
@@ -95,6 +81,7 @@
   let editingTrackId = $state<string | null>(null);
   let editingTrackType = $state<'imported' | 'source'>('imported');
   let mergeInternalView = $state<'main' | 'output-naming'>('main');
+  let viewMode = $state<'home' | 'groups' | 'table'>('home');
   const outputNamingWorkspace = createRenameWorkspaceStore({
     mode: 'rename',
     includeOutputDirInTargetPath: true,
@@ -559,10 +546,6 @@
     mergeInternalView = 'main';
   }
 
-  export function showMainView() {
-    handleBackToMerge();
-  }
-
   async function handleMerge() {
     const videosToMerge = selectedVideosToMerge();
     if (videosToMerge.length === 0) {
@@ -907,21 +890,60 @@
   const groupedSourceTracks = $derived(() => groupTracksByType(selectedVideoTracks()));
 
   $effect(() => {
-    onHeaderStateChange?.(
-      mergeInternalView === 'output-naming'
-        ? {
-            title: 'Output Naming',
-            showModeButtons: false,
-            showBackButton: true,
-          }
-        : null,
-    );
+    toolHeader.setHeader('merge', {
+      title: mergeInternalView === 'output-naming' ? 'Output Naming' : undefined,
+      actions: mergeHeaderActions,
+    });
   });
 
   onDestroy(() => {
-    onHeaderStateChange?.(null);
+    toolHeader.clearHeader('merge');
   });
 </script>
+
+{#snippet mergeHeaderActions()}
+  {#if mergeInternalView === 'output-naming'}
+    <Button
+      variant="outline"
+      size="sm"
+      class="mr-2"
+      onclick={handleBackToMerge}
+    >
+      <ArrowLeft class="size-4 mr-2" />
+      Back to Merge
+    </Button>
+  {:else}
+    <div class="flex items-center gap-1 mr-2">
+      <Button
+        variant={viewMode === 'home' ? 'secondary' : 'ghost'}
+        size="sm"
+        onclick={() => viewMode = 'home'}
+        title="Home view"
+      >
+        <Home class="size-4 mr-1" />
+        Home
+      </Button>
+      <Button
+        variant={viewMode === 'groups' ? 'secondary' : 'ghost'}
+        size="sm"
+        onclick={() => viewMode = 'groups'}
+        title="Groups view"
+      >
+        <LayoutGrid class="size-4 mr-1" />
+        Groups
+      </Button>
+      <Button
+        variant={viewMode === 'table' ? 'secondary' : 'ghost'}
+        size="sm"
+        onclick={() => viewMode = 'table'}
+        title="Table view"
+      >
+        <Table class="size-4 mr-1" />
+        Table
+      </Button>
+    </div>
+  {/if}
+{/snippet}
 
 {#if mergeInternalView === 'output-naming'}
   <div class="h-full">
@@ -1081,7 +1103,7 @@
           {#if mergeStore.selectedVideo}
             {@const groups = groupedSourceTracks()}
             <div class="space-y-4">
-              {#each Object.entries(groups) as [type, tracks]}
+              {#each Object.entries(groups) as [type, tracks] (type)}
                 {#if tracks.length > 0}
                   {@const Icon = getTrackIcon(type)}
                   <Card.Root>
