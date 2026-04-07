@@ -92,195 +92,209 @@
         </Select.Root>
       </div>
 
-      <div class="space-y-2">
-        <Label>Video encoder</Label>
-        <Select.Root
-          type="single"
-          value={file.profile.video.encoderId}
-          onValueChange={(value) => {
-            updateProfile((profile) => {
-              profile.video.encoderId = value;
-              profile.video.preset = getDefaultVideoPresetValue(value);
-            });
-          }}
-        >
-          <Select.Trigger class="w-full">{selectedVideoEncoder?.label ?? 'Select encoder'}</Select.Trigger>
-          <Select.Content>
-            {#each availableVideoEncoders as encoder (encoder.id)}
-              <Select.Item value={encoder.id}>{encoder.label}</Select.Item>
-            {/each}
-          </Select.Content>
-        </Select.Root>
-      </div>
-
-      {#if videoProfileOptions.length > 0 || videoLevelOptions.length > 0}
-        <div class="grid gap-4 md:grid-cols-2">
-          {#if videoProfileOptions.length > 0}
-            <div class="space-y-2">
-              <Label>Profile</Label>
-              <Select.Root
-                type="single"
-                value={file.profile.video.profile}
-                onValueChange={(value) => {
-                  updateProfile((profile) => {
-                    profile.video.profile = value;
-                  });
-                }}
-              >
-                <Select.Trigger class="w-full">{file.profile.video.profile ?? 'Auto'}</Select.Trigger>
-                <Select.Content>
-                  {#each videoProfileOptions as profile (profile)}
-                    <Select.Item value={profile}>{profile}</Select.Item>
-                  {/each}
-                </Select.Content>
-              </Select.Root>
-            </div>
-          {/if}
-
-          {#if videoLevelOptions.length > 0}
-            <div class="space-y-2">
-              <Label>Level</Label>
-              <Select.Root
-                type="single"
-                value={file.profile.video.level}
-                onValueChange={(value) => {
-                  updateProfile((profile) => {
-                    profile.video.level = value;
-                  });
-                }}
-              >
-                <Select.Trigger class="w-full">{file.profile.video.level ?? 'Auto'}</Select.Trigger>
-                <Select.Content>
-                  {#each videoLevelOptions as level (level)}
-                    <Select.Item value={level}>{level}</Select.Item>
-                  {/each}
-                </Select.Content>
-              </Select.Root>
-            </div>
-          {/if}
-        </div>
-      {/if}
-
-      {#if videoPixelFormatOptions.length > 0}
+      {#if file.profile.video.mode === 'transcode'}
         <div class="space-y-2">
-          <Label>Pixel format</Label>
+          <Label>Video encoder</Label>
           <Select.Root
             type="single"
-            value={file.profile.video.pixelFormat}
+            value={file.profile.video.encoderId}
             onValueChange={(value) => {
               updateProfile((profile) => {
-                profile.video.pixelFormat = value;
+                profile.video.encoderId = value;
+                profile.video.preset = getDefaultVideoPresetValue(value);
               });
             }}
           >
-            <Select.Trigger class="w-full">{file.profile.video.pixelFormat ?? 'Auto'}</Select.Trigger>
+            <Select.Trigger class="w-full">{selectedVideoEncoder?.label ?? 'Select encoder'}</Select.Trigger>
             <Select.Content>
-              {#each videoPixelFormatOptions as pixelFormat (pixelFormat)}
-                <Select.Item value={pixelFormat}>{pixelFormat}</Select.Item>
+              {#each availableVideoEncoders as encoder (encoder.id)}
+                <Select.Item value={encoder.id}>{encoder.label}</Select.Item>
               {/each}
             </Select.Content>
           </Select.Root>
-          {#if selectedVideoEncoder?.supportedBitDepths?.length}
-            <p class="text-xs text-muted-foreground">
-              Supported bit depths: {selectedVideoEncoder.supportedBitDepths.join(', ')}-bit
-            </p>
-          {/if}
+        </div>
+
+        {#if videoProfileOptions.length > 0 || videoLevelOptions.length > 0}
+          <div class="grid gap-4 md:grid-cols-2">
+            {#if videoProfileOptions.length > 0}
+              <div class="space-y-2">
+                <Label>Profile</Label>
+                <Select.Root
+                  type="single"
+                  value={file.profile.video.profile}
+                  onValueChange={(value) => {
+                    updateProfile((profile) => {
+                      profile.video.profile = value;
+                    });
+                  }}
+                >
+                  <Select.Trigger class="w-full">{file.profile.video.profile ?? 'Auto'}</Select.Trigger>
+                  <Select.Content>
+                    {#each videoProfileOptions as profile (profile)}
+                      <Select.Item value={profile}>{profile}</Select.Item>
+                    {/each}
+                  </Select.Content>
+                </Select.Root>
+              </div>
+            {/if}
+
+            {#if videoLevelOptions.length > 0}
+              <div class="space-y-2">
+                <Label>Level</Label>
+                <Select.Root
+                  type="single"
+                  value={file.profile.video.level}
+                  onValueChange={(value) => {
+                    updateProfile((profile) => {
+                      profile.video.level = value;
+                    });
+                  }}
+                >
+                  <Select.Trigger class="w-full">{file.profile.video.level ?? 'Auto'}</Select.Trigger>
+                  <Select.Content>
+                    {#each videoLevelOptions as level (level)}
+                      <Select.Item value={level}>{level}</Select.Item>
+                    {/each}
+                  </Select.Content>
+                </Select.Root>
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        {#if videoPixelFormatOptions.length > 0}
+          <div class="space-y-2">
+            <Label>Pixel format</Label>
+            <Select.Root
+              type="single"
+              value={file.profile.video.pixelFormat}
+              onValueChange={(value) => {
+                updateProfile((profile) => {
+                  profile.video.pixelFormat = value;
+                });
+              }}
+            >
+              <Select.Trigger class="w-full">{file.profile.video.pixelFormat ?? 'Auto'}</Select.Trigger>
+              <Select.Content>
+                {#each videoPixelFormatOptions as pixelFormat (pixelFormat)}
+                  <Select.Item value={pixelFormat}>{pixelFormat}</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+            {#if selectedVideoEncoder?.supportedBitDepths?.length}
+              <p class="text-xs text-muted-foreground">
+                Supported bit depths: {selectedVideoEncoder.supportedBitDepths.join(', ')}-bit
+              </p>
+            {/if}
+          </div>
+        {/if}
+      {:else}
+        <div class="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+          {file.profile.video.mode === 'copy'
+            ? 'Video streams will be copied without re-encoding.'
+            : 'Video streams are disabled for this output.'}
         </div>
       {/if}
     </div>
 
     <div class="space-y-4">
-      <div class="space-y-2">
-        <Label>Quality mode</Label>
-        <Select.Root
-          type="single"
-          value={file.profile.video.qualityMode}
-          onValueChange={(value) => {
-            updateProfile((profile) => {
-              profile.video.qualityMode = value as TranscodeQualityMode;
-            });
-          }}
-        >
-          <Select.Trigger class="w-full">{file.profile.video.qualityMode}</Select.Trigger>
-          <Select.Content>
-            {#if selectedVideoEncoder?.supportsCrf}
-              <Select.Item value="crf">crf</Select.Item>
-            {/if}
-            {#if selectedVideoEncoder?.supportsQp}
-              <Select.Item value="qp">qp</Select.Item>
-            {/if}
-            {#if selectedVideoEncoder?.supportsBitrate}
-              <Select.Item value="bitrate">bitrate</Select.Item>
-            {/if}
-          </Select.Content>
-        </Select.Root>
-      </div>
-
-      {#if file.profile.video.qualityMode === 'crf'}
+      {#if file.profile.video.mode === 'transcode'}
         <div class="space-y-2">
-          <Label>CRF</Label>
-          <Input
-            type="number"
-            value={file.profile.video.crf?.toString() ?? ''}
-            oninput={(event) => {
-              const value = parseOptionalFloat(event.currentTarget.value);
-              updateProfile((profile) => {
-                profile.video.crf = value;
-              });
-            }}
-          />
-        </div>
-      {:else if file.profile.video.qualityMode === 'qp'}
-        <div class="space-y-2">
-          <Label>QP</Label>
-          <Input
-            type="number"
-            value={file.profile.video.qp?.toString() ?? ''}
-            oninput={(event) => {
-              const value = parseOptionalInt(event.currentTarget.value);
-              updateProfile((profile) => {
-                profile.video.qp = value;
-              });
-            }}
-          />
-        </div>
-      {:else}
-        <div class="space-y-2">
-          <Label>Bitrate (kbps)</Label>
-          <Input
-            type="number"
-            value={file.profile.video.bitrateKbps?.toString() ?? ''}
-            oninput={(event) => {
-              const value = parseOptionalInt(event.currentTarget.value);
-              updateProfile((profile) => {
-                profile.video.bitrateKbps = value;
-              });
-            }}
-          />
-        </div>
-      {/if}
-
-      {#if videoPresetOptions.length > 0}
-        <div class="space-y-2">
-          <Label>Preset</Label>
+          <Label>Quality mode</Label>
           <Select.Root
             type="single"
-            value={selectedPresetValue}
+            value={file.profile.video.qualityMode}
             onValueChange={(value) => {
               updateProfile((profile) => {
-                profile.video.preset = value || undefined;
+                profile.video.qualityMode = value as TranscodeQualityMode;
               });
             }}
           >
-            <Select.Trigger class="w-full">
-              {videoPresetOptions.find((option) => option.value === selectedPresetValue)?.label ?? 'Select preset'}
-            </Select.Trigger>
+            <Select.Trigger class="w-full">{file.profile.video.qualityMode}</Select.Trigger>
             <Select.Content>
-              {#each videoPresetOptions as option (option.value)}
-                <Select.Item value={option.value}>{option.label}</Select.Item>
-              {/each}
+              {#if selectedVideoEncoder?.supportsCrf}
+                <Select.Item value="crf">crf</Select.Item>
+              {/if}
+              {#if selectedVideoEncoder?.supportsQp}
+                <Select.Item value="qp">qp</Select.Item>
+              {/if}
+              {#if selectedVideoEncoder?.supportsBitrate}
+                <Select.Item value="bitrate">bitrate</Select.Item>
+              {/if}
             </Select.Content>
           </Select.Root>
+        </div>
+
+        {#if file.profile.video.qualityMode === 'crf'}
+          <div class="space-y-2">
+            <Label>CRF</Label>
+            <Input
+              type="number"
+              value={file.profile.video.crf?.toString() ?? ''}
+              oninput={(event) => {
+                const value = parseOptionalFloat(event.currentTarget.value);
+                updateProfile((profile) => {
+                  profile.video.crf = value;
+                });
+              }}
+            />
+          </div>
+        {:else if file.profile.video.qualityMode === 'qp'}
+          <div class="space-y-2">
+            <Label>QP</Label>
+            <Input
+              type="number"
+              value={file.profile.video.qp?.toString() ?? ''}
+              oninput={(event) => {
+                const value = parseOptionalInt(event.currentTarget.value);
+                updateProfile((profile) => {
+                  profile.video.qp = value;
+                });
+              }}
+            />
+          </div>
+        {:else}
+          <div class="space-y-2">
+            <Label>Bitrate (kbps)</Label>
+            <Input
+              type="number"
+              value={file.profile.video.bitrateKbps?.toString() ?? ''}
+              oninput={(event) => {
+                const value = parseOptionalInt(event.currentTarget.value);
+                updateProfile((profile) => {
+                  profile.video.bitrateKbps = value;
+                });
+              }}
+            />
+          </div>
+        {/if}
+
+        {#if videoPresetOptions.length > 0}
+          <div class="space-y-2">
+            <Label>Preset</Label>
+            <Select.Root
+              type="single"
+              value={selectedPresetValue}
+              onValueChange={(value) => {
+                updateProfile((profile) => {
+                  profile.video.preset = value || undefined;
+                });
+              }}
+            >
+              <Select.Trigger class="w-full">
+                {videoPresetOptions.find((option) => option.value === selectedPresetValue)?.label ?? 'Select preset'}
+              </Select.Trigger>
+              <Select.Content>
+                {#each videoPresetOptions as option (option.value)}
+                  <Select.Item value={option.value}>{option.label}</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
+        {/if}
+      {:else}
+        <div class="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+          Encoder quality settings are not used while video mode is {file.profile.video.mode}.
         </div>
       {/if}
 
@@ -294,13 +308,15 @@
   </div>
 {/if}
 
-<TranscodeAdditionalOverrides
-  tab="video"
-  title="Additional Overrides"
-  description="Optional safe FFmpeg flags for the current video encoder."
-  emptyMessage="No video overrides added."
-  commonFlags={commonOverrideFlags}
-  args={file.profile.video.additionalArgs}
-  createId={createId}
-  updateProfile={updateProfile}
-/>
+{#if file.hasVideo && file.profile.video.mode === 'transcode'}
+  <TranscodeAdditionalOverrides
+    tab="video"
+    title="Additional Overrides"
+    description="Optional safe FFmpeg flags for the current video encoder."
+    emptyMessage="No video overrides added."
+    commonFlags={commonOverrideFlags}
+    args={file.profile.video.additionalArgs}
+    createId={createId}
+    updateProfile={updateProfile}
+  />
+{/if}
