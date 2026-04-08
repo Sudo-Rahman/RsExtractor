@@ -9,7 +9,7 @@
   import * as Card from '$lib/components/ui/card';
   import * as Select from '$lib/components/ui/select';
 
-  import type { TranscodeOutputPathBuilder, TranscodeProfileUpdater } from './types';
+  import type { TranscodeContainerUpdater, TranscodeOutputPathBuilder } from './types';
 
   interface Props {
     file: TranscodeFile;
@@ -20,7 +20,7 @@
     readyQueueFiles: TranscodeFile[];
     outputConflictCount: number;
     buildOutputPath: TranscodeOutputPathBuilder;
-    updateProfile: TranscodeProfileUpdater;
+    updateContainer: TranscodeContainerUpdater;
     onSelectOutputDir?: () => void | Promise<void>;
     onClearOutputDir?: () => void;
     onOpenRenameWorkspace?: () => void;
@@ -35,7 +35,7 @@
     readyQueueFiles,
     outputConflictCount,
     buildOutputPath,
-    updateProfile,
+    updateContainer,
     onSelectOutputDir,
     onClearOutputDir,
     onOpenRenameWorkspace,
@@ -55,9 +55,7 @@
           type="single"
           value={file.profile.containerId}
           onValueChange={(value) => {
-            updateProfile((profile) => {
-              profile.containerId = value;
-            });
+            updateContainer(value);
           }}
         >
           <Select.Trigger class="w-full">{selectedContainer?.label ?? file.profile.containerId.toUpperCase()}</Select.Trigger>

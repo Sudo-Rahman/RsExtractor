@@ -7,7 +7,8 @@ import {
   cloneTranscodeProfile,
   cloneVideoSettings,
   createTranscodeId,
-  findCompatibleContainerId,
+  normalizeProfileForContainerChange,
+  normalizeProfileForProfileChange,
 } from '$lib/services/transcode';
 import type {
   FileRunState,
@@ -166,6 +167,14 @@ function setFileRunState(filePath: string, updates: Partial<FileRunState>): void
   const current = fileRunStates.get(filePath) ?? getDefaultFileRunState();
   fileRunStates = new Map(fileRunStates);
   fileRunStates.set(filePath, { ...current, ...updates });
+}
+
+function normalizeProfileChange(file: TranscodeFile, profile: TranscodeProfile): TranscodeProfile {
+  return normalizeProfileForProfileChange(profile, capabilities, file);
+}
+
+function normalizeContainerChange(file: TranscodeFile, containerId: string): TranscodeProfile {
+  return normalizeProfileForContainerChange(file.profile, containerId, capabilities, file);
 }
 
 export const transcodeStore = {
@@ -337,14 +346,23 @@ export const transcodeStore = {
     if (!file) return;
 
     updateFileInternal(fileId, {
-      profile: clampTranscodeProfile(profile, capabilities, file),
+      profile: normalizeProfileChange(file, profile),
+    });
+  },
+
+  setFileContainer(fileId: string, containerId: string) {
+    const file = files.find((item) => item.id === fileId);
+    if (!file) return;
+
+    updateFileInternal(fileId, {
+      profile: normalizeContainerChange(file, containerId),
     });
   },
 
   applyProfileToAll(profile: TranscodeProfile) {
     files = files.map((file) => ({
       ...file,
-      profile: clampTranscodeProfile(cloneTranscodeProfile(profile), capabilities, file),
+      profile: normalizeProfileChange(file, cloneTranscodeProfile(profile)),
     }));
   },
 
@@ -387,11 +405,18 @@ export const transcodeStore = {
   },
 
   setAiRecommendation(fileId: string, recommendation: NonNullable<TranscodeFile['aiRecommendation']>) {
+    const file = files.find((item) => item.id === fileId);
+    if (!file) return;
+
+    const normalizedProfile = normalizeProfileChange(file, recommendation.profile);
     updateFileInternal(fileId, {
       aiStatus: 'completed',
       aiError: undefined,
-      aiRecommendation: recommendation,
-      profile: recommendation.profile,
+      aiRecommendation: {
+        ...recommendation,
+        profile: normalizedProfile,
+      },
+      profile: normalizedProfile,
     });
   },
 
@@ -594,13 +619,8 @@ export const transcodeStore = {
         break;
     }
 
-    const compatibleContainerId = findCompatibleContainerId(capabilities, nextProfile, file);
-    if (compatibleContainerId) {
-      nextProfile.containerId = compatibleContainerId;
-    }
-
     updateFileInternal(fileId, {
-      profile: clampTranscodeProfile(nextProfile, capabilities, file),
+      profile: normalizeProfileChange(file, nextProfile),
     });
   },
 

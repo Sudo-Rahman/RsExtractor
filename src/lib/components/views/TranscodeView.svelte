@@ -24,7 +24,6 @@
     extractTranscodeAnalysisFrames,
     fileHasAudio,
     fileHasVideo,
-    findCompatibleContainerId,
     getAudioEncoderCapability,
     getContainerCapability,
     getContainerExtension,
@@ -202,6 +201,7 @@
       hasVideo,
       hasAudio,
       profile: buildDefaultTranscodeProfile(transcodeStore.capabilities, {
+        path,
         hasVideo,
         hasAudio,
         tracks: [],
@@ -272,15 +272,16 @@
 
     const nextProfile = cloneTranscodeProfile(file.profile);
     mutator(nextProfile, file);
-    alignProfileContainer(nextProfile, file);
     transcodeStore.setFileProfile(file.id, nextProfile);
   }
 
-  function alignProfileContainer(profile: TranscodeProfile, file: TranscodeFile): void {
-    const compatibleContainerId = findCompatibleContainerId(transcodeStore.capabilities, profile, file);
-    if (compatibleContainerId) {
-      profile.containerId = compatibleContainerId;
+  function updateSelectedContainer(containerId: string): void {
+    const file = transcodeStore.selectedFile;
+    if (!file) {
+      return;
     }
+
+    transcodeStore.setFileContainer(file.id, containerId);
   }
 
   function getPresetTriggerLabel(tab: TranscodePresetTab): string {
@@ -994,7 +995,7 @@
                 readyQueueFiles={readyQueueFiles}
                 outputConflictCount={outputConflictCount}
                 buildOutputPath={buildTranscodeOutputPath}
-                updateProfile={updateSelectedProfile}
+                updateContainer={updateSelectedContainer}
                 onSelectOutputDir={handleSelectOutputDir}
                 onClearOutputDir={handleClearOutputDir}
                 onOpenRenameWorkspace={() => transcodeInternalView = 'output-naming'}
