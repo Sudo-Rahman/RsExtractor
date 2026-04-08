@@ -260,7 +260,12 @@ const KNOWN_CONTAINERS: &[KnownContainer] = &[
         extension: ".mp4",
         kind: "video",
         muxer_name: "mp4",
-        default_video_encoder_priority: &["hevc_videotoolbox", "h264_videotoolbox", "libx265", "libx264"],
+        default_video_encoder_priority: &[
+            "hevc_videotoolbox",
+            "h264_videotoolbox",
+            "libx265",
+            "libx264",
+        ],
         default_audio_encoder_priority: &["aac_at", "aac"],
         default_subtitle_encoder_priority: &["mov_text"],
     },
@@ -270,8 +275,23 @@ const KNOWN_CONTAINERS: &[KnownContainer] = &[
         extension: ".mkv",
         kind: "video",
         muxer_name: "matroska",
-        default_video_encoder_priority: &["hevc_videotoolbox", "h264_videotoolbox", "libx265", "libx264", "libsvtav1", "libaom-av1", "libvpx-vp9"],
-        default_audio_encoder_priority: &["libopus", "flac", "libvorbis", "aac_at", "aac", "libmp3lame"],
+        default_video_encoder_priority: &[
+            "hevc_videotoolbox",
+            "h264_videotoolbox",
+            "libx265",
+            "libx264",
+            "libsvtav1",
+            "libaom-av1",
+            "libvpx-vp9",
+        ],
+        default_audio_encoder_priority: &[
+            "libopus",
+            "flac",
+            "libvorbis",
+            "aac_at",
+            "aac",
+            "libmp3lame",
+        ],
         default_subtitle_encoder_priority: &["srt", "ass"],
     },
     KnownContainer {
@@ -280,7 +300,14 @@ const KNOWN_CONTAINERS: &[KnownContainer] = &[
         extension: ".mov",
         kind: "video",
         muxer_name: "mov",
-        default_video_encoder_priority: &["prores_videotoolbox", "prores_ks", "hevc_videotoolbox", "h264_videotoolbox", "libx265", "libx264"],
+        default_video_encoder_priority: &[
+            "hevc_videotoolbox",
+            "h264_videotoolbox",
+            "libx265",
+            "libx264",
+            "prores_videotoolbox",
+            "prores_ks",
+        ],
         default_audio_encoder_priority: &["aac_at", "aac"],
         default_subtitle_encoder_priority: &["mov_text"],
     },
@@ -373,7 +400,11 @@ async fn run_ffmpeg_command(ffmpeg_path: &str, args: &[&str]) -> Result<String, 
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("ffmpeg {} failed: {}", args.join(" "), stderr.trim()));
+        return Err(format!(
+            "ffmpeg {} failed: {}",
+            args.join(" "),
+            stderr.trim()
+        ));
     }
 
     let mut combined = String::from_utf8_lossy(&output.stdout).to_string();
@@ -513,6 +544,12 @@ fn help_supports_flag(output: &str, flag: &str) -> bool {
     output.lines().any(|line| line.contains(flag))
 }
 
+fn video_encoder_supports_bitrate(help: &str) -> bool {
+    ["-crf", "-qp", "-constant_bit_rate"]
+        .iter()
+        .any(|flag| help_supports_flag(help, flag))
+}
+
 pub(crate) fn derive_bit_depths_from_pixel_formats(pixel_formats: &[String]) -> Vec<u8> {
     let mut depths = BTreeSet::new();
 
@@ -542,12 +579,17 @@ async fn build_video_encoder_capabilities(
             continue;
         }
 
-        let help = run_ffmpeg_command(ffmpeg_path, &["-hide_banner", "-h", &format!("encoder={}", encoder.id)])
-            .await
-            .unwrap_or_default();
+        let help = run_ffmpeg_command(
+            ffmpeg_path,
+            &["-hide_banner", "-h", &format!("encoder={}", encoder.id)],
+        )
+        .await
+        .unwrap_or_default();
         let supported_pixel_formats = parse_supported_pixel_formats(&help);
         let supported_profiles = parse_option_enum_values(&help, "profile");
         let supported_levels = parse_option_enum_values(&help, "level");
+        let supports_crf = help_supports_flag(&help, "-crf");
+        let supports_qp = help_supports_flag(&help, "-qp");
 
         capabilities.push(TranscodeVideoEncoderCapability {
             id: encoder.id.to_string(),
@@ -559,9 +601,9 @@ async fn build_video_encoder_capabilities(
             supported_levels,
             supported_bit_depths: derive_bit_depths_from_pixel_formats(&supported_pixel_formats),
             supports_preset: help_supports_flag(&help, "-preset"),
-            supports_crf: help_supports_flag(&help, "-crf"),
-            supports_qp: help_supports_flag(&help, "-qp"),
-            supports_bitrate: true,
+            supports_crf,
+            supports_qp,
+            supports_bitrate: video_encoder_supports_bitrate(&help),
         });
     }
 
@@ -579,9 +621,12 @@ async fn build_audio_encoder_capabilities(
             continue;
         }
 
-        let _help = run_ffmpeg_command(ffmpeg_path, &["-hide_banner", "-h", &format!("encoder={}", encoder.id)])
-            .await
-            .unwrap_or_default();
+        let _help = run_ffmpeg_command(
+            ffmpeg_path,
+            &["-hide_banner", "-h", &format!("encoder={}", encoder.id)],
+        )
+        .await
+        .unwrap_or_default();
 
         capabilities.push(TranscodeAudioEncoderCapability {
             id: encoder.id.to_string(),
@@ -607,9 +652,12 @@ async fn build_subtitle_encoder_capabilities(
             continue;
         }
 
-        let _ = run_ffmpeg_command(ffmpeg_path, &["-hide_banner", "-h", &format!("encoder={}", encoder.id)])
-            .await
-            .unwrap_or_default();
+        let _ = run_ffmpeg_command(
+            ffmpeg_path,
+            &["-hide_banner", "-h", &format!("encoder={}", encoder.id)],
+        )
+        .await
+        .unwrap_or_default();
 
         capabilities.push(TranscodeSubtitleEncoderCapability {
             id: encoder.id.to_string(),
@@ -699,15 +747,24 @@ fn build_container_capabilities(
                 supported_subtitle_encoder_ids: supported_subtitle_encoder_ids.clone(),
                 supported_subtitle_modes,
                 default_video_encoder_id: select_default_encoder_id(
-                    &supported_video_encoder_ids.iter().cloned().collect::<HashSet<_>>(),
+                    &supported_video_encoder_ids
+                        .iter()
+                        .cloned()
+                        .collect::<HashSet<_>>(),
                     container.default_video_encoder_priority,
                 ),
                 default_audio_encoder_id: select_default_encoder_id(
-                    &supported_audio_encoder_ids.iter().cloned().collect::<HashSet<_>>(),
+                    &supported_audio_encoder_ids
+                        .iter()
+                        .cloned()
+                        .collect::<HashSet<_>>(),
                     container.default_audio_encoder_priority,
                 ),
                 default_subtitle_encoder_id: select_default_encoder_id(
-                    &supported_subtitle_encoder_ids.iter().cloned().collect::<HashSet<_>>(),
+                    &supported_subtitle_encoder_ids
+                        .iter()
+                        .cloned()
+                        .collect::<HashSet<_>>(),
                     container.default_subtitle_encoder_priority,
                 ),
             }
@@ -762,11 +819,11 @@ pub(crate) async fn get_transcode_capabilities(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_container_capabilities, derive_bit_depths_from_pixel_formats,
-        parse_ffmpeg_encoder_names, parse_ffmpeg_hwaccel_names, parse_ffmpeg_muxer_names,
-        parse_option_enum_values, parse_supported_pixel_formats,
         TranscodeAudioEncoderCapability, TranscodeSubtitleEncoderCapability,
-        TranscodeVideoEncoderCapability,
+        TranscodeVideoEncoderCapability, build_container_capabilities,
+        derive_bit_depths_from_pixel_formats, parse_ffmpeg_encoder_names,
+        parse_ffmpeg_hwaccel_names, parse_ffmpeg_muxer_names, parse_option_enum_values,
+        parse_supported_pixel_formats, video_encoder_supports_bitrate,
     };
     use std::collections::HashSet;
 
@@ -839,7 +896,47 @@ mod tests {
     #[test]
     fn derive_bit_depths_from_pixel_formats_detects_ten_bit() {
         let pixel_formats = vec!["yuv420p".to_string(), "p010le".to_string()];
-        assert_eq!(derive_bit_depths_from_pixel_formats(&pixel_formats), vec![8, 10]);
+        assert_eq!(
+            derive_bit_depths_from_pixel_formats(&pixel_formats),
+            vec![8, 10]
+        );
+    }
+
+    #[test]
+    fn video_encoder_supports_bitrate_detects_crf_qp_based_rate_control() {
+        let sample = r#"
+  -crf               <float>      E..V....... Select the quality for constant quality mode
+  -qp                <int>        E..V....... Constant quantization parameter rate control method
+ "#;
+        assert!(video_encoder_supports_bitrate(sample));
+    }
+
+    #[test]
+    fn video_encoder_supports_bitrate_detects_constant_bit_rate_flag() {
+        let sample = r#"
+  -constant_bit_rate <boolean>    E..V....... Require constant bit rate
+ "#;
+        assert!(video_encoder_supports_bitrate(sample));
+    }
+
+    #[test]
+    fn video_encoder_supports_bitrate_rejects_prores_ks_help() {
+        let sample = r#"
+ProRes encoder AVOptions:
+  -profile           <int>        E..V....... (from -1 to 5) (default auto)
+  -bits_per_mb       <int>        E..V....... desired bits per macroblock
+ "#;
+        assert!(!video_encoder_supports_bitrate(sample));
+    }
+
+    #[test]
+    fn video_encoder_supports_bitrate_rejects_prores_videotoolbox_help() {
+        let sample = r#"
+prores_videotoolbox AVOptions:
+  -profile           <int>        E..V....... Profile
+  -allow_sw          <boolean>    E..V....... Allow software encoding
+ "#;
+        assert!(!video_encoder_supports_bitrate(sample));
     }
 
     #[test]
@@ -885,13 +982,93 @@ mod tests {
             .iter()
             .find(|container| container.id == "mp4")
             .expect("mp4 capability should exist");
-        assert_eq!(mp4.default_video_encoder_id.as_deref(), Some("hevc_videotoolbox"));
-        assert!(mp4.supported_subtitle_modes.contains(&"convert_text".to_string()));
+        assert_eq!(
+            mp4.default_video_encoder_id.as_deref(),
+            Some("hevc_videotoolbox")
+        );
+        assert!(
+            mp4.supported_subtitle_modes
+                .contains(&"convert_text".to_string())
+        );
 
         let mkv = containers
             .iter()
             .find(|container| container.id == "mkv")
             .expect("mkv capability should exist");
         assert!(mkv.supported_audio_encoder_ids.contains(&"aac".to_string()));
+    }
+
+    #[test]
+    fn build_container_capabilities_prefers_delivery_codecs_for_mov_defaults() {
+        let muxers = to_set(&["mov"]);
+        let video_encoders = vec![
+            TranscodeVideoEncoderCapability {
+                id: "prores_videotoolbox".to_string(),
+                codec: "prores".to_string(),
+                label: "ProRes VT".to_string(),
+                is_hardware: true,
+                supported_pixel_formats: vec!["p010le".to_string()],
+                supported_profiles: vec!["hq".to_string()],
+                supported_levels: vec![],
+                supported_bit_depths: vec![10],
+                supports_preset: false,
+                supports_crf: false,
+                supports_qp: false,
+                supports_bitrate: false,
+            },
+            TranscodeVideoEncoderCapability {
+                id: "prores_ks".to_string(),
+                codec: "prores".to_string(),
+                label: "ProRes KS".to_string(),
+                is_hardware: false,
+                supported_pixel_formats: vec!["yuv422p10le".to_string()],
+                supported_profiles: vec!["hq".to_string()],
+                supported_levels: vec![],
+                supported_bit_depths: vec![10],
+                supports_preset: false,
+                supports_crf: false,
+                supports_qp: false,
+                supports_bitrate: false,
+            },
+            TranscodeVideoEncoderCapability {
+                id: "hevc_videotoolbox".to_string(),
+                codec: "hevc".to_string(),
+                label: "HEVC".to_string(),
+                is_hardware: true,
+                supported_pixel_formats: vec!["p010le".to_string()],
+                supported_profiles: vec!["main10".to_string()],
+                supported_levels: vec![],
+                supported_bit_depths: vec![10],
+                supports_preset: false,
+                supports_crf: false,
+                supports_qp: false,
+                supports_bitrate: true,
+            },
+            TranscodeVideoEncoderCapability {
+                id: "h264_videotoolbox".to_string(),
+                codec: "h264".to_string(),
+                label: "H.264".to_string(),
+                is_hardware: true,
+                supported_pixel_formats: vec!["yuv420p".to_string()],
+                supported_profiles: vec!["high".to_string()],
+                supported_levels: vec!["4.1".to_string()],
+                supported_bit_depths: vec![8],
+                supports_preset: false,
+                supports_crf: false,
+                supports_qp: false,
+                supports_bitrate: true,
+            },
+        ];
+
+        let containers = build_container_capabilities(&muxers, &video_encoders, &[], &[]);
+        let mov = containers
+            .iter()
+            .find(|container| container.id == "mov")
+            .expect("mov capability should exist");
+
+        assert_eq!(
+            mov.default_video_encoder_id.as_deref(),
+            Some("hevc_videotoolbox")
+        );
     }
 }

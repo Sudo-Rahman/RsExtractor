@@ -69,16 +69,17 @@ pub(crate) async fn extract_transcode_analysis_frames_with_bins(
     validate_media_path(input_path)?;
 
     let probe_json = probe_file_with_ffprobe(ffprobe_path, input_path).await?;
-    let probe_value: Value =
-        serde_json::from_str(&probe_json).map_err(|error| format!("Invalid probe JSON: {}", error))?;
+    let probe_value: Value = serde_json::from_str(&probe_json)
+        .map_err(|error| format!("Invalid probe JSON: {}", error))?;
 
     if !input_has_video_stream(&probe_value) {
         return Ok(Vec::new());
     }
 
-    let duration_us = crate::tools::ffprobe::get_media_duration_us_with_ffprobe(ffprobe_path, input_path)
-        .await
-        .unwrap_or(0);
+    let duration_us =
+        crate::tools::ffprobe::get_media_duration_us_with_ffprobe(ffprobe_path, input_path)
+            .await
+            .unwrap_or(0);
     let timestamps = select_analysis_timestamps(duration_us, frame_count);
     if timestamps.is_empty() {
         return Ok(Vec::new());
@@ -117,7 +118,10 @@ pub(crate) async fn extract_transcode_analysis_frames_with_bins(
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Failed to extract analysis frame: {}", stderr.trim()));
+            return Err(format!(
+                "Failed to extract analysis frame: {}",
+                stderr.trim()
+            ));
         }
 
         output_paths.push(output_path.to_string_lossy().to_string());
@@ -172,7 +176,11 @@ mod tests {
         .expect("analysis frames should be extracted");
 
         assert_eq!(output_paths.len(), 3);
-        assert!(output_paths.iter().all(|path| std::path::Path::new(path).exists()));
+        assert!(
+            output_paths
+                .iter()
+                .all(|path| std::path::Path::new(path).exists())
+        );
         assert!(output_paths.iter().all(|path| path.ends_with(".png")));
     }
 }
