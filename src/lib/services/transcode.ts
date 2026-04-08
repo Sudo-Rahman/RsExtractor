@@ -116,6 +116,19 @@ const CONTAINER_SUBTITLE_COPY_CODECS: Record<string, string[]> = {
   webm: ['webvtt'],
 };
 
+const SOURCE_CONTAINER_IDS_BY_EXTENSION: Record<string, string> = {
+  '.aac': 'aac',
+  '.flac': 'flac',
+  '.mkv': 'mkv',
+  '.mov': 'mov',
+  '.mp3': 'mp3',
+  '.mp4': 'mp4',
+  '.ogg': 'ogg',
+  '.opus': 'opus',
+  '.wav': 'wav',
+  '.webm': 'webm',
+};
+
 export function createTranscodeId(prefix: string = 'transcode'): string {
   return `${prefix}-${Date.now()}-${++transcodeIdCounter}`;
 }
@@ -260,6 +273,11 @@ export function hasOnlyTextSubtitleTracks(file: Pick<TranscodeFile, 'tracks'>): 
 function normalizeCodecName(codec?: string): string | undefined {
   const normalized = codec?.trim().toLowerCase();
   return normalized ? normalized : undefined;
+}
+
+function getPathExtension(path: string): string | undefined {
+  const lastDot = path.lastIndexOf('.');
+  return lastDot >= 0 ? path.slice(lastDot).toLowerCase() : undefined;
 }
 
 export function isLossyAudioCodec(codec?: string): boolean {
@@ -443,24 +461,97 @@ export function buildDefaultSubtitleSettings(
   };
 }
 
+function buildPreferredSubtitleSettingsForContainer(
+  capabilities: TranscodeCapabilities | null,
+  containerId: string,
+  file: Pick<TranscodeFile, 'hasVideo' | 'tracks'>,
+  current?: TranscodeSubtitleSettings,
+): TranscodeSubtitleSettings {
+  const container = getContainerCapability(capabilities, containerId);
+  const hasSubtitleTracks = getTracksByType(file, 'subtitle').length > 0;
+  const defaultEncoderId = container?.defaultSubtitleEncoderId ?? container?.supportedSubtitleEncoderIds[0];
+  const additionalArgs = current ? cloneAdditionalArgs(current.additionalArgs) : [];
+
+  if (!file.hasVideo || !hasSubtitleTracks || container?.kind !== 'video') {
+    return {
+      mode: 'disable',
+      encoderId: undefined,
+      additionalArgs,
+    };
+  }
+
+  const canCopy = canCopySubtitleTracksToContainer(file, containerId);
+  const canConvertText = hasOnlyTextSubtitleTracks(file) && Boolean(defaultEncoderId);
+
+  if (containerId === 'mp4' || containerId === 'mov') {
+    return {
+      mode: canConvertText ? 'convert_text' : 'disable',
+      encoderId: canConvertText ? defaultEncoderId : undefined,
+      additionalArgs,
+    };
+  }
+
+  if (canCopy) {
+    return {
+      mode: 'copy',
+      encoderId: undefined,
+      additionalArgs,
+    };
+  }
+
+  if (canConvertText) {
+    return {
+      mode: 'convert_text',
+      encoderId: defaultEncoderId,
+      additionalArgs,
+    };
+  }
+
+  return {
+    mode: 'disable',
+    encoderId: undefined,
+    additionalArgs,
+  };
+}
+
+function pickSourceContainerId(
+  capabilities: TranscodeCapabilities | null,
+  file: Pick<TranscodeFile, 'path' | 'hasVideo'>,
+): string | undefined {
+  const pathExtension = getPathExtension(file.path);
+  const sourceContainerId = pathExtension ? SOURCE_CONTAINER_IDS_BY_EXTENSION[pathExtension] : undefined;
+  if (!sourceContainerId) {
+    return undefined;
+  }
+
+  const container = getContainerCapability(capabilities, sourceContainerId);
+  if (!container) {
+    return undefined;
+  }
+
+  if (file.hasVideo ? container.kind !== 'video' : container.kind !== 'audio') {
+    return undefined;
+  }
+
+  return container.id;
+}
+
 export function buildDefaultTranscodeProfile(
   capabilities: TranscodeCapabilities | null,
-  file: Pick<TranscodeFile, 'hasVideo' | 'hasAudio' | 'tracks'>,
+  file: Pick<TranscodeFile, 'path' | 'hasVideo' | 'hasAudio' | 'tracks'>,
 ): TranscodeProfile {
   const availableContainers = capabilities?.containers.filter((container) =>
     file.hasVideo ? container.kind === 'video' : container.kind === 'audio',
   ) ?? [];
-  const defaultContainerId = availableContainers[0]?.id ?? (file.hasVideo ? 'mp4' : 'mp3');
+  const defaultContainerId = pickSourceContainerId(capabilities, file)
+    ?? availableContainers[0]?.id
+    ?? (file.hasVideo ? 'mp4' : 'mp3');
 
   return {
     containerId: defaultContainerId,
     video: buildDefaultVideoSettings(capabilities, defaultContainerId, file.hasVideo),
     audio: buildDefaultAudioSettings(capabilities, defaultContainerId, file.hasAudio),
-    subtitles: buildDefaultSubtitleSettings(
-      capabilities,
-      defaultContainerId,
-      getTracksByType(file, 'subtitle').length > 0,
-    ),
+    subtitles: buildPreferredSubtitleSettingsForContainer(capabilities, defaultContainerId, file),
   };
 }
 
@@ -580,6 +671,33 @@ export function clampTranscodeProfile(
   }
 
   return next;
+}
+
+export function normalizeProfileForProfileChange(
+  profile: TranscodeProfile,
+  capabilities: TranscodeCapabilities | null,
+  file: Pick<TranscodeFile, 'hasVideo' | 'hasAudio' | 'tracks'>,
+): TranscodeProfile {
+  const next = cloneTranscodeProfile(profile);
+  const compatibleContainerId = findCompatibleContainerId(capabilities, next, file);
+  if (compatibleContainerId) {
+    next.containerId = compatibleContainerId;
+  }
+
+  return clampTranscodeProfile(next, capabilities, file);
+}
+
+export function normalizeProfileForContainerChange(
+  profile: TranscodeProfile,
+  containerId: string,
+  capabilities: TranscodeCapabilities | null,
+  file: Pick<TranscodeFile, 'hasVideo' | 'hasAudio' | 'tracks'>,
+): TranscodeProfile {
+  const next = cloneTranscodeProfile(profile);
+  next.containerId = containerId;
+  next.subtitles = buildPreferredSubtitleSettingsForContainer(capabilities, containerId, file, next.subtitles);
+
+  return clampTranscodeProfile(next, capabilities, file);
 }
 
 export function applySourceAwareRecommendation(

@@ -13,6 +13,7 @@ export { default as TranscodeVideoTab } from './TranscodeVideoTab.svelte';
 export { default as TranscodeAudioTab } from './TranscodeAudioTab.svelte';
 
 export type {
+  TranscodeContainerUpdater,
   TranscodeOutputPathBuilder,
   TranscodeProfileUpdater,
 } from './types';
