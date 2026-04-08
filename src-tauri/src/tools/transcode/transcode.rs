@@ -10,6 +10,7 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::shared::ffmpeg_progress::FfmpegProgressTracker;
+use crate::shared::process::terminate_process;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::store::{resolve_ffmpeg_path, resolve_ffprobe_path};
 use crate::shared::validation::{validate_media_path, validate_output_path};
@@ -138,6 +139,87 @@ fn can_copy_subtitle_codec(container_id: &str, codec: &str) -> bool {
     )
 }
 
+fn can_copy_video_codec(container_id: &str, codec: &str) -> bool {
+    matches!(
+        (container_id, codec),
+        (
+            "mp4",
+            "av1" | "h264" | "hevc" | "mjpeg" | "mpeg4" | "prores"
+        ) | (
+            "mov",
+            "av1" | "dvvideo" | "h264" | "hevc" | "mjpeg" | "mpeg4" | "prores"
+        ) | (
+            "mkv",
+            "av1"
+                | "ffv1"
+                | "h264"
+                | "hevc"
+                | "mjpeg"
+                | "mpeg2video"
+                | "mpeg4"
+                | "prores"
+                | "theora"
+                | "vp8"
+                | "vp9"
+        ) | ("webm", "av1" | "vp8" | "vp9")
+    )
+}
+
+fn can_copy_audio_codec(container_id: &str, codec: &str) -> bool {
+    matches!(
+        (container_id, codec),
+        (
+            "mov",
+            "aac"
+                | "ac3"
+                | "alac"
+                | "eac3"
+                | "mp3"
+                | "pcm_f32le"
+                | "pcm_f64le"
+                | "pcm_s16le"
+                | "pcm_s24le"
+                | "pcm_s32le"
+        ) | ("mp4", "aac" | "ac3" | "alac" | "eac3" | "mp3")
+            | (
+                "mkv",
+                "aac"
+                    | "ac3"
+                    | "alac"
+                    | "dts"
+                    | "eac3"
+                    | "flac"
+                    | "mp2"
+                    | "mp3"
+                    | "opus"
+                    | "pcm_f32le"
+                    | "pcm_f64le"
+                    | "pcm_s16le"
+                    | "pcm_s24le"
+                    | "pcm_s32le"
+                    | "truehd"
+                    | "vorbis"
+            )
+            | ("webm", "opus" | "vorbis")
+            | ("aac", "aac")
+            | ("mp3", "mp3")
+            | ("flac", "flac")
+            | ("opus", "opus")
+            | ("ogg", "flac" | "opus" | "vorbis")
+            | (
+                "wav",
+                "pcm_alaw"
+                    | "pcm_f32le"
+                    | "pcm_f64le"
+                    | "pcm_mulaw"
+                    | "pcm_s16le"
+                    | "pcm_s24le"
+                    | "pcm_s32le"
+                    | "pcm_u8"
+            )
+    )
+}
+
 fn validate_output_path_matches_container(request: &TranscodeRequest) -> Result<(), String> {
     let Some(expected_extension) =
         super::capabilities::container_extension_for_id(&request.container_id)
@@ -186,6 +268,47 @@ fn extract_streams_by_type(streams: &[Value], codec_type: &str) -> Vec<StreamInf
                 .to_string(),
         })
         .collect()
+}
+
+fn has_enabled_additional_arg(additional_args: &[TranscodeAdditionalArg], flag: &str) -> bool {
+    additional_args
+        .iter()
+        .any(|additional_arg| additional_arg.enabled && additional_arg.flag.trim() == flag)
+}
+
+fn libopus_uses_default_mapping_family(channel_layout: &str) -> bool {
+    matches!(
+        channel_layout,
+        "mono" | "stereo" | "3.0" | "quad" | "5.0" | "5.1" | "6.1" | "7.1"
+    )
+}
+
+fn should_force_libopus_mapping_family_255(request: &TranscodeRequest, streams: &[Value]) -> bool {
+    if request.audio.encoder_id.as_deref() != Some("libopus")
+        || request.audio.channels.is_some()
+        || has_enabled_additional_arg(&request.audio.additional_args, "-mapping_family")
+    {
+        return false;
+    }
+
+    streams.iter().any(|stream| {
+        if stream.get("codec_type").and_then(|value| value.as_str()) != Some("audio") {
+            return false;
+        }
+
+        let channels = stream
+            .get("channels")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        let channel_layout = stream
+            .get("channel_layout")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+
+        channels > 2
+            && !channel_layout.is_empty()
+            && !libopus_uses_default_mapping_family(channel_layout)
+    })
 }
 
 fn apply_safe_additional_args(
@@ -305,6 +428,18 @@ fn build_transcode_args(
     if !video_streams.is_empty() {
         match request.video.mode.as_str() {
             "copy" => {
+                if let Some(unsupported_codec) = video_streams
+                    .first()
+                    .map(|stream| stream.codec_name.as_str())
+                    .filter(|codec| !can_copy_video_codec(&request.container_id, codec))
+                {
+                    return Err(format!(
+                        "Container {} cannot copy video codec {}. Choose video transcoding or a compatible container.",
+                        request.container_id.to_uppercase(),
+                        unsupported_codec
+                    ));
+                }
+
                 args.push("-c:v".to_string());
                 args.push("copy".to_string());
             }
@@ -389,6 +524,18 @@ fn build_transcode_args(
     if !audio_streams.is_empty() {
         match request.audio.mode.as_str() {
             "copy" => {
+                if let Some(unsupported_codec) = audio_streams
+                    .iter()
+                    .find(|stream| !can_copy_audio_codec(&request.container_id, &stream.codec_name))
+                    .map(|stream| stream.codec_name.as_str())
+                {
+                    return Err(format!(
+                        "Container {} cannot copy audio codec {}. Choose audio transcoding or a compatible container.",
+                        request.container_id.to_uppercase(),
+                        unsupported_codec
+                    ));
+                }
+
                 args.push("-c:a".to_string());
                 args.push("copy".to_string());
             }
@@ -402,6 +549,11 @@ fn build_transcode_args(
 
                 args.push("-c:a".to_string());
                 args.push(encoder_id.to_string());
+
+                if should_force_libopus_mapping_family_255(request, streams) {
+                    args.push("-mapping_family".to_string());
+                    args.push("255".to_string());
+                }
 
                 if let Some(bitrate_kbps) = request.audio.bitrate_kbps {
                     args.push("-b:a".to_string());
@@ -626,22 +778,9 @@ pub(crate) async fn transcode_media(
 
     let input_path_for_cleanup = request.input_path.clone();
     let output_path_for_cleanup = request.output_path.clone();
-    let output = timeout(TRANSCODE_TIMEOUT, child.wait_with_output())
-        .await
-        .map_err(|_| {
-            if let Ok(mut guard) = super::state::TRANSCODE_PROCESS_IDS.lock() {
-                guard.remove(&input_path_for_cleanup);
-            }
-            if let Ok(mut guard) = super::state::TRANSCODE_OUTPUT_PATHS.lock() {
-                guard.remove(&input_path_for_cleanup);
-            }
-            let _ = std::fs::remove_file(&output_path_for_cleanup);
-            format!(
-                "Transcode timeout after {} seconds",
-                TRANSCODE_TIMEOUT.as_secs()
-            )
-        })?
-        .map_err(|error| {
+    let child_pid = child.id();
+    let output = match timeout(TRANSCODE_TIMEOUT, child.wait_with_output()).await {
+        Ok(result) => result.map_err(|error| {
             if let Ok(mut guard) = super::state::TRANSCODE_PROCESS_IDS.lock() {
                 guard.remove(&input_path_for_cleanup);
             }
@@ -650,7 +789,26 @@ pub(crate) async fn transcode_media(
             }
             let _ = std::fs::remove_file(&output_path_for_cleanup);
             format!("Failed to execute ffmpeg: {}", error)
-        })?;
+        })?,
+        Err(_) => {
+            if let Some(pid) = child_pid {
+                terminate_process(pid);
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+
+            if let Ok(mut guard) = super::state::TRANSCODE_PROCESS_IDS.lock() {
+                guard.remove(&input_path_for_cleanup);
+            }
+            if let Ok(mut guard) = super::state::TRANSCODE_OUTPUT_PATHS.lock() {
+                guard.remove(&input_path_for_cleanup);
+            }
+            let _ = std::fs::remove_file(&output_path_for_cleanup);
+            return Err(format!(
+                "Transcode timeout after {} seconds",
+                TRANSCODE_TIMEOUT.as_secs()
+            ));
+        }
+    };
 
     if let Ok(mut guard) = super::state::TRANSCODE_PROCESS_IDS.lock() {
         guard.remove(&request.input_path);
@@ -775,6 +933,34 @@ mod tests {
     }
 
     #[test]
+    fn build_transcode_args_rejects_copying_h264_video_into_webm() {
+        let mut request = build_request("/tmp/output.webm");
+        request.container_id = "webm".to_string();
+        request.video.mode = "copy".to_string();
+        request.audio.mode = "disable".to_string();
+        request.subtitles.mode = "disable".to_string();
+        let streams = vec![json!({ "codec_type": "video", "codec_name": "h264" })];
+
+        let error = build_transcode_args(&request, &streams, None)
+            .expect_err("h264 copy to webm should fail");
+        assert!(error.contains("cannot copy video codec"));
+    }
+
+    #[test]
+    fn build_transcode_args_rejects_copying_aac_audio_into_webm() {
+        let mut request = build_request("/tmp/output.webm");
+        request.container_id = "webm".to_string();
+        request.video.mode = "disable".to_string();
+        request.audio.mode = "copy".to_string();
+        request.subtitles.mode = "disable".to_string();
+        let streams = vec![json!({ "codec_type": "audio", "codec_name": "aac" })];
+
+        let error = build_transcode_args(&request, &streams, None)
+            .expect_err("aac copy to webm should fail");
+        assert!(error.contains("cannot copy audio codec"));
+    }
+
+    #[test]
     fn build_transcode_args_maps_libaom_preset_to_cpu_used() {
         let mut request = build_request("/tmp/output.mkv");
         request.container_id = "mkv".to_string();
@@ -801,6 +987,76 @@ mod tests {
             .expect_err("invalid libaom preset should fail");
 
         assert!(error.contains("libaom-av1 preset must be an integer from 0 to 8"));
+    }
+
+    #[test]
+    fn build_transcode_args_sets_mapping_family_255_for_unsupported_libopus_layouts() {
+        let mut request = build_request("/tmp/output.opus");
+        request.container_id = "opus".to_string();
+        request.video.mode = "disable".to_string();
+        request.audio.encoder_id = Some("libopus".to_string());
+        request.subtitles.mode = "disable".to_string();
+        request.audio.channels = None;
+
+        let streams = vec![json!({
+            "codec_type": "audio",
+            "codec_name": "flac",
+            "channels": 6,
+            "channel_layout": "5.1(side)"
+        })];
+
+        let args =
+            build_transcode_args(&request, &streams, None).expect("libopus args should build");
+
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["-mapping_family", "255"])
+        );
+    }
+
+    #[test]
+    fn build_transcode_args_keeps_default_mapping_family_for_supported_libopus_layouts() {
+        let mut request = build_request("/tmp/output.opus");
+        request.container_id = "opus".to_string();
+        request.video.mode = "disable".to_string();
+        request.audio.encoder_id = Some("libopus".to_string());
+        request.subtitles.mode = "disable".to_string();
+        request.audio.channels = None;
+
+        let streams = vec![json!({
+            "codec_type": "audio",
+            "codec_name": "flac",
+            "channels": 6,
+            "channel_layout": "5.1"
+        })];
+
+        let args =
+            build_transcode_args(&request, &streams, None).expect("libopus args should build");
+
+        assert!(!args.iter().any(|arg| arg == "-mapping_family"));
+    }
+
+    #[test]
+    fn build_transcode_args_does_not_force_mapping_family_when_channels_are_overridden() {
+        let mut request = build_request("/tmp/output.opus");
+        request.container_id = "opus".to_string();
+        request.video.mode = "disable".to_string();
+        request.audio.encoder_id = Some("libopus".to_string());
+        request.subtitles.mode = "disable".to_string();
+        request.audio.channels = Some(6);
+
+        let streams = vec![json!({
+            "codec_type": "audio",
+            "codec_name": "flac",
+            "channels": 6,
+            "channel_layout": "5.1(side)"
+        })];
+
+        let args =
+            build_transcode_args(&request, &streams, None).expect("libopus args should build");
+
+        assert!(!args.iter().any(|arg| arg == "-mapping_family"));
+        assert!(args.windows(2).any(|window| window == ["-ac", "6"]));
     }
 
     #[test]

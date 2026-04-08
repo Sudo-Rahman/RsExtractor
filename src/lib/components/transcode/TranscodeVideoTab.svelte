@@ -6,7 +6,11 @@
     TranscodeVideoEncoderCapability,
     TranscodeVideoMode,
   } from '$lib/types';
-  import { getDefaultVideoPresetValue, type TranscodePresetOption } from '$lib/services/transcode';
+  import {
+    getDefaultVideoPresetValue,
+    hasManualVideoQualityControls,
+    type TranscodePresetOption,
+  } from '$lib/services/transcode';
   import { formatResolution } from '$lib/utils/format';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
@@ -63,6 +67,7 @@
   const selectedPresetValue = $derived(
     file.profile.video.preset ?? getDefaultVideoPresetValue(selectedVideoEncoder?.id) ?? '',
   );
+  const hasManualQualityControls = $derived(hasManualVideoQualityControls(selectedVideoEncoder));
 </script>
 
 {#if !file.hasVideo}
@@ -199,73 +204,79 @@
 
     <div class="space-y-4">
       {#if file.profile.video.mode === 'transcode'}
-        <div class="space-y-2">
-          <Label>Quality mode</Label>
-          <Select.Root
-            type="single"
-            value={file.profile.video.qualityMode}
-            onValueChange={(value) => {
-              updateProfile((profile) => {
-                profile.video.qualityMode = value as TranscodeQualityMode;
-              });
-            }}
-          >
-            <Select.Trigger class="w-full">{file.profile.video.qualityMode}</Select.Trigger>
-            <Select.Content>
-              {#if selectedVideoEncoder?.supportsCrf}
-                <Select.Item value="crf">crf</Select.Item>
-              {/if}
-              {#if selectedVideoEncoder?.supportsQp}
-                <Select.Item value="qp">qp</Select.Item>
-              {/if}
-              {#if selectedVideoEncoder?.supportsBitrate}
-                <Select.Item value="bitrate">bitrate</Select.Item>
-              {/if}
-            </Select.Content>
-          </Select.Root>
-        </div>
+        {#if hasManualQualityControls}
+          <div class="space-y-2">
+            <Label>Quality mode</Label>
+            <Select.Root
+              type="single"
+              value={file.profile.video.qualityMode}
+              onValueChange={(value) => {
+                updateProfile((profile) => {
+                  profile.video.qualityMode = value as TranscodeQualityMode;
+                });
+              }}
+            >
+              <Select.Trigger class="w-full">{file.profile.video.qualityMode}</Select.Trigger>
+              <Select.Content>
+                {#if selectedVideoEncoder?.supportsCrf}
+                  <Select.Item value="crf">crf</Select.Item>
+                {/if}
+                {#if selectedVideoEncoder?.supportsQp}
+                  <Select.Item value="qp">qp</Select.Item>
+                {/if}
+                {#if selectedVideoEncoder?.supportsBitrate}
+                  <Select.Item value="bitrate">bitrate</Select.Item>
+                {/if}
+              </Select.Content>
+            </Select.Root>
+          </div>
 
-        {#if file.profile.video.qualityMode === 'crf'}
-          <div class="space-y-2">
-            <Label>CRF</Label>
-            <Input
-              type="number"
-              value={file.profile.video.crf?.toString() ?? ''}
-              oninput={(event) => {
-                const value = parseOptionalFloat(event.currentTarget.value);
-                updateProfile((profile) => {
-                  profile.video.crf = value;
-                });
-              }}
-            />
-          </div>
-        {:else if file.profile.video.qualityMode === 'qp'}
-          <div class="space-y-2">
-            <Label>QP</Label>
-            <Input
-              type="number"
-              value={file.profile.video.qp?.toString() ?? ''}
-              oninput={(event) => {
-                const value = parseOptionalInt(event.currentTarget.value);
-                updateProfile((profile) => {
-                  profile.video.qp = value;
-                });
-              }}
-            />
-          </div>
+          {#if file.profile.video.qualityMode === 'crf'}
+            <div class="space-y-2">
+              <Label>CRF</Label>
+              <Input
+                type="number"
+                value={file.profile.video.crf?.toString() ?? ''}
+                oninput={(event) => {
+                  const value = parseOptionalFloat(event.currentTarget.value);
+                  updateProfile((profile) => {
+                    profile.video.crf = value;
+                  });
+                }}
+              />
+            </div>
+          {:else if file.profile.video.qualityMode === 'qp'}
+            <div class="space-y-2">
+              <Label>QP</Label>
+              <Input
+                type="number"
+                value={file.profile.video.qp?.toString() ?? ''}
+                oninput={(event) => {
+                  const value = parseOptionalInt(event.currentTarget.value);
+                  updateProfile((profile) => {
+                    profile.video.qp = value;
+                  });
+                }}
+              />
+            </div>
+          {:else}
+            <div class="space-y-2">
+              <Label>Bitrate (kbps)</Label>
+              <Input
+                type="number"
+                value={file.profile.video.bitrateKbps?.toString() ?? ''}
+                oninput={(event) => {
+                  const value = parseOptionalInt(event.currentTarget.value);
+                  updateProfile((profile) => {
+                    profile.video.bitrateKbps = value;
+                  });
+                }}
+              />
+            </div>
+          {/if}
         {:else}
-          <div class="space-y-2">
-            <Label>Bitrate (kbps)</Label>
-            <Input
-              type="number"
-              value={file.profile.video.bitrateKbps?.toString() ?? ''}
-              oninput={(event) => {
-                const value = parseOptionalInt(event.currentTarget.value);
-                updateProfile((profile) => {
-                  profile.video.bitrateKbps = value;
-                });
-              }}
-            />
+          <div class="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+            This encoder manages quality automatically.
           </div>
         {/if}
 

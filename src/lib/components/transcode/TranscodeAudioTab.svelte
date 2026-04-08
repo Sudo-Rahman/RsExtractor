@@ -39,6 +39,8 @@
     if (!value) return 'N/A';
     return `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)} kHz`;
   }
+
+  const isBitrateDisabled = $derived(!selectedAudioEncoder?.supportsBitrate || selectedAudioEncoder?.codec === 'flac');
 </script>
 
 {#if !file.hasAudio}
@@ -110,7 +112,7 @@
                 profile.audio.bitrateKbps = value;
               });
             }}
-            disabled={!selectedAudioEncoder?.supportsBitrate}
+            disabled={isBitrateDisabled}
           />
         </div>
 

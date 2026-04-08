@@ -138,9 +138,7 @@ mod tests {
             outputs.insert("video-b".to_string(), out_b.to_string_lossy().to_string());
         }
 
-        cancel_transcode()
-            .await
-            .expect("cancel all should succeed");
+        cancel_transcode().await.expect("cancel all should succeed");
 
         assert!(!out_a.exists());
         assert!(!out_b.exists());

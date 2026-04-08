@@ -116,6 +116,26 @@ const CONTAINER_SUBTITLE_COPY_CODECS: Record<string, string[]> = {
   webm: ['webvtt'],
 };
 
+const CONTAINER_VIDEO_COPY_CODECS: Record<string, string[]> = {
+  mov: ['av1', 'dvvideo', 'h264', 'hevc', 'mjpeg', 'mpeg4', 'prores'],
+  mp4: ['av1', 'h264', 'hevc', 'mjpeg', 'mpeg4', 'prores'],
+  mkv: ['av1', 'ffv1', 'h264', 'hevc', 'mjpeg', 'mpeg2video', 'mpeg4', 'prores', 'theora', 'vp8', 'vp9'],
+  webm: ['av1', 'vp8', 'vp9'],
+};
+
+const CONTAINER_AUDIO_COPY_CODECS: Record<string, string[]> = {
+  mov: ['aac', 'ac3', 'alac', 'eac3', 'mp3', 'pcm_f32le', 'pcm_f64le', 'pcm_s16le', 'pcm_s24le', 'pcm_s32le'],
+  mp4: ['aac', 'ac3', 'alac', 'eac3', 'mp3'],
+  mkv: ['aac', 'ac3', 'alac', 'dts', 'eac3', 'flac', 'mp2', 'mp3', 'opus', 'pcm_f32le', 'pcm_f64le', 'pcm_s16le', 'pcm_s24le', 'pcm_s32le', 'truehd', 'vorbis'],
+  webm: ['opus', 'vorbis'],
+  aac: ['aac'],
+  mp3: ['mp3'],
+  flac: ['flac'],
+  opus: ['opus'],
+  ogg: ['flac', 'opus', 'vorbis'],
+  wav: ['pcm_f32le', 'pcm_f64le', 'pcm_s16le', 'pcm_s24le', 'pcm_s32le', 'pcm_u8', 'pcm_alaw', 'pcm_mulaw'],
+};
+
 const SOURCE_CONTAINER_IDS_BY_EXTENSION: Record<string, string> = {
   '.aac': 'aac',
   '.flac': 'flac',
@@ -251,6 +271,50 @@ export function canContainerCopySubtitleCodec(containerId: string, codec?: strin
   return (CONTAINER_SUBTITLE_COPY_CODECS[containerId] ?? []).includes(normalizedCodec);
 }
 
+export function canContainerCopyVideoCodec(containerId: string, codec?: string): boolean {
+  const normalizedCodec = normalizeCodecName(codec);
+  if (!normalizedCodec) {
+    return false;
+  }
+
+  return (CONTAINER_VIDEO_COPY_CODECS[containerId] ?? []).includes(normalizedCodec);
+}
+
+export function canContainerCopyAudioCodec(containerId: string, codec?: string): boolean {
+  const normalizedCodec = normalizeCodecName(codec);
+  if (!normalizedCodec) {
+    return false;
+  }
+
+  return (CONTAINER_AUDIO_COPY_CODECS[containerId] ?? []).includes(normalizedCodec);
+}
+
+export function canCopyPrimaryVideoTrackToContainer(
+  file: Pick<TranscodeFile, 'tracks'>,
+  containerId: string,
+): boolean {
+  const primaryVideoTrack = getPrimaryVideoTrack(file);
+  if (!primaryVideoTrack) {
+    return true;
+  }
+
+  return canContainerCopyVideoCodec(containerId, primaryVideoTrack.codec);
+}
+
+export function getUnsupportedAudioCopyTracks(
+  file: Pick<TranscodeFile, 'tracks'>,
+  containerId: string,
+): Track[] {
+  return getTracksByType(file, 'audio').filter((track) => !canContainerCopyAudioCodec(containerId, track.codec));
+}
+
+export function canCopyAudioTracksToContainer(
+  file: Pick<TranscodeFile, 'tracks'>,
+  containerId: string,
+): boolean {
+  return getUnsupportedAudioCopyTracks(file, containerId).length === 0;
+}
+
 export function getUnsupportedSubtitleCopyTracks(
   file: Pick<TranscodeFile, 'tracks'>,
   containerId: string,
@@ -331,6 +395,68 @@ function clampVideoPresetValue(encoderId?: string, preset?: string): string | un
   return getDefaultVideoPresetValue(encoderId);
 }
 
+export function hasManualVideoQualityControls(
+  encoder?: Pick<TranscodeVideoEncoderCapability, 'supportsCrf' | 'supportsQp' | 'supportsBitrate'> | null,
+): boolean {
+  return Boolean(encoder?.supportsCrf || encoder?.supportsQp || encoder?.supportsBitrate);
+}
+
+function getDefaultVideoQualityMode(
+  encoder?: Pick<TranscodeVideoEncoderCapability, 'supportsCrf' | 'supportsQp' | 'supportsBitrate'> | null,
+  currentMode?: TranscodeVideoSettings['qualityMode'],
+): TranscodeVideoSettings['qualityMode'] {
+  if (currentMode === 'crf' && encoder?.supportsCrf) {
+    return 'crf';
+  }
+
+  if (currentMode === 'qp' && encoder?.supportsQp) {
+    return 'qp';
+  }
+
+  if (currentMode === 'bitrate' && encoder?.supportsBitrate) {
+    return 'bitrate';
+  }
+
+  if (encoder?.supportsCrf) {
+    return 'crf';
+  }
+
+  if (encoder?.supportsQp) {
+    return 'qp';
+  }
+
+  if (encoder?.supportsBitrate) {
+    return 'bitrate';
+  }
+
+  return currentMode ?? 'bitrate';
+}
+
+function applyVideoQualityDefaults(
+  settings: TranscodeVideoSettings,
+  encoder?: TranscodeVideoEncoderCapability,
+): void {
+  settings.qualityMode = getDefaultVideoQualityMode(encoder, settings.qualityMode);
+
+  if (settings.qualityMode === 'crf' && encoder?.supportsCrf) {
+    settings.crf ??= encoder.codec === 'hevc' ? 22 : 20;
+  } else {
+    settings.crf = undefined;
+  }
+
+  if (settings.qualityMode === 'qp' && encoder?.supportsQp) {
+    settings.qp ??= 20;
+  } else {
+    settings.qp = undefined;
+  }
+
+  if (settings.qualityMode === 'bitrate' && encoder?.supportsBitrate) {
+    settings.bitrateKbps ??= 5000;
+  } else {
+    settings.bitrateKbps = undefined;
+  }
+}
+
 function getContainerCandidates(
   capabilities: TranscodeCapabilities | null,
   hasVideo: boolean,
@@ -345,6 +471,10 @@ function containerSupportsTranscodeProfile(
   profile: TranscodeProfile,
   file: Pick<TranscodeFile, 'hasVideo' | 'hasAudio' | 'tracks'>,
 ): boolean {
+  if (file.hasVideo && profile.video.mode === 'copy' && !canCopyPrimaryVideoTrackToContainer(file, container.id)) {
+    return false;
+  }
+
   if (file.hasVideo && profile.video.mode === 'transcode') {
     if (!profile.video.encoderId) {
       return container.supportedVideoEncoderIds.length > 0;
@@ -363,6 +493,10 @@ function containerSupportsTranscodeProfile(
     if (!container.supportedAudioEncoderIds.includes(profile.audio.encoderId)) {
       return false;
     }
+  }
+
+  if (file.hasAudio && profile.audio.mode === 'copy' && !canCopyAudioTracksToContainer(file, container.id)) {
+    return false;
   }
 
   if (getTracksByType(file, 'subtitle').length > 0 && profile.subtitles.mode === 'convert_text') {
@@ -409,7 +543,7 @@ export function buildDefaultVideoSettings(
   const encoderId = container?.defaultVideoEncoderId ?? container?.supportedVideoEncoderIds[0];
   const encoder = getVideoEncoderCapability(capabilities, encoderId);
 
-  return {
+  const settings: TranscodeVideoSettings = {
     mode: hasVideo ? 'transcode' : 'disable',
     encoderId,
     profile: encoder?.supportedProfiles[0],
@@ -417,15 +551,19 @@ export function buildDefaultVideoSettings(
     pixelFormat: encoder?.supportedPixelFormats.find((pixelFormat) => pixelFormat.includes('p010'))
       ?? encoder?.supportedPixelFormats.find((pixelFormat) => pixelFormat.includes('420'))
       ?? encoder?.supportedPixelFormats[0],
-    qualityMode: encoder?.supportsCrf ? 'crf' : encoder?.supportsQp ? 'qp' : 'bitrate',
-    crf: encoder?.supportsCrf ? (encoder.codec === 'hevc' ? 22 : 20) : undefined,
-    qp: encoder?.supportsQp && !encoder?.supportsCrf ? 20 : undefined,
-    bitrateKbps: !encoder?.supportsCrf && !encoder?.supportsQp ? 5000 : undefined,
+    qualityMode: 'bitrate',
+    crf: undefined,
+    qp: undefined,
+    bitrateKbps: undefined,
     preset: getVideoPresetOptions(encoderId).length > 0
       ? getDefaultVideoPresetValue(encoderId) ?? (encoder?.isHardware ? 'fast' : 'medium')
       : undefined,
     additionalArgs: [],
   };
+
+  applyVideoQualityDefaults(settings, encoder);
+
+  return settings;
 }
 
 export function buildDefaultAudioSettings(
@@ -547,10 +685,21 @@ export function buildDefaultTranscodeProfile(
     ?? availableContainers[0]?.id
     ?? (file.hasVideo ? 'mp4' : 'mp3');
 
+  const video = buildDefaultVideoSettings(capabilities, defaultContainerId, file.hasVideo);
+  const audio = buildDefaultAudioSettings(capabilities, defaultContainerId, file.hasAudio);
+
+  if (file.hasVideo && !video.encoderId && canCopyPrimaryVideoTrackToContainer(file, defaultContainerId)) {
+    video.mode = 'copy';
+  }
+
+  if (file.hasAudio && !audio.encoderId && canCopyAudioTracksToContainer(file, defaultContainerId)) {
+    audio.mode = 'copy';
+  }
+
   return {
     containerId: defaultContainerId,
-    video: buildDefaultVideoSettings(capabilities, defaultContainerId, file.hasVideo),
-    audio: buildDefaultAudioSettings(capabilities, defaultContainerId, file.hasAudio),
+    video,
+    audio,
     subtitles: buildPreferredSubtitleSettingsForContainer(capabilities, defaultContainerId, file),
   };
 }
@@ -603,12 +752,7 @@ export function clampTranscodeProfile(
       if (next.video.pixelFormat && !encoder?.supportedPixelFormats.includes(next.video.pixelFormat)) {
         next.video.pixelFormat = encoder?.supportedPixelFormats[0];
       }
-      if (next.video.qualityMode === 'crf' && !encoder?.supportsCrf) {
-        next.video.qualityMode = encoder?.supportsQp ? 'qp' : 'bitrate';
-      }
-      if (next.video.qualityMode === 'qp' && !encoder?.supportsQp) {
-        next.video.qualityMode = encoder?.supportsCrf ? 'crf' : 'bitrate';
-      }
+      applyVideoQualityDefaults(next.video, encoder);
       if (getVideoPresetOptions(next.video.encoderId).length === 0) {
         next.video.preset = undefined;
       } else {
@@ -757,9 +901,25 @@ export function getTranscodeCompatibilityIssues(
     issues.push(`Container ${container.label} does not support the selected video encoder.`);
   }
 
+  if (file.hasVideo && file.profile.video.mode === 'transcode' && !file.profile.video.encoderId) {
+    issues.push(`No compatible video encoder is available for container ${container.label} on this machine.`);
+  }
+
+  if (file.hasVideo && file.profile.video.mode === 'copy' && !canCopyPrimaryVideoTrackToContainer(file, container.id)) {
+    issues.push(`Container ${container.label} cannot copy the primary video track from this file.`);
+  }
+
   if (file.hasAudio && file.profile.audio.mode === 'transcode' && file.profile.audio.encoderId
     && !container.supportedAudioEncoderIds.includes(file.profile.audio.encoderId)) {
     issues.push(`Container ${container.label} does not support the selected audio encoder.`);
+  }
+
+  if (file.hasAudio && file.profile.audio.mode === 'transcode' && !file.profile.audio.encoderId) {
+    issues.push(`No compatible audio encoder is available for container ${container.label} on this machine.`);
+  }
+
+  if (file.hasAudio && file.profile.audio.mode === 'copy' && !canCopyAudioTracksToContainer(file, container.id)) {
+    issues.push(`Container ${container.label} cannot copy one or more audio tracks from this file.`);
   }
 
   if (getTracksByType(file, 'subtitle').length > 0) {

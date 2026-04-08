@@ -6,5 +6,5 @@ pub(crate) mod merge;
 pub(crate) mod ocr;
 pub(crate) mod power;
 pub(crate) mod tokens;
-pub(crate) mod transcription;
 pub(crate) mod transcode;
+pub(crate) mod transcription;
