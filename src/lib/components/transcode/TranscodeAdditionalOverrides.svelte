@@ -10,14 +10,17 @@
   import type { TranscodeProfileUpdater } from './types';
 
   interface Props {
-    tab: TranscodePresetTab;
+    tab?: TranscodePresetTab;
     title: string;
     description: string;
     emptyMessage: string;
     commonFlags: string[];
     args: TranscodeAdditionalArg[];
-    createId: (prefix: string) => string;
-    updateProfile: TranscodeProfileUpdater;
+    createId?: (prefix: string) => string;
+    updateProfile?: TranscodeProfileUpdater;
+    onAddOverride?: (flag?: string) => void;
+    onUpdateOverride?: (argId: string, updates: Partial<TranscodeAdditionalArg>) => void;
+    onRemoveOverride?: (argId: string) => void;
   }
 
   let {
@@ -29,6 +32,9 @@
     args,
     createId,
     updateProfile,
+    onAddOverride,
+    onUpdateOverride,
+    onRemoveOverride,
   }: Props = $props();
 
   function getTarget(profile: TranscodeProfile) {
@@ -43,6 +49,15 @@
   }
 
   function addOverride(flag?: string): void {
+    if (onAddOverride) {
+      onAddOverride(flag);
+      return;
+    }
+
+    if (!updateProfile || !createId || !tab) {
+      return;
+    }
+
     updateProfile((profile) => {
       const target = getTarget(profile);
       target.additionalArgs = [
@@ -58,6 +73,15 @@
   }
 
   function updateOverride(argId: string, updates: Partial<TranscodeAdditionalArg>): void {
+    if (onUpdateOverride) {
+      onUpdateOverride(argId, updates);
+      return;
+    }
+
+    if (!updateProfile || !tab) {
+      return;
+    }
+
     updateProfile((profile) => {
       const target = getTarget(profile);
       target.additionalArgs = target.additionalArgs.map((arg) =>
@@ -67,6 +91,15 @@
   }
 
   function removeOverride(argId: string): void {
+    if (onRemoveOverride) {
+      onRemoveOverride(argId);
+      return;
+    }
+
+    if (!updateProfile || !tab) {
+      return;
+    }
+
     updateProfile((profile) => {
       const target = getTarget(profile);
       target.additionalArgs = target.additionalArgs.filter((arg) => arg.id !== argId);

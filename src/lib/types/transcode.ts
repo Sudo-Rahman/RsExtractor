@@ -41,6 +41,17 @@ export interface TranscodeAudioSettings {
   channels?: number;
   sampleRate?: number;
   additionalArgs: TranscodeAdditionalArg[];
+  trackOverrides: TranscodeAudioTrackOverride[];
+}
+
+export interface TranscodeAudioTrackOverride {
+  trackId: number;
+  mode: TranscodeAudioMode;
+  encoderId?: string;
+  bitrateKbps?: number;
+  channels?: number;
+  sampleRate?: number;
+  additionalArgs: TranscodeAdditionalArg[];
 }
 
 export interface TranscodeSubtitleSettings {

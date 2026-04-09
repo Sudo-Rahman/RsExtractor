@@ -118,7 +118,6 @@
         title="Drop media files here"
         formats={supportedFormats}
         onBrowse={onAddFiles}
-        class="h-full"
       />
     {:else}
       <div class="space-y-1.5">
