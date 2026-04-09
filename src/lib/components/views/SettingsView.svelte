@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { Sun, Moon, Monitor, Palette, Terminal, FolderOpen, Download, CheckCircle, XCircle, RefreshCw, Info, Key, Eye, EyeOff, Languages, AudioLines, ExternalLink } from '@lucide/svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
@@ -7,19 +8,17 @@
   import { mode, setMode } from 'mode-watcher';
   import { toast } from 'svelte-sonner';
 
-  import { settingsStore } from '$lib/stores';
   import { Button } from '$lib/components/ui/button';
+  import * as Card from '$lib/components/ui/card';
+  import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Progress } from '$lib/components/ui/progress';
-  import * as Card from '$lib/components/ui/card';
   import * as RadioGroup from '$lib/components/ui/radio-group';
   import { Separator } from '$lib/components/ui/separator';
-  import { Badge } from '$lib/components/ui/badge';
-
-  import { Sun, Moon, Monitor, Palette, Terminal, FolderOpen, Download, CheckCircle, XCircle, RefreshCw, Info, Key, Eye, EyeOff, Languages, AudioLines, ExternalLink } from '@lucide/svelte';
-
-  import { LLM_PROVIDERS, type LLMProvider } from '$lib/types';
+  import { appUpdateStore, settingsStore } from '$lib/stores';
+  import { LLM_PROVIDERS } from '$lib/types';
+  import type { LLMProvider } from '$lib/types';
 
   type DownloadResult = {
     ffmpegPath: string;
@@ -226,7 +225,7 @@
           <Card.Title>FFmpeg</Card.Title>
         </div>
         <Card.Description>
-          Configure FFmpeg and FFprobe paths for multimedia processing
+          Configure FFmpeg and FFprobe paths, or leave them blank to use the bundled binaries on macOS.
         </Card.Description>
       </Card.Header>
       <Card.Content class="space-y-4">
@@ -258,7 +257,7 @@
           <div class="flex gap-2">
             <Input
               id="ffmpeg-path"
-              placeholder="Leave empty to use system PATH"
+              placeholder="Leave empty to use bundled binaries or system PATH"
               value={settingsStore.settings.ffmpegPath}
               oninput={(e) => void handleFFmpegPathInput(e.currentTarget.value)}
               class="flex-1"
@@ -268,7 +267,7 @@
             </Button>
           </div>
           <p class="text-xs text-muted-foreground">
-            If empty, the application will use FFmpeg from system PATH
+            On macOS, MediaFlow will use the bundled FFmpeg first and then fall back to system PATH.
           </p>
         </div>
 
@@ -278,7 +277,7 @@
           <div class="flex gap-2">
             <Input
               id="ffprobe-path"
-              placeholder="Leave empty to use system PATH"
+              placeholder="Leave empty to use bundled binaries or system PATH"
               value={settingsStore.settings.ffprobePath}
               oninput={(e) => void handleFFprobePathInput(e.currentTarget.value)}
               class="flex-1"
@@ -287,6 +286,9 @@
               <FolderOpen class="size-4" />
             </Button>
           </div>
+          <p class="text-xs text-muted-foreground">
+            On macOS, MediaFlow will use the bundled FFprobe first and then fall back to system PATH.
+          </p>
           {#if ffmpegError}
             <p class="text-xs text-destructive">{ffmpegError}</p>
           {/if}
@@ -513,7 +515,7 @@
       </Card.Header>
       <Card.Content>
         <RadioGroup.Root value={currentMode} onValueChange={handleThemeChange} class="grid gap-3">
-          {#each themeOptions as option}
+          {#each themeOptions as option (option.value)}
             {@const Icon = option.icon}
             <Label
               for={option.value}
@@ -559,7 +561,7 @@
         <Separator />
         <div class="flex items-center justify-between">
           <span class="text-muted-foreground">Version</span>
-          <span class="font-mono text-sm">1.0.0</span>
+          <span class="font-mono text-sm">{appUpdateStore.currentVersion ?? '...'}</span>
         </div>
         <Separator />
         <div class="text-sm text-muted-foreground">

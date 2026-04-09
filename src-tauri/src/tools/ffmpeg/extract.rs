@@ -342,6 +342,8 @@ pub(crate) async fn extract_track(
 
 #[cfg(test)]
 mod tests {
+    use serial_test::serial;
+
     use super::{
         build_extract_args, extract_track_with_ffmpeg, get_ffmpeg_format_for_codec,
         has_recognized_extension,
@@ -379,6 +381,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn extract_track_extracts_video_stream_from_sample_video() {
         let video = crate::test_support::assets::ensure_sample_video()
             .await
@@ -424,6 +427,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn extract_track_rejects_invalid_track_index() {
         let video = crate::test_support::assets::ensure_sample_video()
             .await
@@ -446,6 +450,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn extract_track_rejects_corrupted_media_input() {
         let temp = tempfile::tempdir().expect("failed to create tempdir");
         let input = temp.path().join("corrupted.mp4");
@@ -468,6 +473,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn extract_track_reports_error_when_ffmpeg_binary_is_missing() {
         let video = crate::test_support::assets::ensure_sample_video()
             .await

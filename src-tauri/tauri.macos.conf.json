@@ -1,0 +1,14 @@
+{
+  "app": {
+    "macOSPrivateApi": true
+  },
+  "build": {
+    "beforeBundleCommand": "pnpm bundle:ffmpeg"
+  },
+  "bundle": {
+    "externalBin": [
+      "./.bundle-bin/ffmpeg",
+      "./.bundle-bin/ffprobe"
+    ]
+  }
+}
