@@ -3,7 +3,7 @@ use std::path::Path;
 /// Allowed media file extensions
 pub(crate) const ALLOWED_MEDIA_EXTENSIONS: &[&str] = &[
     "mkv", "mp4", "avi", "mov", "webm", "m4v", "mks", "mka", "m4a", "mp3", "flac", "wav", "ogg",
-    "aac", "ac3", "dts", "srt", "ass", "ssa", "vtt", "sub", "sup", "opus", "wma",
+    "aac", "ac3", "dts", "srt", "ass", "ssa", "vtt", "sub", "sup", "opus", "wma", "eac3", "mxf"
 ];
 
 /// Validate that a path exists and is a file with an allowed extension

@@ -834,13 +834,42 @@ pub(crate) async fn transcode_media(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use std::path::Path;
+
+    use serde_json::{Value, json};
+
+    use crate::test_support::audio::{
+        ProbedAudioStream, generate_silence_wav, probe_audio_encoder_runtime_info,
+        probe_primary_audio_stream,
+    };
+    use crate::test_support::paths::new_temp_dir;
+    use crate::test_support::video::{
+        MediaStreamCounts, ProbedVideoStream, generate_test_pattern_av_mp4,
+        generate_test_pattern_video, probe_media_stream_counts, probe_primary_video_stream,
+    };
+    use crate::tools::ffprobe::probe::probe_file_with_ffprobe;
+    use crate::tools::transcode::capabilities::{
+        TranscodeAudioEncoderCapability, TranscodeCapabilities, TranscodeVideoEncoderCapability,
+        get_transcode_capabilities_with_ffmpeg_path,
+    };
 
     use super::{
         TranscodeAdditionalArg, TranscodeAudioSettings, TranscodeRequest,
         TranscodeSubtitleSettings, TranscodeVideoSettings, build_transcode_args,
         transcode_media_with_bins,
     };
+
+    const AUDIO_LAYOUT_CASES: &[(&str, u64)] = &[
+        ("mono", 1),
+        ("stereo", 2),
+        ("4.0", 4),
+        ("5.1", 6),
+        ("5.1(side)", 6),
+        ("7.1", 8),
+        ("7.1(wide-side)", 8),
+    ];
+    const VIDEO_TEST_WIDTH: u64 = 160;
+    const VIDEO_TEST_HEIGHT: u64 = 90;
 
     fn build_request(output_path: &str) -> TranscodeRequest {
         TranscodeRequest {
@@ -874,6 +903,867 @@ mod tests {
                 additional_args: Vec::new(),
             },
         }
+    }
+
+    fn build_audio_only_request(
+        input_path: &Path,
+        output_path: &Path,
+        container_id: &str,
+        encoder: &TranscodeAudioEncoderCapability,
+    ) -> TranscodeRequest {
+        let mut request = build_request(output_path.to_string_lossy().as_ref());
+        request.input_path = input_path.to_string_lossy().to_string();
+        request.output_path = output_path.to_string_lossy().to_string();
+        request.container_id = container_id.to_string();
+
+        request.video.mode = "disable".to_string();
+        request.video.encoder_id = None;
+        request.video.profile = None;
+        request.video.level = None;
+        request.video.pixel_format = None;
+        request.video.quality_mode = None;
+        request.video.crf = None;
+        request.video.qp = None;
+        request.video.bitrate_kbps = None;
+        request.video.preset = None;
+        request.video.additional_args = Vec::new();
+
+        apply_audio_transcode_settings(&mut request, encoder);
+
+        request.subtitles.mode = "disable".to_string();
+        request.subtitles.encoder_id = None;
+        request.subtitles.additional_args = Vec::new();
+
+        request
+    }
+
+    fn build_video_only_request(
+        input_path: &Path,
+        output_path: &Path,
+        container_id: &str,
+        encoder: &TranscodeVideoEncoderCapability,
+        scenario: &VideoRuntimeScenario,
+    ) -> TranscodeRequest {
+        let mut request = build_request(output_path.to_string_lossy().as_ref());
+        request.input_path = input_path.to_string_lossy().to_string();
+        request.output_path = output_path.to_string_lossy().to_string();
+        request.container_id = container_id.to_string();
+
+        apply_video_transcode_settings(&mut request, encoder, scenario);
+
+        request.audio.mode = "disable".to_string();
+        request.audio.encoder_id = None;
+        request.audio.bitrate_kbps = None;
+        request.audio.channels = None;
+        request.audio.sample_rate = None;
+        request.audio.additional_args = Vec::new();
+
+        request.subtitles.mode = "disable".to_string();
+        request.subtitles.encoder_id = None;
+        request.subtitles.additional_args = Vec::new();
+
+        request
+    }
+
+    fn build_av_request(
+        input_path: &Path,
+        output_path: &Path,
+        container_id: &str,
+    ) -> TranscodeRequest {
+        let mut request = build_request(output_path.to_string_lossy().as_ref());
+        request.input_path = input_path.to_string_lossy().to_string();
+        request.output_path = output_path.to_string_lossy().to_string();
+        request.container_id = container_id.to_string();
+        request.subtitles.mode = "disable".to_string();
+        request.subtitles.encoder_id = None;
+        request.subtitles.additional_args = Vec::new();
+        request
+    }
+
+    fn apply_video_transcode_settings(
+        request: &mut TranscodeRequest,
+        encoder: &TranscodeVideoEncoderCapability,
+        scenario: &VideoRuntimeScenario,
+    ) {
+        request.video.mode = "transcode".to_string();
+        request.video.encoder_id = Some(encoder.id.clone());
+        request.video.profile = scenario.profile.clone();
+        request.video.level = scenario.level.clone();
+        request.video.pixel_format = scenario
+            .pixel_format
+            .clone()
+            .or_else(|| preferred_video_pixel_format(encoder));
+        request.video.quality_mode = scenario.quality_mode.map(|value| value.to_string());
+        request.video.crf = scenario.crf;
+        request.video.qp = scenario.qp;
+        request.video.bitrate_kbps = scenario.bitrate_kbps;
+        request.video.preset = scenario.preset.as_ref().map(|value| value.to_string());
+        request.video.additional_args = scenario.additional_args.clone();
+    }
+
+    fn apply_audio_transcode_settings(
+        request: &mut TranscodeRequest,
+        encoder: &TranscodeAudioEncoderCapability,
+    ) {
+        request.audio.mode = "transcode".to_string();
+        request.audio.encoder_id = Some(encoder.id.clone());
+        request.audio.bitrate_kbps = audio_bitrate_for_encoder(&encoder.id);
+        request.audio.channels = None;
+        request.audio.sample_rate = None;
+        request.audio.additional_args = Vec::new();
+    }
+
+    fn audio_bitrate_for_encoder(encoder_id: &str) -> Option<u32> {
+        match encoder_id {
+            "flac" | "pcm_s16le" => None,
+            "libmp3lame" => Some(192),
+            _ => Some(160),
+        }
+    }
+
+    fn pick_audio_test_container_id(
+        capabilities: &TranscodeCapabilities,
+        encoder_id: &str,
+    ) -> Option<String> {
+        let preferred_container_id = match encoder_id {
+            "aac" | "aac_at" => Some("aac"),
+            "libopus" => Some("opus"),
+            "libvorbis" => Some("ogg"),
+            "libmp3lame" => Some("mp3"),
+            "flac" => Some("flac"),
+            "pcm_s16le" => Some("wav"),
+            _ => None,
+        };
+
+        if let Some(container_id) = preferred_container_id.filter(|container_id| {
+            capabilities.containers.iter().any(|container| {
+                container.kind == "audio"
+                    && container.id == *container_id
+                    && container
+                        .supported_audio_encoder_ids
+                        .iter()
+                        .any(|supported_id| supported_id == encoder_id)
+            })
+        }) {
+            return Some(container_id.to_string());
+        }
+
+        capabilities
+            .containers
+            .iter()
+            .find(|container| {
+                container.kind == "audio"
+                    && container
+                        .supported_audio_encoder_ids
+                        .iter()
+                        .any(|supported_id| supported_id == encoder_id)
+            })
+            .map(|container| container.id.clone())
+    }
+
+    fn pick_video_test_container_id(
+        capabilities: &TranscodeCapabilities,
+        encoder_id: &str,
+    ) -> Option<String> {
+        let preferred_container_id = match encoder_id {
+            "libx264" | "h264_videotoolbox" => Some("mp4"),
+            "libx265" | "hevc_videotoolbox" => Some("mp4"),
+            "libsvtav1" | "libaom-av1" => Some("mkv"),
+            "libvpx-vp9" => Some("webm"),
+            "prores_ks" | "prores_videotoolbox" => Some("mov"),
+            _ => None,
+        };
+
+        if let Some(container_id) = preferred_container_id.filter(|container_id| {
+            capabilities.containers.iter().any(|container| {
+                container.kind == "video"
+                    && container.id == *container_id
+                    && container
+                        .supported_video_encoder_ids
+                        .iter()
+                        .any(|supported_id| supported_id == encoder_id)
+            })
+        }) {
+            return Some(container_id.to_string());
+        }
+
+        capabilities
+            .containers
+            .iter()
+            .find(|container| {
+                container.kind == "video"
+                    && container
+                        .supported_video_encoder_ids
+                        .iter()
+                        .any(|supported_id| supported_id == encoder_id)
+            })
+            .map(|container| container.id.clone())
+    }
+
+    fn sanitize_case_id(value: &str) -> String {
+        value
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() {
+                    character.to_ascii_lowercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    }
+
+    fn expected_output_channels(encoder_id: &str, input_channels: u64) -> u64 {
+        if encoder_id == "libmp3lame" && input_channels > 2 {
+            2
+        } else {
+            input_channels
+        }
+    }
+
+    fn expected_audio_codec_name(encoder_id: &str) -> &'static str {
+        match encoder_id {
+            "aac" | "aac_at" => "aac",
+            "libopus" => "opus",
+            "libvorbis" => "vorbis",
+            "libmp3lame" => "mp3",
+            "flac" => "flac",
+            "pcm_s16le" => "pcm_s16le",
+            _ => "",
+        }
+    }
+
+    fn validate_transcoded_audio_stream(
+        encoder_id: &str,
+        input_channels: u64,
+        probed_stream: &ProbedAudioStream,
+    ) -> Option<String> {
+        let expected_codec_name = expected_audio_codec_name(encoder_id);
+        if !expected_codec_name.is_empty() && probed_stream.codec_name != expected_codec_name {
+            return Some(format!(
+                "expected codec {}, got {}",
+                expected_codec_name, probed_stream.codec_name
+            ));
+        }
+
+        let expected_channels = expected_output_channels(encoder_id, input_channels);
+        if probed_stream.channels != expected_channels {
+            return Some(format!(
+                "expected {} channels, got {}",
+                expected_channels, probed_stream.channels
+            ));
+        }
+
+        None
+    }
+
+    fn pick_audio_override_sample_rate(
+        encoder_id: &str,
+        supported_sample_rates: &[u32],
+    ) -> Option<u32> {
+        let preferred = if encoder_id == "libopus" {
+            &[24_000, 16_000, 12_000, 8_000][..]
+        } else {
+            &[44_100, 32_000, 24_000, 22_050, 16_000][..]
+        };
+
+        preferred.iter().copied().find(|rate| {
+            *rate != 48_000
+                && (supported_sample_rates.is_empty() || supported_sample_rates.contains(rate))
+        })
+    }
+
+    fn expected_output_sample_rate(encoder_id: &str, requested_sample_rate: u32) -> u32 {
+        if encoder_id == "libopus" {
+            48_000
+        } else {
+            requested_sample_rate
+        }
+    }
+
+    fn pick_preferred_audio_encoders<'a>(
+        capabilities: &'a TranscodeCapabilities,
+    ) -> Vec<&'a TranscodeAudioEncoderCapability> {
+        let preferred_ids = [
+            "aac",
+            "aac_at",
+            "libopus",
+            "libvorbis",
+            "flac",
+            "pcm_s16le",
+            "libmp3lame",
+        ];
+
+        preferred_ids
+            .iter()
+            .filter_map(|encoder_id| {
+                capabilities
+                    .audio_encoders
+                    .iter()
+                    .find(|encoder| encoder.id == *encoder_id)
+            })
+            .collect()
+    }
+
+    async fn collect_probe_streams(path: &Path) -> Result<Vec<Value>, String> {
+        let probe_json = probe_file_with_ffprobe("ffprobe", path.to_string_lossy().as_ref()).await?;
+        let probe_value: Value = serde_json::from_str(&probe_json)
+            .map_err(|error| format!("Invalid probe JSON: {}", error))?;
+
+        Ok(probe_value
+            .get("streams")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    fn args_contain_pair(args: &[String], flag: &str, value: &str) -> bool {
+        args.windows(2)
+            .any(|window| window[0] == flag && window[1] == value)
+    }
+
+    fn expect_arg_pair(args: &[String], flag: &str, value: &str) -> Option<String> {
+        if args_contain_pair(args, flag, value) {
+            None
+        } else {
+            Some(format!("expected ffmpeg args to contain `{}` `{}`", flag, value))
+        }
+    }
+
+    fn expect_flag(args: &[String], flag: &str) -> Option<String> {
+        if args.iter().any(|arg| arg == flag) {
+            None
+        } else {
+            Some(format!("expected ffmpeg args to contain `{}`", flag))
+        }
+    }
+
+    fn collect_audio_request_arg_failures(
+        args: &[String],
+        request: &TranscodeRequest,
+    ) -> Vec<String> {
+        let mut failures = Vec::new();
+
+        if let Some(bitrate_kbps) = request.audio.bitrate_kbps {
+            if let Some(error) = expect_arg_pair(args, "-b:a", &format!("{}k", bitrate_kbps)) {
+                failures.push(error);
+            }
+        }
+
+        if let Some(channels) = request.audio.channels.filter(|channels| *channels > 0) {
+            if let Some(error) = expect_arg_pair(args, "-ac", &channels.to_string()) {
+                failures.push(error);
+            }
+        }
+
+        if let Some(sample_rate) = request.audio.sample_rate.filter(|sample_rate| *sample_rate > 0)
+        {
+            if let Some(error) = expect_arg_pair(args, "-ar", &sample_rate.to_string()) {
+                failures.push(error);
+            }
+        }
+
+        failures
+    }
+
+    fn collect_video_request_arg_failures(
+        args: &[String],
+        request: &TranscodeRequest,
+        encoder: &TranscodeVideoEncoderCapability,
+    ) -> Vec<String> {
+        let mut failures = Vec::new();
+
+        if let Some(profile) = request.video.profile.as_deref().filter(|value| !value.trim().is_empty())
+        {
+            if let Some(error) = expect_arg_pair(args, "-profile:v", profile.trim()) {
+                failures.push(error);
+            }
+        }
+
+        if let Some(level) = request.video.level.as_deref().filter(|value| !value.trim().is_empty()) {
+            if let Some(error) = expect_arg_pair(args, "-level:v", level.trim()) {
+                failures.push(error);
+            }
+        }
+
+        if let Some(pixel_format) = request
+            .video
+            .pixel_format
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            if let Some(error) = expect_arg_pair(args, "-pix_fmt", pixel_format.trim()) {
+                failures.push(error);
+            }
+        }
+
+        match request.video.quality_mode.as_deref() {
+            Some("crf") => {
+                if let Some(crf) = request.video.crf {
+                    if let Some(error) = expect_arg_pair(args, "-crf", &crf.to_string()) {
+                        failures.push(error);
+                    }
+                }
+            }
+            Some("qp") => {
+                if let Some(qp) = request.video.qp {
+                    if let Some(error) = expect_arg_pair(args, "-qp", &qp.to_string()) {
+                        failures.push(error);
+                    }
+                }
+            }
+            Some("bitrate") => {
+                if let Some(bitrate_kbps) = request.video.bitrate_kbps {
+                    if let Some(error) =
+                        expect_arg_pair(args, "-b:v", &format!("{}k", bitrate_kbps))
+                    {
+                        failures.push(error);
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        if let Some(preset) = request.video.preset.as_deref().filter(|value| !value.trim().is_empty())
+        {
+            let preset_flag = if encoder.id == "libaom-av1" {
+                "-cpu-used"
+            } else {
+                "-preset"
+            };
+            if let Some(error) = expect_arg_pair(args, preset_flag, preset.trim()) {
+                failures.push(error);
+            }
+        }
+
+        for additional_arg in request.video.additional_args.iter().filter(|arg| arg.enabled) {
+            match additional_arg.value.as_deref() {
+                Some(value) => {
+                    if let Some(error) = expect_arg_pair(args, &additional_arg.flag, value) {
+                        failures.push(error);
+                    }
+                }
+                None => {
+                    if let Some(error) = expect_flag(args, &additional_arg.flag) {
+                        failures.push(error);
+                    }
+                }
+            }
+        }
+
+        if matches!(request.container_id.as_str(), "mp4" | "mov")
+            && encoder.id.starts_with("hevc")
+        {
+            if let Some(error) = expect_arg_pair(args, "-tag:v", "hvc1") {
+                failures.push(error);
+            }
+        }
+
+        if request.container_id == "mp4" {
+            if let Some(error) = expect_arg_pair(args, "-movflags", "+faststart") {
+                failures.push(error);
+            }
+        }
+
+        failures
+    }
+
+    fn normalize_comparable_value(value: &str) -> String {
+        value
+            .chars()
+            .filter(|character| character.is_ascii_alphanumeric())
+            .map(|character| character.to_ascii_lowercase())
+            .collect()
+    }
+
+    #[derive(Debug, Clone)]
+    struct VideoRuntimeScenario {
+        name: &'static str,
+        quality_mode: Option<&'static str>,
+        crf: Option<f64>,
+        qp: Option<i32>,
+        bitrate_kbps: Option<u32>,
+        preset: Option<&'static str>,
+        profile: Option<String>,
+        level: Option<String>,
+        pixel_format: Option<String>,
+        additional_args: Vec<TranscodeAdditionalArg>,
+    }
+
+    fn preferred_video_pixel_format(encoder: &TranscodeVideoEncoderCapability) -> Option<String> {
+        encoder
+            .supported_pixel_formats
+            .iter()
+            .find(|pixel_format| {
+                matches!(
+                    pixel_format.as_str(),
+                    "yuv420p" | "nv12" | "yuv420p10le" | "p010le"
+                )
+            })
+            .cloned()
+            .or_else(|| encoder.supported_pixel_formats.first().cloned())
+    }
+
+    fn preferred_video_preset(encoder_id: &str) -> Option<&'static str> {
+        match encoder_id {
+            "libx264" | "libx265" => Some("fast"),
+            "libsvtav1" => Some("10"),
+            "libaom-av1" => Some("8"),
+            _ => None,
+        }
+    }
+
+    fn preferred_video_crf(codec: &str) -> f64 {
+        match codec {
+            "av1" => 35.0,
+            "hevc" => 30.0,
+            "vp9" => 32.0,
+            _ => 28.0,
+        }
+    }
+
+    fn preferred_video_qp(codec: &str) -> i32 {
+        match codec {
+            "av1" => 36,
+            "hevc" => 30,
+            "vp9" => 32,
+            _ => 28,
+        }
+    }
+
+    fn preferred_video_bitrate_kbps(codec: &str) -> u32 {
+        match codec {
+            "prores" => 1500,
+            "av1" => 500,
+            "vp9" => 500,
+            _ => 700,
+        }
+    }
+
+    fn build_primary_video_scenario(
+        encoder: &TranscodeVideoEncoderCapability,
+    ) -> VideoRuntimeScenario {
+        let quality_mode = if encoder.supports_crf {
+            Some("crf")
+        } else if encoder.supports_qp {
+            Some("qp")
+        } else if encoder.supports_bitrate {
+            Some("bitrate")
+        } else {
+            None
+        };
+
+        VideoRuntimeScenario {
+            name: "primary",
+            quality_mode,
+            crf: quality_mode
+                .filter(|mode| *mode == "crf")
+                .map(|_| preferred_video_crf(&encoder.codec)),
+            qp: quality_mode
+                .filter(|mode| *mode == "qp")
+                .map(|_| preferred_video_qp(&encoder.codec)),
+            bitrate_kbps: quality_mode
+                .filter(|mode| *mode == "bitrate")
+                .map(|_| preferred_video_bitrate_kbps(&encoder.codec)),
+            preset: encoder
+                .supports_preset
+                .then(|| preferred_video_preset(&encoder.id))
+                .flatten(),
+            profile: None,
+            level: None,
+            pixel_format: None,
+            additional_args: Vec::new(),
+        }
+    }
+
+    fn build_secondary_video_scenario(
+        encoder: &TranscodeVideoEncoderCapability,
+    ) -> Option<VideoRuntimeScenario> {
+        if encoder.id == "libaom-av1" {
+            return None;
+        }
+
+        if encoder.supports_bitrate {
+            return Some(VideoRuntimeScenario {
+                name: "bitrate_gop",
+                quality_mode: Some("bitrate"),
+                crf: None,
+                qp: None,
+                bitrate_kbps: Some(preferred_video_bitrate_kbps(&encoder.codec)),
+                preset: encoder
+                    .supports_preset
+                    .then(|| preferred_video_preset(&encoder.id))
+                    .flatten(),
+                profile: None,
+                level: None,
+                pixel_format: None,
+                additional_args: vec![TranscodeAdditionalArg {
+                    id: Some("gop".to_string()),
+                    flag: "-g".to_string(),
+                    value: Some("12".to_string()),
+                    enabled: true,
+                }],
+            });
+        }
+
+        if encoder.supports_qp && !encoder.supports_crf {
+            return Some(VideoRuntimeScenario {
+                name: "qp_gop",
+                quality_mode: Some("qp"),
+                crf: None,
+                qp: Some(preferred_video_qp(&encoder.codec)),
+                bitrate_kbps: None,
+                preset: encoder
+                    .supports_preset
+                    .then(|| preferred_video_preset(&encoder.id))
+                    .flatten(),
+                profile: None,
+                level: None,
+                pixel_format: None,
+                additional_args: vec![TranscodeAdditionalArg {
+                    id: Some("gop".to_string()),
+                    flag: "-g".to_string(),
+                    value: Some("12".to_string()),
+                    enabled: true,
+                }],
+            });
+        }
+
+        None
+    }
+
+    fn build_representative_video_scenarios(
+        encoder: &TranscodeVideoEncoderCapability,
+    ) -> Vec<VideoRuntimeScenario> {
+        let mut scenarios = vec![build_primary_video_scenario(encoder)];
+        if let Some(secondary) = build_secondary_video_scenario(encoder) {
+            scenarios.push(secondary);
+        }
+        scenarios
+    }
+
+    fn preferred_profile_value(encoder: &TranscodeVideoEncoderCapability) -> Option<String> {
+        let preferred = match encoder.codec.as_str() {
+            "h264" => &["high", "main", "baseline"][..],
+            "hevc" => &["main", "main10"][..],
+            "av1" => &["main"][..],
+            "prores" => &["standard", "hq", "proxy"][..],
+            _ => &[][..],
+        };
+
+        preferred
+            .iter()
+            .find_map(|candidate| {
+                encoder
+                    .supported_profiles
+                    .iter()
+                    .find(|value| value.eq_ignore_ascii_case(candidate))
+                    .cloned()
+            })
+            .or_else(|| encoder.supported_profiles.first().cloned())
+    }
+
+    fn preferred_level_value(encoder: &TranscodeVideoEncoderCapability) -> Option<String> {
+        let preferred = ["4.1", "4.0", "5.0", "3.1", "3.0"];
+
+        preferred
+            .iter()
+            .find_map(|candidate| {
+                encoder
+                    .supported_levels
+                    .iter()
+                    .find(|value| value == candidate)
+                    .cloned()
+            })
+            .or_else(|| encoder.supported_levels.first().cloned())
+    }
+
+    fn preferred_10bit_pixel_format(encoder: &TranscodeVideoEncoderCapability) -> Option<String> {
+        ["yuv420p10le", "p010le", "x2rgb10le", "ayuv64le"]
+            .iter()
+            .find_map(|candidate| {
+                encoder
+                    .supported_pixel_formats
+                    .iter()
+                    .find(|value| value.as_str() == *candidate)
+                    .cloned()
+            })
+    }
+
+    fn build_advanced_video_capability_scenarios(
+        encoder: &TranscodeVideoEncoderCapability,
+    ) -> Vec<VideoRuntimeScenario> {
+        let mut scenarios = Vec::new();
+
+        if !encoder.is_hardware
+            && (!encoder.supported_profiles.is_empty() || !encoder.supported_levels.is_empty())
+        {
+            let mut scenario = build_primary_video_scenario(encoder);
+            scenario.name = "profile_level";
+            scenario.profile = preferred_profile_value(encoder);
+            scenario.level = preferred_level_value(encoder);
+            if scenario.profile.is_some() || scenario.level.is_some() {
+                scenarios.push(scenario);
+            }
+        }
+
+        if !encoder.is_hardware {
+            if let Some(pixel_format) = preferred_10bit_pixel_format(encoder) {
+                let mut scenario = build_primary_video_scenario(encoder);
+                scenario.name = "ten_bit";
+                scenario.pixel_format = Some(pixel_format);
+                scenario.profile = preferred_profile_value(encoder);
+                scenarios.push(scenario);
+            }
+        }
+
+        scenarios
+    }
+
+    fn expected_video_codec_name(encoder_id: &str) -> &'static str {
+        match encoder_id {
+            "libx264" | "h264_videotoolbox" => "h264",
+            "libx265" | "hevc_videotoolbox" => "hevc",
+            "libsvtav1" | "libaom-av1" => "av1",
+            "libvpx-vp9" => "vp9",
+            "prores_ks" | "prores_videotoolbox" => "prores",
+            _ => "",
+        }
+    }
+
+    fn validate_transcoded_video_stream(
+        encoder_id: &str,
+        probed_stream: &ProbedVideoStream,
+    ) -> Option<String> {
+        let expected_codec_name = expected_video_codec_name(encoder_id);
+        if !expected_codec_name.is_empty() && probed_stream.codec_name != expected_codec_name {
+            return Some(format!(
+                "expected codec {}, got {}",
+                expected_codec_name, probed_stream.codec_name
+            ));
+        }
+
+        if probed_stream.width != VIDEO_TEST_WIDTH || probed_stream.height != VIDEO_TEST_HEIGHT {
+            return Some(format!(
+                "expected resolution {}x{}, got {}x{}",
+                VIDEO_TEST_WIDTH, VIDEO_TEST_HEIGHT, probed_stream.width, probed_stream.height
+            ));
+        }
+
+        None
+    }
+
+    fn validate_transcoded_video_output(
+        encoder: &TranscodeVideoEncoderCapability,
+        container_id: &str,
+        scenario: &VideoRuntimeScenario,
+        probed_stream: &ProbedVideoStream,
+    ) -> Option<String> {
+        if let Some(error) = validate_transcoded_video_stream(&encoder.id, probed_stream) {
+            return Some(error);
+        }
+
+        if let Some(expected_profile) = scenario.profile.as_deref() {
+            let Some(actual_profile) = probed_stream.profile.as_deref() else {
+                return Some(format!(
+                    "expected profile {}, but ffprobe did not report one",
+                    expected_profile
+                ));
+            };
+
+            if normalize_comparable_value(actual_profile)
+                != normalize_comparable_value(expected_profile)
+            {
+                return Some(format!(
+                    "expected profile {}, got {}",
+                    expected_profile, actual_profile
+                ));
+            }
+        }
+
+        if let Some(expected_pixel_format) = scenario.pixel_format.as_deref() {
+            if probed_stream.pixel_format.as_deref() != Some(expected_pixel_format) {
+                return Some(format!(
+                    "expected pixel format {}, got {:?}",
+                    expected_pixel_format, probed_stream.pixel_format
+                ));
+            }
+        }
+
+        if matches!(container_id, "mp4" | "mov") && encoder.id.starts_with("hevc") {
+            if probed_stream.codec_tag_string.as_deref() != Some("hvc1") {
+                return Some(format!(
+                    "expected codec tag hvc1, got {:?}",
+                    probed_stream.codec_tag_string
+                ));
+            }
+        }
+
+        None
+    }
+
+    fn select_representative_video_encoders<'a>(
+        capabilities: &'a TranscodeCapabilities,
+    ) -> Vec<&'a TranscodeVideoEncoderCapability> {
+        let preferred_ids = [
+            "libx264",
+            "h264_videotoolbox",
+            "libx265",
+            "hevc_videotoolbox",
+            "libsvtav1",
+            "libaom-av1",
+            "libvpx-vp9",
+            "prores_ks",
+            "prores_videotoolbox",
+        ];
+
+        preferred_ids
+            .iter()
+            .filter_map(|encoder_id| {
+                capabilities
+                    .video_encoders
+                    .iter()
+                    .find(|encoder| encoder.id == *encoder_id)
+            })
+            .collect()
+    }
+
+    fn assert_media_counts(
+        counts: &MediaStreamCounts,
+        expected_video_streams: usize,
+        expected_audio_streams: usize,
+    ) -> Option<String> {
+        if counts.video_streams != expected_video_streams
+            || counts.audio_streams != expected_audio_streams
+        {
+            return Some(format!(
+                "expected {} video and {} audio streams, got {} video and {} audio streams",
+                expected_video_streams,
+                expected_audio_streams,
+                counts.video_streams,
+                counts.audio_streams
+            ));
+        }
+
+        None
+    }
+
+    fn should_skip_audio_matrix_case(
+        encoder_id: &str,
+        layout: &str,
+        input_channels: u64,
+    ) -> Option<&'static str> {
+        if encoder_id == "libvorbis" && input_channels > 6 {
+            return Some("libvorbis does not support more than 6 channels in this FFmpeg build");
+        }
+
+        if encoder_id == "aac_at" && layout == "7.1" {
+            return Some(
+                "AudioToolbox AAC exposes 7.1(wide) instead of standard 7.1 on this platform",
+            );
+        }
+
+        None
     }
 
     #[test]
@@ -1100,5 +1990,838 @@ mod tests {
 
         assert_eq!(result_path, output.to_string_lossy().to_string());
         assert!(output.exists());
+    }
+
+    #[tokio::test]
+    async fn transcode_audio_matrix_succeeds_for_available_encoders_and_layouts() {
+        let capabilities = get_transcode_capabilities_with_ffmpeg_path("ffmpeg")
+            .await
+            .expect("failed to query transcode capabilities");
+
+        assert!(
+            !capabilities.audio_encoders.is_empty(),
+            "expected at least one audio encoder"
+        );
+
+        let mut failures = Vec::new();
+
+        for (layout, expected_input_channels) in AUDIO_LAYOUT_CASES {
+            let fixture = generate_silence_wav(layout)
+                .await
+                .unwrap_or_else(|error| panic!("failed to generate {} fixture: {}", layout, error));
+            let fixture_streams = collect_probe_streams(&fixture.path)
+                .await
+                .unwrap_or_else(|error| panic!("failed to probe {} fixture streams: {}", layout, error));
+
+            assert_eq!(
+                fixture.channels, *expected_input_channels,
+                "unexpected channel count for generated {} fixture",
+                layout
+            );
+
+            for encoder in &capabilities.audio_encoders {
+                if should_skip_audio_matrix_case(&encoder.id, layout, *expected_input_channels)
+                    .is_some()
+                {
+                    continue;
+                }
+
+                let Some(container_id) = pick_audio_test_container_id(&capabilities, &encoder.id)
+                else {
+                    failures.push(format!(
+                        "encoder={} layout={}: no compatible audio container found",
+                        encoder.id, layout
+                    ));
+                    continue;
+                };
+
+                let extension =
+                    super::super::capabilities::container_extension_for_id(&container_id)
+                        .unwrap_or(".bin");
+                let temp_dir = new_temp_dir(&format!(
+                    "audio-transcode-{}-",
+                    sanitize_case_id(&encoder.id)
+                ));
+                let output_path = temp_dir.path().join(format!(
+                    "{}_{}{}",
+                    sanitize_case_id(&encoder.id),
+                    sanitize_case_id(layout),
+                    extension
+                ));
+                let request =
+                    build_audio_only_request(&fixture.path, &output_path, &container_id, encoder);
+                for error in collect_audio_request_arg_failures(
+                    &build_transcode_args(&request, &fixture_streams, None)
+                        .expect("audio request args should build"),
+                    &request,
+                ) {
+                    failures.push(format!(
+                        "encoder={} layout={}: {}",
+                        encoder.id, layout, error
+                    ));
+                }
+
+                match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
+                    Ok(result_path) => {
+                        match probe_primary_audio_stream("ffprobe", Path::new(&result_path)).await {
+                            Ok(probed_stream) => {
+                                if let Some(error) = validate_transcoded_audio_stream(
+                                    &encoder.id,
+                                    *expected_input_channels,
+                                    &probed_stream,
+                                ) {
+                                    failures.push(format!(
+                                        "encoder={} layout={}: {}",
+                                        encoder.id, layout, error
+                                    ));
+                                }
+                            }
+                            Err(error) => failures.push(format!(
+                                "encoder={} layout={}: failed to probe output: {}",
+                                encoder.id, layout, error
+                            )),
+                        }
+                    }
+                    Err(error) => failures.push(format!(
+                        "encoder={} layout={}: transcode failed: {}",
+                        encoder.id, layout, error
+                    )),
+                }
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "audio transcode matrix failures:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    #[tokio::test]
+    async fn transcode_audio_libopus_handles_multichannel_as_source_layouts() {
+        let capabilities = get_transcode_capabilities_with_ffmpeg_path("ffmpeg")
+            .await
+            .expect("failed to query transcode capabilities");
+        let Some(libopus) = capabilities
+            .audio_encoders
+            .iter()
+            .find(|encoder| encoder.id == "libopus")
+        else {
+            return;
+        };
+        let container_id = pick_audio_test_container_id(&capabilities, &libopus.id)
+            .expect("expected an audio container for libopus");
+        let extension = super::super::capabilities::container_extension_for_id(&container_id)
+            .unwrap_or(".opus");
+        let mut failures = Vec::new();
+
+        for (layout, expected_channels) in [("4.0", 4_u64), ("5.1(side)", 6), ("7.1(wide-side)", 8)]
+        {
+            let fixture = generate_silence_wav(layout)
+                .await
+                .unwrap_or_else(|error| panic!("failed to generate {} fixture: {}", layout, error));
+            let temp_dir = new_temp_dir(&format!("libopus-{}-", sanitize_case_id(layout)));
+            let output_path =
+                temp_dir
+                    .path()
+                    .join(format!("libopus_{}{}", sanitize_case_id(layout), extension));
+            let request =
+                build_audio_only_request(&fixture.path, &output_path, &container_id, libopus);
+
+            match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
+                Ok(result_path) => {
+                    match probe_primary_audio_stream("ffprobe", Path::new(&result_path)).await {
+                        Ok(probed_stream) => {
+                            if probed_stream.codec_name != "opus" {
+                                failures.push(format!(
+                                    "layout={}: expected opus codec, got {}",
+                                    layout, probed_stream.codec_name
+                                ));
+                            } else if probed_stream.channels != expected_channels {
+                                failures.push(format!(
+                                    "layout={}: expected {} channels, got {}",
+                                    layout, expected_channels, probed_stream.channels
+                                ));
+                            }
+                        }
+                        Err(error) => failures.push(format!(
+                            "layout={}: failed to probe output: {}",
+                            layout, error
+                        )),
+                    }
+                }
+                Err(error) => {
+                    failures.push(format!("layout={}: transcode failed: {}", layout, error))
+                }
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "libopus multichannel transcode failures:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    #[tokio::test]
+    async fn transcode_audio_overrides_cover_channels_sample_rate_and_bitrate() {
+        let capabilities = get_transcode_capabilities_with_ffmpeg_path("ffmpeg")
+            .await
+            .expect("failed to query transcode capabilities");
+        let stereo_fixture = generate_silence_wav("stereo")
+            .await
+            .expect("failed to generate stereo fixture");
+        let surround_fixture = generate_silence_wav("5.1(side)")
+            .await
+            .expect("failed to generate surround fixture");
+        let stereo_streams = collect_probe_streams(&stereo_fixture.path)
+            .await
+            .expect("failed to probe stereo fixture streams");
+        let surround_streams = collect_probe_streams(&surround_fixture.path)
+            .await
+            .expect("failed to probe surround fixture streams");
+        let representative_encoders = pick_preferred_audio_encoders(&capabilities);
+
+        assert!(
+            !representative_encoders.is_empty(),
+            "expected at least one representative audio encoder"
+        );
+
+        let mut failures = Vec::new();
+
+        for encoder in representative_encoders {
+            let Some(container_id) = pick_audio_test_container_id(&capabilities, &encoder.id)
+            else {
+                failures.push(format!(
+                    "encoder={}: no compatible audio container found",
+                    encoder.id
+                ));
+                continue;
+            };
+            let extension = super::super::capabilities::container_extension_for_id(&container_id)
+                .unwrap_or(".bin");
+
+            let temp_dir = new_temp_dir(&format!(
+                "audio-override-{}-",
+                sanitize_case_id(&encoder.id)
+            ));
+            let bitrate_output = temp_dir.path().join(format!(
+                "{}_bitrate{}",
+                sanitize_case_id(&encoder.id),
+                extension
+            ));
+            let mut bitrate_request = build_audio_only_request(
+                &stereo_fixture.path,
+                &bitrate_output,
+                &container_id,
+                encoder,
+            );
+            if encoder.id != "flac" && encoder.id != "pcm_s16le" {
+                bitrate_request.audio.bitrate_kbps = Some(match encoder.id.as_str() {
+                    "libopus" => 96,
+                    "libmp3lame" => 128,
+                    _ => 112,
+                });
+                let args = build_transcode_args(&bitrate_request, &stereo_streams, None)
+                    .expect("bitrate request args should build");
+                for error in collect_audio_request_arg_failures(&args, &bitrate_request) {
+                    failures.push(format!(
+                        "encoder={} scenario=bitrate: {}",
+                        encoder.id, error
+                    ));
+                }
+
+                match transcode_media_with_bins("ffmpeg", "ffprobe", &bitrate_request).await {
+                    Ok(result_path) => {
+                        match probe_primary_audio_stream("ffprobe", Path::new(&result_path)).await {
+                            Ok(probed_stream) => {
+                                if let Some(error) =
+                                    validate_transcoded_audio_stream(&encoder.id, 2, &probed_stream)
+                                {
+                                    failures.push(format!(
+                                        "encoder={} scenario=bitrate: {}",
+                                        encoder.id, error
+                                    ));
+                                }
+                            }
+                            Err(error) => failures.push(format!(
+                                "encoder={} scenario=bitrate: failed to probe output: {}",
+                                encoder.id, error
+                            )),
+                        }
+                    }
+                    Err(error) => failures.push(format!(
+                        "encoder={} scenario=bitrate: transcode failed: {}",
+                        encoder.id, error
+                    )),
+                }
+            }
+
+            let runtime_info = probe_audio_encoder_runtime_info("ffmpeg", &encoder.id)
+                .await
+                .unwrap_or_else(|_| crate::test_support::audio::AudioEncoderRuntimeInfo {
+                    supported_sample_rates: Vec::new(),
+                });
+            if let Some(sample_rate) =
+                pick_audio_override_sample_rate(&encoder.id, &runtime_info.supported_sample_rates)
+            {
+                let sample_rate_output = temp_dir.path().join(format!(
+                    "{}_sample_rate{}",
+                    sanitize_case_id(&encoder.id),
+                    extension
+                ));
+                let mut sample_rate_request = build_audio_only_request(
+                    &stereo_fixture.path,
+                    &sample_rate_output,
+                    &container_id,
+                    encoder,
+                );
+                sample_rate_request.audio.sample_rate = Some(sample_rate);
+                let args = build_transcode_args(&sample_rate_request, &stereo_streams, None)
+                    .expect("sample rate request args should build");
+                for error in collect_audio_request_arg_failures(&args, &sample_rate_request) {
+                    failures.push(format!(
+                        "encoder={} scenario=sample_rate: {}",
+                        encoder.id, error
+                    ));
+                }
+
+                match transcode_media_with_bins("ffmpeg", "ffprobe", &sample_rate_request).await {
+                    Ok(result_path) => {
+                        match probe_primary_audio_stream("ffprobe", Path::new(&result_path)).await {
+                            Ok(probed_stream) => {
+                                if let Some(error) =
+                                    validate_transcoded_audio_stream(&encoder.id, 2, &probed_stream)
+                                {
+                                    failures.push(format!(
+                                        "encoder={} scenario=sample_rate: {}",
+                                        encoder.id, error
+                                    ));
+                                } else if probed_stream.sample_rate
+                                    != Some(expected_output_sample_rate(&encoder.id, sample_rate))
+                                {
+                                    failures.push(format!(
+                                        "encoder={} scenario=sample_rate: expected {} Hz, got {:?}",
+                                        encoder.id,
+                                        expected_output_sample_rate(&encoder.id, sample_rate),
+                                        probed_stream.sample_rate
+                                    ));
+                                }
+                            }
+                            Err(error) => failures.push(format!(
+                                "encoder={} scenario=sample_rate: failed to probe output: {}",
+                                encoder.id, error
+                            )),
+                        }
+                    }
+                    Err(error) => failures.push(format!(
+                        "encoder={} scenario=sample_rate: transcode failed: {}",
+                        encoder.id, error
+                    )),
+                }
+            }
+
+            let channels_output = temp_dir.path().join(format!(
+                "{}_downmix{}",
+                sanitize_case_id(&encoder.id),
+                extension
+            ));
+            let mut channels_request = build_audio_only_request(
+                &surround_fixture.path,
+                &channels_output,
+                &container_id,
+                encoder,
+            );
+            channels_request.audio.channels = Some(2);
+            let args = build_transcode_args(&channels_request, &surround_streams, None)
+                .expect("channel override request args should build");
+            for error in collect_audio_request_arg_failures(&args, &channels_request) {
+                failures.push(format!(
+                    "encoder={} scenario=downmix: {}",
+                    encoder.id, error
+                ));
+            }
+
+            match transcode_media_with_bins("ffmpeg", "ffprobe", &channels_request).await {
+                Ok(result_path) => {
+                    match probe_primary_audio_stream("ffprobe", Path::new(&result_path)).await {
+                        Ok(probed_stream) => {
+                            if let Some(error) =
+                                validate_transcoded_audio_stream(&encoder.id, 2, &probed_stream)
+                            {
+                                failures.push(format!(
+                                    "encoder={} scenario=downmix: {}",
+                                    encoder.id, error
+                                ));
+                            }
+                        }
+                        Err(error) => failures.push(format!(
+                            "encoder={} scenario=downmix: failed to probe output: {}",
+                            encoder.id, error
+                        )),
+                    }
+                }
+                Err(error) => failures.push(format!(
+                    "encoder={} scenario=downmix: transcode failed: {}",
+                    encoder.id, error
+                )),
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "audio override failures:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    #[tokio::test]
+    async fn transcode_video_matrix_succeeds_for_available_encoders() {
+        let capabilities = get_transcode_capabilities_with_ffmpeg_path("ffmpeg")
+            .await
+            .expect("failed to query transcode capabilities");
+        let fixture = generate_test_pattern_video(VIDEO_TEST_WIDTH, VIDEO_TEST_HEIGHT)
+            .await
+            .expect("failed to generate video fixture");
+        let fixture_streams = collect_probe_streams(&fixture.path)
+            .await
+            .expect("failed to probe video fixture streams");
+
+        assert_eq!(fixture.width, VIDEO_TEST_WIDTH);
+        assert_eq!(fixture.height, VIDEO_TEST_HEIGHT);
+
+        let mut failures = Vec::new();
+
+        for encoder in &capabilities.video_encoders {
+            let Some(container_id) = pick_video_test_container_id(&capabilities, &encoder.id)
+            else {
+                failures.push(format!(
+                    "encoder={}: no compatible video container found",
+                    encoder.id
+                ));
+                continue;
+            };
+
+            let extension = super::super::capabilities::container_extension_for_id(&container_id)
+                .unwrap_or(".bin");
+            let temp_dir = new_temp_dir(&format!(
+                "video-transcode-{}-",
+                sanitize_case_id(&encoder.id)
+            ));
+            let output_path = temp_dir.path().join(format!(
+                "{}_primary{}",
+                sanitize_case_id(&encoder.id),
+                extension
+            ));
+            let scenario = build_primary_video_scenario(encoder);
+            let request = build_video_only_request(
+                &fixture.path,
+                &output_path,
+                &container_id,
+                encoder,
+                &scenario,
+            );
+            for error in collect_video_request_arg_failures(
+                &build_transcode_args(&request, &fixture_streams, None)
+                    .expect("video request args should build"),
+                &request,
+                encoder,
+            ) {
+                failures.push(format!("encoder={}: {}", encoder.id, error));
+            }
+
+            match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
+                Ok(result_path) => {
+                    match probe_primary_video_stream("ffprobe", Path::new(&result_path)).await {
+                        Ok(probed_stream) => {
+                            if let Some(error) =
+                                validate_transcoded_video_stream(&encoder.id, &probed_stream)
+                            {
+                                failures.push(format!("encoder={}: {}", encoder.id, error));
+                            }
+                        }
+                        Err(error) => failures.push(format!(
+                            "encoder={}: failed to probe output: {}",
+                            encoder.id, error
+                        )),
+                    }
+                }
+                Err(error) => failures.push(format!(
+                    "encoder={}: transcode failed: {}",
+                    encoder.id, error
+                )),
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "video transcode matrix failures:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    #[tokio::test]
+    async fn transcode_video_quality_modes_presets_and_params_cover_representative_codecs() {
+        let capabilities = get_transcode_capabilities_with_ffmpeg_path("ffmpeg")
+            .await
+            .expect("failed to query transcode capabilities");
+        let fixture = generate_test_pattern_video(VIDEO_TEST_WIDTH, VIDEO_TEST_HEIGHT)
+            .await
+            .expect("failed to generate video fixture");
+        let fixture_streams = collect_probe_streams(&fixture.path)
+            .await
+            .expect("failed to probe representative video fixture streams");
+        let representative_encoders = select_representative_video_encoders(&capabilities);
+
+        assert!(
+            !representative_encoders.is_empty(),
+            "expected at least one representative video encoder"
+        );
+
+        let mut failures = Vec::new();
+
+        for encoder in representative_encoders {
+            let Some(container_id) = pick_video_test_container_id(&capabilities, &encoder.id)
+            else {
+                failures.push(format!(
+                    "encoder={}: no compatible video container found",
+                    encoder.id
+                ));
+                continue;
+            };
+            let extension = super::super::capabilities::container_extension_for_id(&container_id)
+                .unwrap_or(".bin");
+
+            for scenario in build_representative_video_scenarios(encoder) {
+                let temp_dir = new_temp_dir(&format!(
+                    "video-scenario-{}-{}-",
+                    sanitize_case_id(&encoder.id),
+                    sanitize_case_id(scenario.name)
+                ));
+                let output_path = temp_dir.path().join(format!(
+                    "{}_{}{}",
+                    sanitize_case_id(&encoder.id),
+                    sanitize_case_id(scenario.name),
+                    extension
+                ));
+                let request = build_video_only_request(
+                    &fixture.path,
+                    &output_path,
+                    &container_id,
+                    encoder,
+                    &scenario,
+                );
+                for error in collect_video_request_arg_failures(
+                    &build_transcode_args(&request, &fixture_streams, None)
+                        .expect("representative video request args should build"),
+                    &request,
+                    encoder,
+                ) {
+                    failures.push(format!(
+                        "encoder={} scenario={}: {}",
+                        encoder.id, scenario.name, error
+                    ));
+                }
+
+                match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
+                    Ok(result_path) => {
+                        match probe_primary_video_stream("ffprobe", Path::new(&result_path)).await {
+                            Ok(probed_stream) => {
+                                if let Some(error) = validate_transcoded_video_output(
+                                    encoder,
+                                    &container_id,
+                                    &scenario,
+                                    &probed_stream,
+                                ) {
+                                    failures.push(format!(
+                                        "encoder={} scenario={}: {}",
+                                        encoder.id, scenario.name, error
+                                    ));
+                                }
+                            }
+                            Err(error) => failures.push(format!(
+                                "encoder={} scenario={}: failed to probe output: {}",
+                                encoder.id, scenario.name, error
+                            )),
+                        }
+                    }
+                    Err(error) => failures.push(format!(
+                        "encoder={} scenario={}: transcode failed: {}",
+                        encoder.id, scenario.name, error
+                    )),
+                }
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "representative video transcode failures:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    #[tokio::test]
+    async fn transcode_video_advanced_capabilities_cover_profiles_levels_and_ten_bit() {
+        let capabilities = get_transcode_capabilities_with_ffmpeg_path("ffmpeg")
+            .await
+            .expect("failed to query transcode capabilities");
+        let fixture = generate_test_pattern_video(VIDEO_TEST_WIDTH, VIDEO_TEST_HEIGHT)
+            .await
+            .expect("failed to generate video fixture");
+        let fixture_streams = collect_probe_streams(&fixture.path)
+            .await
+            .expect("failed to probe advanced video fixture streams");
+        let representative_encoders = select_representative_video_encoders(&capabilities);
+
+        let mut failures = Vec::new();
+        let mut executed_scenarios = 0usize;
+
+        for encoder in representative_encoders {
+            let Some(container_id) = pick_video_test_container_id(&capabilities, &encoder.id)
+            else {
+                continue;
+            };
+            let extension = super::super::capabilities::container_extension_for_id(&container_id)
+                .unwrap_or(".bin");
+
+            for scenario in build_advanced_video_capability_scenarios(encoder) {
+                executed_scenarios += 1;
+                let temp_dir = new_temp_dir(&format!(
+                    "video-advanced-{}-{}-",
+                    sanitize_case_id(&encoder.id),
+                    sanitize_case_id(scenario.name)
+                ));
+                let output_path = temp_dir.path().join(format!(
+                    "{}_{}{}",
+                    sanitize_case_id(&encoder.id),
+                    sanitize_case_id(scenario.name),
+                    extension
+                ));
+                let request = build_video_only_request(
+                    &fixture.path,
+                    &output_path,
+                    &container_id,
+                    encoder,
+                    &scenario,
+                );
+                for error in collect_video_request_arg_failures(
+                    &build_transcode_args(&request, &fixture_streams, None)
+                        .expect("advanced video request args should build"),
+                    &request,
+                    encoder,
+                ) {
+                    failures.push(format!(
+                        "encoder={} scenario={}: {}",
+                        encoder.id, scenario.name, error
+                    ));
+                }
+
+                match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
+                    Ok(result_path) => {
+                        match probe_primary_video_stream("ffprobe", Path::new(&result_path)).await {
+                            Ok(probed_stream) => {
+                                if let Some(error) = validate_transcoded_video_output(
+                                    encoder,
+                                    &container_id,
+                                    &scenario,
+                                    &probed_stream,
+                                ) {
+                                    failures.push(format!(
+                                        "encoder={} scenario={}: {}",
+                                        encoder.id, scenario.name, error
+                                    ));
+                                }
+                            }
+                            Err(error) => failures.push(format!(
+                                "encoder={} scenario={}: failed to probe output: {}",
+                                encoder.id, scenario.name, error
+                            )),
+                        }
+                    }
+                    Err(error) => failures.push(format!(
+                        "encoder={} scenario={}: transcode failed: {}",
+                        encoder.id, scenario.name, error
+                    )),
+                }
+            }
+        }
+
+        if executed_scenarios == 0 {
+            return;
+        }
+
+        assert!(
+            failures.is_empty(),
+            "advanced video capability failures:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    #[tokio::test]
+    async fn transcode_av_copy_and_mixed_modes_preserve_expected_streams() {
+        let capabilities = get_transcode_capabilities_with_ffmpeg_path("ffmpeg")
+            .await
+            .expect("failed to query transcode capabilities");
+        let fixture = generate_test_pattern_av_mp4()
+            .await
+            .expect("failed to generate AV fixture");
+        let mkv_container = capabilities
+            .containers
+            .iter()
+            .find(|container| container.id == "mkv")
+            .expect("expected MKV container");
+        let video_encoder = capabilities
+            .video_encoders
+            .iter()
+            .find(|encoder| Some(&encoder.id) == mkv_container.default_video_encoder_id.as_ref())
+            .or_else(|| {
+                capabilities.video_encoders.iter().find(|encoder| {
+                    mkv_container
+                        .supported_video_encoder_ids
+                        .iter()
+                        .any(|supported_id| supported_id == &encoder.id)
+                })
+            })
+            .expect("expected a video encoder for MKV");
+        let audio_encoder = capabilities
+            .audio_encoders
+            .iter()
+            .find(|encoder| Some(&encoder.id) == mkv_container.default_audio_encoder_id.as_ref())
+            .or_else(|| {
+                capabilities.audio_encoders.iter().find(|encoder| {
+                    mkv_container
+                        .supported_audio_encoder_ids
+                        .iter()
+                        .any(|supported_id| supported_id == &encoder.id)
+                })
+            })
+            .expect("expected an audio encoder for MKV");
+        let mut failures = Vec::new();
+
+        {
+            let temp_dir = new_temp_dir("av-copy-copy-");
+            let output_path = temp_dir.path().join("copy_copy.mkv");
+            let mut request = build_av_request(&fixture.path, &output_path, "mkv");
+            request.video.mode = "copy".to_string();
+            request.video.encoder_id = None;
+            request.video.profile = None;
+            request.video.level = None;
+            request.video.pixel_format = None;
+            request.video.quality_mode = None;
+            request.video.crf = None;
+            request.video.qp = None;
+            request.video.bitrate_kbps = None;
+            request.video.preset = None;
+            request.video.additional_args = Vec::new();
+            request.audio.mode = "copy".to_string();
+            request.audio.encoder_id = None;
+            request.audio.bitrate_kbps = None;
+            request.audio.channels = None;
+            request.audio.sample_rate = None;
+            request.audio.additional_args = Vec::new();
+
+            match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
+                Ok(result_path) => {
+                    let counts = probe_media_stream_counts("ffprobe", Path::new(&result_path))
+                        .await
+                        .expect("failed to probe copy-copy output");
+                    if let Some(error) = assert_media_counts(&counts, 1, 1) {
+                        failures.push(format!("scenario=copy_copy: {}", error));
+                    }
+                }
+                Err(error) => {
+                    failures.push(format!("scenario=copy_copy: transcode failed: {}", error))
+                }
+            }
+        }
+
+        {
+            let temp_dir = new_temp_dir("av-video-transcode-audio-copy-");
+            let output_path = temp_dir.path().join("video_transcode_audio_copy.mkv");
+            let mut request = build_av_request(&fixture.path, &output_path, "mkv");
+            apply_video_transcode_settings(
+                &mut request,
+                video_encoder,
+                &build_primary_video_scenario(video_encoder),
+            );
+            request.audio.mode = "copy".to_string();
+            request.audio.encoder_id = None;
+            request.audio.bitrate_kbps = None;
+            request.audio.channels = None;
+            request.audio.sample_rate = None;
+            request.audio.additional_args = Vec::new();
+
+            match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
+                Ok(result_path) => {
+                    let counts = probe_media_stream_counts("ffprobe", Path::new(&result_path))
+                        .await
+                        .expect("failed to probe mixed output");
+                    if let Some(error) = assert_media_counts(&counts, 1, 1) {
+                        failures.push(format!("scenario=video_transcode_audio_copy: {}", error));
+                    } else if let Ok(probed_stream) =
+                        probe_primary_video_stream("ffprobe", Path::new(&result_path)).await
+                    {
+                        if let Some(error) =
+                            validate_transcoded_video_stream(&video_encoder.id, &probed_stream)
+                        {
+                            failures
+                                .push(format!("scenario=video_transcode_audio_copy: {}", error));
+                        }
+                    }
+                }
+                Err(error) => failures.push(format!(
+                    "scenario=video_transcode_audio_copy: transcode failed: {}",
+                    error
+                )),
+            }
+        }
+
+        {
+            let temp_dir = new_temp_dir("av-video-copy-audio-transcode-");
+            let output_path = temp_dir.path().join("video_copy_audio_transcode.mkv");
+            let mut request = build_av_request(&fixture.path, &output_path, "mkv");
+            request.video.mode = "copy".to_string();
+            request.video.encoder_id = None;
+            request.video.profile = None;
+            request.video.level = None;
+            request.video.pixel_format = None;
+            request.video.quality_mode = None;
+            request.video.crf = None;
+            request.video.qp = None;
+            request.video.bitrate_kbps = None;
+            request.video.preset = None;
+            request.video.additional_args = Vec::new();
+            apply_audio_transcode_settings(&mut request, audio_encoder);
+
+            match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
+                Ok(result_path) => {
+                    let counts = probe_media_stream_counts("ffprobe", Path::new(&result_path))
+                        .await
+                        .expect("failed to probe mixed output");
+                    if let Some(error) = assert_media_counts(&counts, 1, 1) {
+                        failures.push(format!("scenario=video_copy_audio_transcode: {}", error));
+                    } else if let Ok(probed_stream) =
+                        probe_primary_audio_stream("ffprobe", Path::new(&result_path)).await
+                    {
+                        if let Some(error) =
+                            validate_transcoded_audio_stream(&audio_encoder.id, 2, &probed_stream)
+                        {
+                            failures
+                                .push(format!("scenario=video_copy_audio_transcode: {}", error));
+                        }
+                    }
+                }
+                Err(error) => failures.push(format!(
+                    "scenario=video_copy_audio_transcode: transcode failed: {}",
+                    error
+                )),
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "AV mixed mode failures:\n{}",
+            failures.join("\n")
+        );
     }
 }
