@@ -8,7 +8,6 @@
   import { Textarea } from '$lib/components/ui/textarea';
   import {
     buildReadableProbeSummary,
-    getPrimaryAudioTrack,
     getPrimaryVideoTrack,
     getTracksByType,
   } from '$lib/services/transcode';
@@ -56,7 +55,12 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="sm:max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+  <Dialog.Content
+    class="sm:max-w-2xl max-h-[85vh] flex flex-col overflow-hidden"
+    onOpenAutoFocus={(event) => {
+      event.preventDefault();
+    }}
+  >
     <Dialog.Header>
       <Dialog.Title>{file?.name ?? 'File information'}</Dialog.Title>
       <Dialog.Description>Important stream details detected by FFprobe.</Dialog.Description>
@@ -182,37 +186,53 @@
           </Card.Root>
         {/if}
 
-        {#if getPrimaryAudioTrack(file)}
-          {@const audioTrack = getPrimaryAudioTrack(file)}
+        {#if getTracksByType(file, 'audio').length > 0}
           <Card.Root class="min-w-0">
             <Card.Header class="pb-3">
-              <Card.Title>Primary Audio</Card.Title>
+              <Card.Title>Audio Tracks</Card.Title>
             </Card.Header>
-            <Card.Content class="grid gap-3 md:grid-cols-3 text-sm">
-              <div>
-                <p class="text-xs uppercase tracking-wide text-muted-foreground">Codec</p>
-                <p>{audioTrack?.codec.toUpperCase()}</p>
-              </div>
-              <div>
-                <p class="text-xs uppercase tracking-wide text-muted-foreground">Language</p>
-                <p>{formatLanguage(audioTrack?.language)}</p>
-              </div>
-              <div>
-                <p class="text-xs uppercase tracking-wide text-muted-foreground">Bitrate</p>
-                <p>{formatBitrate(audioTrack?.bitrate)}</p>
-              </div>
-              <div>
-                <p class="text-xs uppercase tracking-wide text-muted-foreground">Channels</p>
-                <p>{formatChannels(audioTrack?.channels)}</p>
-              </div>
-              <div>
-                <p class="text-xs uppercase tracking-wide text-muted-foreground">Sample rate</p>
-                <p>{formatSampleRate(audioTrack?.sampleRate)}</p>
-              </div>
-              <div>
-                <p class="text-xs uppercase tracking-wide text-muted-foreground">Format / Layout</p>
-                <p>{audioTrack?.sampleFormat ?? 'N/A'} / {audioTrack?.channelLayout ?? 'N/A'}</p>
-              </div>
+            <Card.Content class="space-y-2">
+              {#each getTracksByType(file, 'audio') as track, index (track.id)}
+                <div class="rounded-md border px-3 py-3 text-sm">
+                  <div class="flex items-center justify-between gap-3">
+                    <div class="min-w-0">
+                      <p class="font-medium">Track {index + 1} · {track.codec.toUpperCase()}</p>
+                      <p class="mt-1 text-xs text-muted-foreground">
+                        {track.title ?? 'Untitled'} {track.language ? `· ${formatLanguage(track.language)}` : ''}
+                      </p>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                      {#if track.default}
+                        <Badge variant="outline">default</Badge>
+                      {/if}
+                    </div>
+                  </div>
+
+                  <div class="mt-3 grid gap-3 md:grid-cols-3">
+                    <div>
+                      <p class="text-xs uppercase tracking-wide text-muted-foreground">Language</p>
+                      <p>{formatLanguage(track.language)}</p>
+                    </div>
+                    <div>
+                      <p class="text-xs uppercase tracking-wide text-muted-foreground">Bitrate</p>
+                      <p>{formatBitrate(track.bitrate)}</p>
+                    </div>
+                    <div>
+                      <p class="text-xs uppercase tracking-wide text-muted-foreground">Channels</p>
+                      <p>{formatChannels(track.channels)}</p>
+                    </div>
+                    <div>
+                      <p class="text-xs uppercase tracking-wide text-muted-foreground">Sample rate</p>
+                      <p>{formatSampleRate(track.sampleRate)}</p>
+                    </div>
+                    <div class="md:col-span-2">
+                      <p class="text-xs uppercase tracking-wide text-muted-foreground">Format / Layout</p>
+                      <p>{track.sampleFormat ?? 'N/A'} / {track.channelLayout ?? 'N/A'}</p>
+                    </div>
+                  </div>
+                </div>
+              {/each}
             </Card.Content>
           </Card.Root>
         {/if}

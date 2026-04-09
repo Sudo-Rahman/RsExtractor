@@ -109,6 +109,7 @@
   );
   const selectedVideoTrack = $derived.by(() => selectedFile ? getPrimaryVideoTrack(selectedFile) ?? null : null);
   const selectedAudioTrack = $derived.by(() => selectedFile ? getPrimaryAudioTrack(selectedFile) ?? null : null);
+  const selectedAudioTracks = $derived.by(() => selectedFile ? getTracksByType(selectedFile, 'audio') : []);
   const selectedSubtitleTracks = $derived.by(() => selectedFile ? getTracksByType(selectedFile, 'subtitle') : []);
   const availableContainers = $derived.by(() => {
     if (!selectedFile || !transcodeStore.capabilities) {
@@ -964,6 +965,7 @@
             <Tabs.Content value="audio" class="space-y-4">
               <TranscodeAudioTab
                 file={selectedFile}
+                audioTracks={selectedAudioTracks}
                 selectedAudioTrack={selectedAudioTrack}
                 selectedAudioEncoder={selectedAudioEncoder}
                 availableAudioEncoders={availableAudioEncoders}

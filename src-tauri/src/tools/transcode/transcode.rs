@@ -56,6 +56,19 @@ pub(crate) struct TranscodeVideoSettings {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct TranscodeAudioTrackOverride {
+    pub(crate) track_id: usize,
+    pub(crate) mode: String,
+    pub(crate) encoder_id: Option<String>,
+    pub(crate) bitrate_kbps: Option<u32>,
+    pub(crate) channels: Option<u8>,
+    pub(crate) sample_rate: Option<u32>,
+    #[serde(default)]
+    pub(crate) additional_args: Vec<TranscodeAdditionalArg>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct TranscodeAudioSettings {
     pub(crate) mode: String,
     pub(crate) encoder_id: Option<String>,
@@ -64,6 +77,8 @@ pub(crate) struct TranscodeAudioSettings {
     pub(crate) sample_rate: Option<u32>,
     #[serde(default)]
     pub(crate) additional_args: Vec<TranscodeAdditionalArg>,
+    #[serde(default)]
+    pub(crate) track_overrides: Vec<TranscodeAudioTrackOverride>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -88,8 +103,21 @@ pub(crate) struct TranscodeRequest {
 
 #[derive(Debug, Clone)]
 struct StreamInfo {
+    stream_index: usize,
     relative_index: usize,
     codec_name: String,
+    channels: u64,
+    channel_layout: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedAudioSettings {
+    mode: String,
+    encoder_id: Option<String>,
+    bitrate_kbps: Option<u32>,
+    channels: Option<u8>,
+    sample_rate: Option<u32>,
+    additional_args: Vec<TranscodeAdditionalArg>,
 }
 
 fn emit_transcode_progress(
@@ -260,12 +288,24 @@ fn extract_streams_by_type(streams: &[Value], codec_type: &str) -> Vec<StreamInf
         })
         .enumerate()
         .map(|(relative_index, stream)| StreamInfo {
+            stream_index: stream
+                .get("index")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(relative_index as u64) as usize,
             relative_index,
             codec_name: stream
                 .get("codec_name")
                 .and_then(|value| value.as_str())
                 .unwrap_or_default()
                 .to_string(),
+            channels: stream
+                .get("channels")
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default(),
+            channel_layout: stream
+                .get("channel_layout")
+                .and_then(|value| value.as_str())
+                .map(|value| value.to_string()),
         })
         .collect()
 }
@@ -283,37 +323,78 @@ fn libopus_uses_default_mapping_family(channel_layout: &str) -> bool {
     )
 }
 
-fn should_force_libopus_mapping_family_255(request: &TranscodeRequest, streams: &[Value]) -> bool {
-    if request.audio.encoder_id.as_deref() != Some("libopus")
-        || request.audio.channels.is_some()
-        || has_enabled_additional_arg(&request.audio.additional_args, "-mapping_family")
+fn resolve_audio_settings_for_stream(
+    request: &TranscodeRequest,
+    stream: &StreamInfo,
+) -> ResolvedAudioSettings {
+    let track_override = request
+        .audio
+        .track_overrides
+        .iter()
+        .find(|track_override| track_override.track_id == stream.stream_index);
+
+    ResolvedAudioSettings {
+        mode: track_override
+            .map(|track_override| track_override.mode.clone())
+            .unwrap_or_else(|| request.audio.mode.clone()),
+        encoder_id: track_override
+            .and_then(|track_override| track_override.encoder_id.clone())
+            .or_else(|| request.audio.encoder_id.clone()),
+        bitrate_kbps: track_override
+            .and_then(|track_override| track_override.bitrate_kbps)
+            .or(request.audio.bitrate_kbps),
+        channels: track_override
+            .and_then(|track_override| track_override.channels)
+            .or(request.audio.channels),
+        sample_rate: track_override
+            .and_then(|track_override| track_override.sample_rate)
+            .or(request.audio.sample_rate),
+        additional_args: {
+            let mut additional_args = request.audio.additional_args.clone();
+            if let Some(track_override) = track_override {
+                additional_args.extend(track_override.additional_args.clone());
+            }
+            additional_args
+        },
+    }
+}
+
+fn should_force_libopus_mapping_family_255(
+    settings: &ResolvedAudioSettings,
+    stream: &StreamInfo,
+    additional_args: &[TranscodeAdditionalArg],
+) -> bool {
+    if settings.encoder_id.as_deref() != Some("libopus")
+        || settings.channels.is_some()
+        || has_enabled_additional_arg(additional_args, "-mapping_family")
     {
         return false;
     }
 
-    streams.iter().any(|stream| {
-        if stream.get("codec_type").and_then(|value| value.as_str()) != Some("audio") {
-            return false;
+    let channel_layout = stream.channel_layout.as_deref().unwrap_or_default();
+
+    stream.channels > 2
+        && !channel_layout.is_empty()
+        && !libopus_uses_default_mapping_family(channel_layout)
+        && !has_enabled_additional_arg(additional_args, "-mapping_family")
+}
+
+fn qualify_stream_option(flag: &str, stream_specifier: Option<&str>) -> String {
+    if let Some(stream_specifier) = stream_specifier {
+        if flag.contains(':') {
+            return flag.to_string();
         }
 
-        let channels = stream
-            .get("channels")
-            .and_then(|value| value.as_u64())
-            .unwrap_or_default();
-        let channel_layout = stream
-            .get("channel_layout")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default();
+        return format!("{}:{}", flag, stream_specifier);
+    }
 
-        channels > 2
-            && !channel_layout.is_empty()
-            && !libopus_uses_default_mapping_family(channel_layout)
-    })
+    flag.to_string()
 }
 
 fn apply_safe_additional_args(
     args: &mut Vec<String>,
     additional_args: &[TranscodeAdditionalArg],
+    stream_specifier: Option<&str>,
 ) -> Result<(), String> {
     const BLOCKED_FLAGS: &[&str] = &[
         "-i",
@@ -341,7 +422,7 @@ fn apply_safe_additional_args(
             return Err(format!("Additional argument is not allowed here: {}", flag));
         }
 
-        args.push(flag.to_string());
+        args.push(qualify_stream_option(flag, stream_specifier));
         if let Some(value) = additional_arg.value.as_deref() {
             if !value.trim().is_empty() {
                 args.push(value.trim().to_string());
@@ -405,10 +486,23 @@ fn build_transcode_args(
         mapped_any_stream = true;
     }
 
-    if !audio_streams.is_empty() && request.audio.mode != "disable" {
-        args.push("-map".to_string());
-        args.push("0:a?".to_string());
-        mapped_any_stream = true;
+    let mut mapped_audio_streams = Vec::new();
+    if !audio_streams.is_empty() {
+        for audio_stream in &audio_streams {
+            let resolved_settings = resolve_audio_settings_for_stream(request, audio_stream);
+            if resolved_settings.mode == "disable" {
+                continue;
+            }
+
+            args.push("-map".to_string());
+            args.push(format!("0:a:{}", audio_stream.relative_index));
+            mapped_any_stream = true;
+            mapped_audio_streams.push((
+                mapped_audio_streams.len(),
+                audio_stream.clone(),
+                resolved_settings,
+            ));
+        }
     }
 
     let mut mapped_subtitle_output_indices = Vec::new();
@@ -514,70 +608,77 @@ fn build_transcode_args(
                     args.push("+faststart".to_string());
                 }
 
-                apply_safe_additional_args(&mut args, &request.video.additional_args)?;
+                apply_safe_additional_args(&mut args, &request.video.additional_args, None)?;
             }
             "disable" => {}
             other => return Err(format!("Unsupported video mode: {}", other)),
         }
     }
 
-    if !audio_streams.is_empty() {
-        match request.audio.mode.as_str() {
-            "copy" => {
-                if let Some(unsupported_codec) = audio_streams
-                    .iter()
-                    .find(|stream| !can_copy_audio_codec(&request.container_id, &stream.codec_name))
-                    .map(|stream| stream.codec_name.as_str())
-                {
-                    return Err(format!(
-                        "Container {} cannot copy audio codec {}. Choose audio transcoding or a compatible container.",
-                        request.container_id.to_uppercase(),
-                        unsupported_codec
-                    ));
+    if !mapped_audio_streams.is_empty() {
+        for (output_index, source_stream, resolved_settings) in &mapped_audio_streams {
+            match resolved_settings.mode.as_str() {
+                "copy" => {
+                    if !can_copy_audio_codec(&request.container_id, &source_stream.codec_name) {
+                        return Err(format!(
+                            "Container {} cannot copy audio codec {}. Choose audio transcoding or a compatible container.",
+                            request.container_id.to_uppercase(),
+                            source_stream.codec_name
+                        ));
+                    }
+
+                    args.push(format!("-c:a:{}", output_index));
+                    args.push("copy".to_string());
                 }
+                "transcode" => {
+                    let Some(encoder_id) = resolved_settings.encoder_id.as_deref() else {
+                        return Err(
+                            "An audio encoder is required when audio transcoding is enabled"
+                                .to_string(),
+                        );
+                    };
 
-                args.push("-c:a".to_string());
-                args.push("copy".to_string());
-            }
-            "transcode" => {
-                let Some(encoder_id) = request.audio.encoder_id.as_deref() else {
-                    return Err(
-                        "An audio encoder is required when audio transcoding is enabled"
-                            .to_string(),
-                    );
-                };
+                    args.push(format!("-c:a:{}", output_index));
+                    args.push(encoder_id.to_string());
 
-                args.push("-c:a".to_string());
-                args.push(encoder_id.to_string());
+                    if should_force_libopus_mapping_family_255(
+                        resolved_settings,
+                        source_stream,
+                        &resolved_settings.additional_args,
+                    ) {
+                        args.push(format!("-mapping_family:a:{}", output_index));
+                        args.push("255".to_string());
+                    }
 
-                if should_force_libopus_mapping_family_255(request, streams) {
-                    args.push("-mapping_family".to_string());
-                    args.push("255".to_string());
-                }
+                    if let Some(bitrate_kbps) = resolved_settings.bitrate_kbps {
+                        args.push(format!("-b:a:{}", output_index));
+                        args.push(format!("{}k", bitrate_kbps));
+                    }
 
-                if let Some(bitrate_kbps) = request.audio.bitrate_kbps {
-                    args.push("-b:a".to_string());
-                    args.push(format!("{}k", bitrate_kbps));
-                }
-
-                if let Some(channels) = request.audio.channels {
-                    if channels > 0 {
-                        args.push("-ac".to_string());
+                    if let Some(channels) =
+                        resolved_settings.channels.filter(|channels| *channels > 0)
+                    {
+                        args.push(format!("-ac:a:{}", output_index));
                         args.push(channels.to_string());
                     }
-                }
 
-                if let Some(sample_rate) = request.audio.sample_rate {
-                    if sample_rate > 0 {
-                        args.push("-ar".to_string());
+                    if let Some(sample_rate) = resolved_settings
+                        .sample_rate
+                        .filter(|sample_rate| *sample_rate > 0)
+                    {
+                        args.push(format!("-ar:a:{}", output_index));
                         args.push(sample_rate.to_string());
                     }
-                }
 
-                apply_safe_additional_args(&mut args, &request.audio.additional_args)?;
+                    apply_safe_additional_args(
+                        &mut args,
+                        &resolved_settings.additional_args,
+                        Some(&format!("a:{}", output_index)),
+                    )?;
+                }
+                "disable" => {}
+                other => return Err(format!("Unsupported audio mode: {}", other)),
             }
-            "disable" => {}
-            other => return Err(format!("Unsupported audio mode: {}", other)),
         }
     }
 
@@ -628,7 +729,7 @@ fn build_transcode_args(
                     }
                 }
 
-                apply_safe_additional_args(&mut args, &request.subtitles.additional_args)?;
+                apply_safe_additional_args(&mut args, &request.subtitles.additional_args, None)?;
             }
             "disable" => {}
             other => return Err(format!("Unsupported subtitle mode: {}", other)),
@@ -854,8 +955,8 @@ mod tests {
     };
 
     use super::{
-        TranscodeAdditionalArg, TranscodeAudioSettings, TranscodeRequest,
-        TranscodeSubtitleSettings, TranscodeVideoSettings, build_transcode_args,
+        TranscodeAdditionalArg, TranscodeAudioSettings, TranscodeAudioTrackOverride,
+        TranscodeRequest, TranscodeSubtitleSettings, TranscodeVideoSettings, build_transcode_args,
         transcode_media_with_bins,
     };
 
@@ -896,6 +997,7 @@ mod tests {
                 channels: Some(2),
                 sample_rate: Some(48000),
                 additional_args: Vec::new(),
+                track_overrides: Vec::new(),
             },
             subtitles: TranscodeSubtitleSettings {
                 mode: "convert_text".to_string(),
@@ -957,6 +1059,7 @@ mod tests {
         request.audio.channels = None;
         request.audio.sample_rate = None;
         request.audio.additional_args = Vec::new();
+        request.audio.track_overrides = Vec::new();
 
         request.subtitles.mode = "disable".to_string();
         request.subtitles.encoder_id = None;
@@ -1011,6 +1114,7 @@ mod tests {
         request.audio.channels = None;
         request.audio.sample_rate = None;
         request.audio.additional_args = Vec::new();
+        request.audio.track_overrides = Vec::new();
     }
 
     fn audio_bitrate_for_encoder(encoder_id: &str) -> Option<u32> {
@@ -1206,7 +1310,8 @@ mod tests {
     }
 
     async fn collect_probe_streams(path: &Path) -> Result<Vec<Value>, String> {
-        let probe_json = probe_file_with_ffprobe("ffprobe", path.to_string_lossy().as_ref()).await?;
+        let probe_json =
+            probe_file_with_ffprobe("ffprobe", path.to_string_lossy().as_ref()).await?;
         let probe_value: Value = serde_json::from_str(&probe_json)
             .map_err(|error| format!("Invalid probe JSON: {}", error))?;
 
@@ -1226,7 +1331,10 @@ mod tests {
         if args_contain_pair(args, flag, value) {
             None
         } else {
-            Some(format!("expected ffmpeg args to contain `{}` `{}`", flag, value))
+            Some(format!(
+                "expected ffmpeg args to contain `{}` `{}`",
+                flag, value
+            ))
         }
     }
 
@@ -1245,20 +1353,23 @@ mod tests {
         let mut failures = Vec::new();
 
         if let Some(bitrate_kbps) = request.audio.bitrate_kbps {
-            if let Some(error) = expect_arg_pair(args, "-b:a", &format!("{}k", bitrate_kbps)) {
+            if let Some(error) = expect_arg_pair(args, "-b:a:0", &format!("{}k", bitrate_kbps)) {
                 failures.push(error);
             }
         }
 
         if let Some(channels) = request.audio.channels.filter(|channels| *channels > 0) {
-            if let Some(error) = expect_arg_pair(args, "-ac", &channels.to_string()) {
+            if let Some(error) = expect_arg_pair(args, "-ac:a:0", &channels.to_string()) {
                 failures.push(error);
             }
         }
 
-        if let Some(sample_rate) = request.audio.sample_rate.filter(|sample_rate| *sample_rate > 0)
+        if let Some(sample_rate) = request
+            .audio
+            .sample_rate
+            .filter(|sample_rate| *sample_rate > 0)
         {
-            if let Some(error) = expect_arg_pair(args, "-ar", &sample_rate.to_string()) {
+            if let Some(error) = expect_arg_pair(args, "-ar:a:0", &sample_rate.to_string()) {
                 failures.push(error);
             }
         }
@@ -1273,14 +1384,23 @@ mod tests {
     ) -> Vec<String> {
         let mut failures = Vec::new();
 
-        if let Some(profile) = request.video.profile.as_deref().filter(|value| !value.trim().is_empty())
+        if let Some(profile) = request
+            .video
+            .profile
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
         {
             if let Some(error) = expect_arg_pair(args, "-profile:v", profile.trim()) {
                 failures.push(error);
             }
         }
 
-        if let Some(level) = request.video.level.as_deref().filter(|value| !value.trim().is_empty()) {
+        if let Some(level) = request
+            .video
+            .level
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
             if let Some(error) = expect_arg_pair(args, "-level:v", level.trim()) {
                 failures.push(error);
             }
@@ -1324,7 +1444,11 @@ mod tests {
             _ => {}
         }
 
-        if let Some(preset) = request.video.preset.as_deref().filter(|value| !value.trim().is_empty())
+        if let Some(preset) = request
+            .video
+            .preset
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
         {
             let preset_flag = if encoder.id == "libaom-av1" {
                 "-cpu-used"
@@ -1336,7 +1460,12 @@ mod tests {
             }
         }
 
-        for additional_arg in request.video.additional_args.iter().filter(|arg| arg.enabled) {
+        for additional_arg in request
+            .video
+            .additional_args
+            .iter()
+            .filter(|arg| arg.enabled)
+        {
             match additional_arg.value.as_deref() {
                 Some(value) => {
                     if let Some(error) = expect_arg_pair(args, &additional_arg.flag, value) {
@@ -1351,8 +1480,7 @@ mod tests {
             }
         }
 
-        if matches!(request.container_id.as_str(), "mp4" | "mov")
-            && encoder.id.starts_with("hevc")
+        if matches!(request.container_id.as_str(), "mp4" | "mov") && encoder.id.starts_with("hevc")
         {
             if let Some(error) = expect_arg_pair(args, "-tag:v", "hvc1") {
                 failures.push(error);
@@ -1782,7 +1910,7 @@ mod tests {
             build_transcode_args(&request, &streams, Some(10_000_000)).expect("args should build");
 
         assert!(args.windows(2).any(|window| window == ["-c:v", "libx264"]));
-        assert!(args.windows(2).any(|window| window == ["-c:a", "aac"]));
+        assert!(args.windows(2).any(|window| window == ["-c:a:0", "aac"]));
         assert!(args.windows(2).any(|window| window == ["-c:s:0", "srt"]));
         assert!(args.windows(2).any(|window| window == ["-c:s:1", "copy"]));
         assert!(
@@ -1900,7 +2028,7 @@ mod tests {
 
         assert!(
             args.windows(2)
-                .any(|window| window == ["-mapping_family", "255"])
+                .any(|window| window == ["-mapping_family:a:0", "255"])
         );
     }
 
@@ -1923,7 +2051,7 @@ mod tests {
         let args =
             build_transcode_args(&request, &streams, None).expect("libopus args should build");
 
-        assert!(!args.iter().any(|arg| arg == "-mapping_family"));
+        assert!(!args.iter().any(|arg| arg.starts_with("-mapping_family")));
     }
 
     #[test]
@@ -1945,8 +2073,164 @@ mod tests {
         let args =
             build_transcode_args(&request, &streams, None).expect("libopus args should build");
 
-        assert!(!args.iter().any(|arg| arg == "-mapping_family"));
-        assert!(args.windows(2).any(|window| window == ["-ac", "6"]));
+        assert!(!args.iter().any(|arg| arg.starts_with("-mapping_family")));
+        assert!(args.windows(2).any(|window| window == ["-ac:a:0", "6"]));
+    }
+
+    #[test]
+    fn build_transcode_args_maps_audio_tracks_per_override_and_scopes_additional_args() {
+        let mut request = build_request("/tmp/output.mkv");
+        request.container_id = "mkv".to_string();
+        request.video.mode = "disable".to_string();
+        request.subtitles.mode = "disable".to_string();
+        request.audio.mode = "copy".to_string();
+        request.audio.encoder_id = None;
+        request.audio.bitrate_kbps = None;
+        request.audio.channels = None;
+        request.audio.sample_rate = None;
+        request.audio.additional_args = vec![TranscodeAdditionalArg {
+            id: Some("application".to_string()),
+            flag: "-application".to_string(),
+            value: Some("audio".to_string()),
+            enabled: true,
+        }];
+        request.audio.track_overrides = vec![
+            TranscodeAudioTrackOverride {
+                track_id: 4,
+                mode: "transcode".to_string(),
+                encoder_id: Some("libopus".to_string()),
+                bitrate_kbps: Some(96),
+                channels: None,
+                sample_rate: Some(48_000),
+                additional_args: vec![TranscodeAdditionalArg {
+                    id: Some("cutoff".to_string()),
+                    flag: "-cutoff".to_string(),
+                    value: Some("18000".to_string()),
+                    enabled: true,
+                }],
+            },
+            TranscodeAudioTrackOverride {
+                track_id: 6,
+                mode: "disable".to_string(),
+                encoder_id: None,
+                bitrate_kbps: None,
+                channels: None,
+                sample_rate: None,
+                additional_args: Vec::new(),
+            },
+        ];
+        let streams = vec![
+            json!({ "index": 2, "codec_type": "audio", "codec_name": "flac" }),
+            json!({ "index": 4, "codec_type": "audio", "codec_name": "ac3", "channels": 2, "channel_layout": "stereo" }),
+            json!({ "index": 6, "codec_type": "audio", "codec_name": "aac" }),
+        ];
+
+        let args = build_transcode_args(&request, &streams, None)
+            .expect("mixed audio override args should build");
+
+        assert!(args.windows(2).any(|window| window == ["-map", "0:a:0"]));
+        assert!(args.windows(2).any(|window| window == ["-map", "0:a:1"]));
+        assert!(!args.windows(2).any(|window| window == ["-map", "0:a:2"]));
+        assert!(args.windows(2).any(|window| window == ["-c:a:0", "copy"]));
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["-c:a:1", "libopus"])
+        );
+        assert!(args.windows(2).any(|window| window == ["-b:a:1", "96k"]));
+        assert!(args.windows(2).any(|window| window == ["-ar:a:1", "48000"]));
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["-application:a:1", "audio"])
+        );
+        assert!(args.windows(2).any(|window| window == ["-cutoff:a:1", "18000"]));
+        assert!(!args.iter().any(|arg| arg == "-application:a:0"));
+        assert!(!args.iter().any(|arg| arg == "-cutoff:a:0"));
+    }
+
+    #[test]
+    fn build_transcode_args_rejects_incompatible_copy_for_one_audio_track() {
+        let mut request = build_request("/tmp/output.webm");
+        request.container_id = "webm".to_string();
+        request.video.mode = "disable".to_string();
+        request.subtitles.mode = "disable".to_string();
+        request.audio.mode = "copy".to_string();
+        request.audio.encoder_id = None;
+        request.audio.bitrate_kbps = None;
+        request.audio.channels = None;
+        request.audio.sample_rate = None;
+        request.audio.track_overrides = Vec::new();
+
+        let streams = vec![
+            json!({ "index": 1, "codec_type": "audio", "codec_name": "aac" }),
+            json!({ "index": 2, "codec_type": "audio", "codec_name": "opus" }),
+        ];
+
+        let error = build_transcode_args(&request, &streams, None)
+            .expect_err("aac copy to webm should fail when one track is incompatible");
+
+        assert!(error.contains("cannot copy audio codec aac"));
+    }
+
+    #[test]
+    fn build_transcode_args_preserves_audio_order_after_disabling_tracks() {
+        let mut request = build_request("/tmp/output.mkv");
+        request.container_id = "mkv".to_string();
+        request.video.mode = "disable".to_string();
+        request.subtitles.mode = "disable".to_string();
+        request.audio.mode = "copy".to_string();
+        request.audio.encoder_id = None;
+        request.audio.bitrate_kbps = None;
+        request.audio.channels = None;
+        request.audio.sample_rate = None;
+        request.audio.track_overrides = vec![TranscodeAudioTrackOverride {
+            track_id: 3,
+            mode: "disable".to_string(),
+            encoder_id: None,
+            bitrate_kbps: None,
+            channels: None,
+            sample_rate: None,
+            additional_args: Vec::new(),
+        }];
+        let streams = vec![
+            json!({ "index": 3, "codec_type": "audio", "codec_name": "flac" }),
+            json!({ "index": 5, "codec_type": "audio", "codec_name": "ac3" }),
+            json!({ "index": 7, "codec_type": "audio", "codec_name": "mp3" }),
+        ];
+
+        let args = build_transcode_args(&request, &streams, None)
+            .expect("copy args should build when first track is disabled");
+
+        let mapped_streams = args
+            .windows(2)
+            .filter(|window| window[0] == "-map")
+            .map(|window| window[1].clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            mapped_streams,
+            vec!["0:a:1".to_string(), "0:a:2".to_string()]
+        );
+        assert!(!args.windows(2).any(|window| window == ["-map", "0:a:0"]));
+    }
+
+    #[test]
+    fn build_transcode_args_rejects_audio_only_output_when_all_tracks_are_disabled() {
+        let mut request = build_request("/tmp/output.mka");
+        request.container_id = "mkv".to_string();
+        request.video.mode = "disable".to_string();
+        request.subtitles.mode = "disable".to_string();
+        request.audio.mode = "disable".to_string();
+        request.audio.track_overrides = Vec::new();
+
+        let streams = vec![
+            json!({ "index": 1, "codec_type": "audio", "codec_name": "flac" }),
+            json!({ "index": 2, "codec_type": "audio", "codec_name": "aac" }),
+        ];
+
+        let error = build_transcode_args(&request, &streams, None)
+            .expect_err("all disabled audio-only output should fail");
+
+        assert!(error.contains("No streams selected for output"));
     }
 
     #[test]
@@ -2009,9 +2293,12 @@ mod tests {
             let fixture = generate_silence_wav(layout)
                 .await
                 .unwrap_or_else(|error| panic!("failed to generate {} fixture: {}", layout, error));
-            let fixture_streams = collect_probe_streams(&fixture.path)
-                .await
-                .unwrap_or_else(|error| panic!("failed to probe {} fixture streams: {}", layout, error));
+            let fixture_streams =
+                collect_probe_streams(&fixture.path)
+                    .await
+                    .unwrap_or_else(|error| {
+                        panic!("failed to probe {} fixture streams: {}", layout, error)
+                    });
 
             assert_eq!(
                 fixture.channels, *expected_input_channels,
@@ -2719,6 +3006,7 @@ mod tests {
             request.audio.channels = None;
             request.audio.sample_rate = None;
             request.audio.additional_args = Vec::new();
+            request.audio.track_overrides = Vec::new();
 
             match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
                 Ok(result_path) => {
@@ -2750,6 +3038,7 @@ mod tests {
             request.audio.channels = None;
             request.audio.sample_rate = None;
             request.audio.additional_args = Vec::new();
+            request.audio.track_overrides = Vec::new();
 
             match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
                 Ok(result_path) => {

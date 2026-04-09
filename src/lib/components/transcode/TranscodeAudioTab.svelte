@@ -1,16 +1,17 @@
 <script lang="ts">
-  import type { Track, TranscodeAudioEncoderCapability, TranscodeFile, TranscodeAudioMode } from '$lib/types';
-  import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
-  import { Switch } from '$lib/components/ui/switch';
-  import * as Select from '$lib/components/ui/select';
+  import { Settings2 } from '@lucide/svelte';
+
+  import type { Track, TranscodeAudioEncoderCapability, TranscodeAudioMode, TranscodeFile } from '$lib/types';
+  import { Button } from '$lib/components/ui/button';
 
   import TranscodeAdditionalOverrides from './TranscodeAdditionalOverrides.svelte';
+  import TranscodeAudioSettingsForm from './TranscodeAudioSettingsForm.svelte';
+  import TranscodeAudioTrackOverridesDialog from './TranscodeAudioTrackOverridesDialog.svelte';
   import type { TranscodeProfileUpdater } from './types';
-  import { formatChannels } from '$lib/utils/format';
 
   interface Props {
     file: TranscodeFile;
+    audioTracks: Track[];
     selectedAudioTrack: Track | null;
     selectedAudioEncoder: TranscodeAudioEncoderCapability | null;
     availableAudioEncoders: TranscodeAudioEncoderCapability[];
@@ -21,6 +22,7 @@
 
   let {
     file,
+    audioTracks,
     selectedAudioTrack,
     selectedAudioEncoder,
     availableAudioEncoders,
@@ -29,18 +31,16 @@
     createId,
   }: Props = $props();
 
-  function parseOptionalInt(value: string): number | undefined {
-    if (!value.trim()) return undefined;
-    const parsed = parseInt(value, 10);
-    return Number.isFinite(parsed) ? parsed : undefined;
-  }
+  let trackOverridesDialogOpen = $state(false);
 
-  function formatSampleRate(value?: number): string {
-    if (!value) return 'N/A';
-    return `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)} kHz`;
-  }
-
-  const isBitrateDisabled = $derived(!selectedAudioEncoder?.supportsBitrate || selectedAudioEncoder?.codec === 'flac');
+  const hasMultipleAudioTracks = $derived(audioTracks.length > 1);
+  const customOverrideCount = $derived(file.profile.audio.trackOverrides.length);
+  const audioTrackCountLabel = $derived(`${audioTracks.length} audio track${audioTracks.length === 1 ? '' : 's'} detected`);
+  const customOverrideLabel = $derived(
+    customOverrideCount === 0
+      ? 'All tracks currently inherit the global audio settings.'
+      : `${customOverrideCount} custom override${customOverrideCount === 1 ? '' : 's'} configured.`,
+  );
 </script>
 
 {#if !file.hasAudio}
@@ -48,166 +48,78 @@
     No audio stream was detected in this file.
   </div>
 {:else}
-  <div class="grid gap-4 lg:grid-cols-2">
-    <div class="space-y-4">
-      <div class="space-y-2">
-        <Label>Audio mode</Label>
-        <Select.Root
-          type="single"
-          value={file.profile.audio.mode}
-          onValueChange={(value) => {
-            updateProfile((profile) => {
-              profile.audio.mode = value as TranscodeAudioMode;
-            });
-          }}
-        >
-          <Select.Trigger class="w-full">{file.profile.audio.mode}</Select.Trigger>
-          <Select.Content>
-            <Select.Item value="copy">copy</Select.Item>
-            <Select.Item value="transcode">transcode</Select.Item>
-            <Select.Item value="disable">disable</Select.Item>
-          </Select.Content>
-        </Select.Root>
-      </div>
+  <div class="space-y-4">
+    {#if hasMultipleAudioTracks}
+      <div class="rounded-lg border bg-muted/20 p-3">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div class="min-w-0 space-y-1.5">
+            <div class="flex items-start gap-2.5">
+              <div class="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                <Settings2 class="size-4" />
+              </div>
 
-      {#if file.profile.audio.mode === 'transcode'}
-        <div class="space-y-2">
-          <Label>Audio encoder</Label>
-          <Select.Root
-            type="single"
-            value={file.profile.audio.encoderId}
-            onValueChange={(value) => {
-              updateProfile((profile) => {
-                profile.audio.encoderId = value;
-              });
-            }}
+              <div class="min-w-0">
+                <p class="text-sm font-medium">Per-track audio overrides</p>
+                <p class="text-sm text-muted-foreground">
+                  Adjust individual tracks without changing the global audio settings below.
+                </p>
+              </div>
+            </div>
+
+            <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <p>{audioTrackCountLabel}</p>
+              <p>{customOverrideLabel}</p>
+            </div>
+          </div>
+
+          <Button
+            variant="outline"
+            size="sm"
+            class="w-full shrink-0 sm:w-auto"
+            onclick={() => trackOverridesDialogOpen = true}
           >
-            <Select.Trigger class="w-full">{selectedAudioEncoder?.label ?? 'Select encoder'}</Select.Trigger>
-            <Select.Content>
-              {#each availableAudioEncoders as encoder (encoder.id)}
-                <Select.Item value={encoder.id}>{encoder.label}</Select.Item>
-              {/each}
-            </Select.Content>
-          </Select.Root>
+            <Settings2 class="mr-2 size-4" />
+            Open 
+          </Button>
         </div>
-      {:else}
-        <div class="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-          {file.profile.audio.mode === 'copy'
-            ? 'Audio streams will be copied without re-encoding.'
-            : 'Audio streams are disabled for this output.'}
-        </div>
-      {/if}
-    </div>
-
-    <div class="space-y-4">
-      {#if file.profile.audio.mode === 'transcode'}
-        <div class="space-y-2">
-          <Label>Bitrate (kbps)</Label>
-          <Input
-            type="number"
-            value={file.profile.audio.bitrateKbps?.toString() ?? ''}
-            oninput={(event) => {
-              const value = parseOptionalInt(event.currentTarget.value);
-              updateProfile((profile) => {
-                profile.audio.bitrateKbps = value;
-              });
-            }}
-            disabled={isBitrateDisabled}
-          />
-        </div>
-
-        <div class="grid gap-4 xl:grid-cols-2">
-          {#if selectedAudioEncoder?.supportsChannels}
-            <div class="space-y-2">
-              <div class="rounded-md border bg-muted/20 p-3 space-y-3 min-w-0">
-                <div class="space-y-1 min-w-0">
-                  <Label>Channels</Label>
-                  <p class="text-xs text-muted-foreground break-words">
-                    Default: As source ({formatChannels(selectedAudioTrack?.channels)})
-                  </p>
-                </div>
-                <div class="flex items-center justify-between gap-3">
-                  <span class="text-xs text-muted-foreground">Override</span>
-                  <Switch
-                    checked={file.profile.audio.channels !== undefined}
-                    onCheckedChange={(checked) => {
-                      updateProfile((profile) => {
-                        profile.audio.channels = checked
-                          ? (profile.audio.channels ?? selectedAudioTrack?.channels ?? 2)
-                          : undefined;
-                      });
-                    }}
-                  />
-                </div>
-              </div>
-
-              {#if file.profile.audio.channels !== undefined}
-                <Input
-                  type="number"
-                  value={file.profile.audio.channels?.toString() ?? ''}
-                  oninput={(event) => {
-                    const value = parseOptionalInt(event.currentTarget.value);
-                    updateProfile((profile) => {
-                      profile.audio.channels = value;
-                    });
-                  }}
-                />
-              {/if}
-            </div>
-          {/if}
-
-          {#if selectedAudioEncoder?.supportsSampleRate}
-            <div class="space-y-2">
-              <div class="rounded-md border bg-muted/20 p-3 space-y-3 min-w-0">
-                <div class="space-y-1 min-w-0">
-                  <Label>Sample rate</Label>
-                  <p class="text-xs text-muted-foreground break-words">
-                    Default: As source ({formatSampleRate(selectedAudioTrack?.sampleRate)})
-                  </p>
-                </div>
-                <div class="flex items-center justify-between gap-3">
-                  <span class="text-xs text-muted-foreground">Override</span>
-                  <Switch
-                    checked={file.profile.audio.sampleRate !== undefined}
-                    onCheckedChange={(checked) => {
-                      updateProfile((profile) => {
-                        profile.audio.sampleRate = checked
-                          ? (profile.audio.sampleRate ?? selectedAudioTrack?.sampleRate ?? 48000)
-                          : undefined;
-                      });
-                    }}
-                  />
-                </div>
-              </div>
-
-              {#if file.profile.audio.sampleRate !== undefined}
-                <Input
-                  type="number"
-                  value={file.profile.audio.sampleRate?.toString() ?? ''}
-                  oninput={(event) => {
-                    const value = parseOptionalInt(event.currentTarget.value);
-                    updateProfile((profile) => {
-                      profile.audio.sampleRate = value;
-                    });
-                  }}
-                />
-              {/if}
-            </div>
-          {/if}
-        </div>
-      {:else}
-        <div class="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-          Encoder bitrate and stream overrides are not used while audio mode is {file.profile.audio.mode}.
-        </div>
-      {/if}
-
-      <div class="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
-        <p><span class="font-medium">Source codec:</span> {selectedAudioTrack?.codec.toUpperCase() ?? 'N/A'}</p>
-        <p><span class="font-medium">Channels:</span> {formatChannels(selectedAudioTrack?.channels)}</p>
-        <p><span class="font-medium">Sample rate:</span> {formatSampleRate(selectedAudioTrack?.sampleRate)}</p>
-        <p><span class="font-medium">Layout:</span> {selectedAudioTrack?.channelLayout ?? 'N/A'}</p>
       </div>
-    </div>
+    {/if}
+
+    <TranscodeAudioSettingsForm
+      settings={file.profile.audio}
+      sourceTrack={selectedAudioTrack}
+      showSourceTrackDetails={!hasMultipleAudioTracks}
+      selectedEncoder={selectedAudioEncoder}
+      availableAudioEncoders={availableAudioEncoders}
+      copyMessage="Audio streams will be copied without re-encoding."
+      disableMessage="Audio streams are disabled for this output."
+      inactiveMessage={`Encoder bitrate and stream overrides are not used while audio mode is ${file.profile.audio.mode}.`}
+      onModeChange={(mode) => {
+        updateProfile((profile) => {
+          profile.audio.mode = mode as TranscodeAudioMode;
+        });
+      }}
+      onEncoderChange={(encoderId) => {
+        updateProfile((profile) => {
+          profile.audio.encoderId = encoderId;
+        });
+      }}
+      onBitrateChange={(value) => {
+        updateProfile((profile) => {
+          profile.audio.bitrateKbps = value;
+        });
+      }}
+      onChannelsChange={(value) => {
+        updateProfile((profile) => {
+          profile.audio.channels = value;
+        });
+      }}
+      onSampleRateChange={(value) => {
+        updateProfile((profile) => {
+          profile.audio.sampleRate = value;
+        });
+      }}
+    />
   </div>
 {/if}
 
@@ -223,3 +135,13 @@
     updateProfile={updateProfile}
   />
 {/if}
+
+<TranscodeAudioTrackOverridesDialog
+  bind:open={trackOverridesDialogOpen}
+  file={file}
+  audioTracks={audioTracks}
+  availableAudioEncoders={availableAudioEncoders}
+  commonOverrideFlags={commonOverrideFlags}
+  createId={createId}
+  updateProfile={updateProfile}
+/>

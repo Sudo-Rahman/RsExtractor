@@ -9,6 +9,7 @@ import {
   createTranscodeId,
   normalizeProfileForContainerChange,
   normalizeProfileForProfileChange,
+  stripAudioTrackOverrides,
 } from '$lib/services/transcode';
 import type {
   FileRunState,
@@ -82,7 +83,7 @@ function clonePresetData<TData extends TranscodeVideoSettings | TranscodeAudioSe
     case 'video':
       return cloneVideoSettings(data as TranscodeVideoSettings) as TData;
     case 'audio':
-      return cloneAudioSettings(data as TranscodeAudioSettings) as TData;
+      return stripAudioTrackOverrides(data as TranscodeAudioSettings) as TData;
     case 'subtitles':
       return cloneSubtitleSettings(data as TranscodeSubtitleSettings) as TData;
   }
@@ -362,7 +363,10 @@ export const transcodeStore = {
   applyProfileToAll(profile: TranscodeProfile) {
     files = files.map((file) => ({
       ...file,
-      profile: normalizeProfileChange(file, cloneTranscodeProfile(profile)),
+      profile: normalizeProfileChange(file, {
+        ...cloneTranscodeProfile(profile),
+        audio: stripAudioTrackOverrides(profile.audio),
+      }),
     }));
   },
 
@@ -612,7 +616,10 @@ export const transcodeStore = {
         nextProfile.video = cloneVideoSettings(preset.data as TranscodeVideoSettings);
         break;
       case 'audio':
-        nextProfile.audio = cloneAudioSettings(preset.data as TranscodeAudioSettings);
+        nextProfile.audio = {
+          ...cloneAudioSettings(preset.data as TranscodeAudioSettings),
+          trackOverrides: cloneAudioSettings(file.profile.audio).trackOverrides,
+        };
         break;
       case 'subtitles':
         nextProfile.subtitles = cloneSubtitleSettings(preset.data as TranscodeSubtitleSettings);

@@ -5,6 +5,7 @@ import type {
   Track,
   TranscodeAudioEncoderCapability,
   TranscodeAudioSettings,
+  TranscodeAudioTrackOverride,
   TranscodeCapabilities,
   TranscodeContainerCapability,
   TranscodeFile,
@@ -166,10 +167,26 @@ export function cloneVideoSettings(settings: TranscodeVideoSettings): TranscodeV
   };
 }
 
+export function cloneAudioTrackOverride(
+  settings: TranscodeAudioTrackOverride,
+): TranscodeAudioTrackOverride {
+  return {
+    ...settings,
+    additionalArgs: cloneAdditionalArgs(settings.additionalArgs ?? []),
+  };
+}
+
+export function cloneAudioTrackOverrides(
+  trackOverrides: TranscodeAudioTrackOverride[],
+): TranscodeAudioTrackOverride[] {
+  return trackOverrides.map((trackOverride) => cloneAudioTrackOverride(trackOverride));
+}
+
 export function cloneAudioSettings(settings: TranscodeAudioSettings): TranscodeAudioSettings {
   return {
     ...settings,
     additionalArgs: cloneAdditionalArgs(settings.additionalArgs),
+    trackOverrides: cloneAudioTrackOverrides(settings.trackOverrides ?? []),
   };
 }
 
@@ -248,6 +265,43 @@ export function getPrimaryVideoTrack(file: Pick<TranscodeFile, 'tracks'>): Track
 
 export function getPrimaryAudioTrack(file: Pick<TranscodeFile, 'tracks'>): Track | undefined {
   return getTracksByType(file, 'audio')[0];
+}
+
+export function getAudioTrackOverride(
+  settings: Pick<TranscodeAudioSettings, 'trackOverrides'>,
+  trackId: number,
+): TranscodeAudioTrackOverride | undefined {
+  return settings.trackOverrides.find((trackOverride) => trackOverride.trackId === trackId);
+}
+
+export function hasCustomAudioTrackOverride(
+  settings: Pick<TranscodeAudioSettings, 'trackOverrides'>,
+  trackId: number,
+): boolean {
+  return Boolean(getAudioTrackOverride(settings, trackId));
+}
+
+export function getEffectiveAudioSettingsForTrack(
+  settings: Pick<TranscodeAudioSettings, 'mode' | 'encoderId' | 'bitrateKbps' | 'channels' | 'sampleRate' | 'trackOverrides'>,
+  trackId: number,
+): TranscodeAudioTrackOverride {
+  const trackOverride = getAudioTrackOverride(settings, trackId);
+
+  return {
+    trackId,
+    mode: trackOverride?.mode ?? settings.mode,
+    encoderId: trackOverride?.encoderId ?? settings.encoderId,
+    bitrateKbps: trackOverride?.bitrateKbps ?? settings.bitrateKbps,
+    channels: trackOverride?.channels ?? settings.channels,
+    sampleRate: trackOverride?.sampleRate ?? settings.sampleRate,
+    additionalArgs: cloneAdditionalArgs(trackOverride?.additionalArgs ?? []),
+  };
+}
+
+export function stripAudioTrackOverrides(settings: TranscodeAudioSettings): TranscodeAudioSettings {
+  const next = cloneAudioSettings(settings);
+  next.trackOverrides = [];
+  return next;
 }
 
 export function getContainerExtension(
@@ -486,17 +540,15 @@ function containerSupportsTranscodeProfile(
   }
 
   if (file.hasAudio && profile.audio.mode === 'transcode') {
-    if (!profile.audio.encoderId) {
-      return container.supportedAudioEncoderIds.length > 0;
-    }
-
-    if (!container.supportedAudioEncoderIds.includes(profile.audio.encoderId)) {
+    if (!containerSupportsAudioProfile(container, profile, file)) {
       return false;
     }
   }
 
-  if (file.hasAudio && profile.audio.mode === 'copy' && !canCopyAudioTracksToContainer(file, container.id)) {
-    return false;
+  if (file.hasAudio && (profile.audio.mode === 'copy' || profile.audio.trackOverrides.length > 0)) {
+    if (!containerSupportsAudioProfile(container, profile, file)) {
+      return false;
+    }
   }
 
   if (getTracksByType(file, 'subtitle').length > 0 && profile.subtitles.mode === 'convert_text') {
@@ -581,6 +633,7 @@ export function buildDefaultAudioSettings(
     channels: undefined,
     sampleRate: undefined,
     additionalArgs: [],
+    trackOverrides: [],
   };
 }
 
@@ -719,6 +772,147 @@ function pickContainerForFile(
   )?.id ?? (hasVideo ? 'mp4' : 'mp3');
 }
 
+function normalizeOptionalPositiveInt(value?: number): number | undefined {
+  return value && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function normalizeAudioSettingsForTrack(
+  settings: Pick<TranscodeAudioTrackOverride, 'mode' | 'encoderId' | 'bitrateKbps' | 'channels' | 'sampleRate'>,
+  capabilities: TranscodeCapabilities | null,
+  container: TranscodeContainerCapability | undefined,
+  track: Track,
+): Pick<TranscodeAudioTrackOverride, 'mode' | 'encoderId' | 'bitrateKbps' | 'channels' | 'sampleRate'> {
+  const next = {
+    ...settings,
+    bitrateKbps: normalizeOptionalPositiveInt(settings.bitrateKbps),
+    channels: normalizeOptionalPositiveInt(settings.channels),
+    sampleRate: normalizeOptionalPositiveInt(settings.sampleRate),
+  };
+
+  if (next.mode === 'copy') {
+    if (container && !canContainerCopyAudioCodec(container.id, track.codec)) {
+      const fallbackEncoderId = container.defaultAudioEncoderId ?? container.supportedAudioEncoderIds[0];
+      if (!fallbackEncoderId) {
+        return {
+          mode: 'disable',
+          encoderId: undefined,
+          bitrateKbps: undefined,
+          channels: undefined,
+          sampleRate: undefined,
+        };
+      }
+
+      next.mode = 'transcode';
+      next.encoderId = fallbackEncoderId;
+    } else {
+      return {
+        mode: 'copy',
+        encoderId: undefined,
+        bitrateKbps: undefined,
+        channels: undefined,
+        sampleRate: undefined,
+      };
+    }
+  }
+
+  if (next.mode === 'disable') {
+    return {
+      mode: 'disable',
+      encoderId: undefined,
+      bitrateKbps: undefined,
+      channels: undefined,
+      sampleRate: undefined,
+    };
+  }
+
+  const supportedEncoderId = next.encoderId && container?.supportedAudioEncoderIds.includes(next.encoderId)
+    ? next.encoderId
+    : container?.defaultAudioEncoderId ?? container?.supportedAudioEncoderIds[0];
+
+  if (!supportedEncoderId) {
+    return {
+      mode: 'disable',
+      encoderId: undefined,
+      bitrateKbps: undefined,
+      channels: undefined,
+      sampleRate: undefined,
+    };
+  }
+
+  const encoder = getAudioEncoderCapability(capabilities, supportedEncoderId);
+
+  return {
+    mode: 'transcode',
+    encoderId: supportedEncoderId,
+    bitrateKbps: encoder?.supportsBitrate === false || encoder?.codec === 'flac' ? undefined : next.bitrateKbps,
+    channels: encoder?.supportsChannels === false ? undefined : next.channels,
+    sampleRate: encoder?.supportsSampleRate === false ? undefined : next.sampleRate,
+  };
+}
+
+function normalizeAudioTrackOverrides(
+  settings: Pick<TranscodeAudioSettings, 'mode' | 'encoderId' | 'bitrateKbps' | 'channels' | 'sampleRate' | 'trackOverrides'>,
+  capabilities: TranscodeCapabilities | null,
+  container: TranscodeContainerCapability | undefined,
+  file: Pick<TranscodeFile, 'tracks'>,
+): TranscodeAudioTrackOverride[] {
+  const audioTracks = getTracksByType(file, 'audio');
+
+  return settings.trackOverrides
+    .filter((trackOverride) => audioTracks.some((track) => track.id === trackOverride.trackId))
+    .map((trackOverride) => {
+      const track = audioTracks.find((item) => item.id === trackOverride.trackId);
+      if (!track) {
+        return trackOverride;
+      }
+
+      const normalized = normalizeAudioSettingsForTrack(
+        getEffectiveAudioSettingsForTrack(settings, trackOverride.trackId),
+        capabilities,
+        container,
+        track,
+      );
+      return {
+        trackId: trackOverride.trackId,
+        ...normalized,
+        additionalArgs: cloneAdditionalArgs(trackOverride.additionalArgs ?? []),
+      };
+    });
+}
+
+function containerSupportsAudioProfile(
+  container: TranscodeContainerCapability,
+  profile: Pick<TranscodeProfile, 'audio'>,
+  file: Pick<TranscodeFile, 'tracks'>,
+): boolean {
+  const audioTracks = getTracksByType(file, 'audio');
+
+  return audioTracks.every((track) => {
+    const effectiveSettings = getEffectiveAudioSettingsForTrack(profile.audio, track.id);
+
+    if (effectiveSettings.mode === 'disable') {
+      return true;
+    }
+
+    if (effectiveSettings.mode === 'copy') {
+      return canContainerCopyAudioCodec(container.id, track.codec);
+    }
+
+    if (!effectiveSettings.encoderId) {
+      return container.supportedAudioEncoderIds.length > 0;
+    }
+
+    return container.supportedAudioEncoderIds.includes(effectiveSettings.encoderId);
+  });
+}
+
+function hasEnabledAudioOutput(
+  profile: Pick<TranscodeProfile, 'audio'>,
+  file: Pick<TranscodeFile, 'tracks'>,
+): boolean {
+  return getTracksByType(file, 'audio').some((track) => getEffectiveAudioSettingsForTrack(profile.audio, track.id).mode !== 'disable');
+}
+
 export function clampTranscodeProfile(
   profile: TranscodeProfile,
   capabilities: TranscodeCapabilities | null,
@@ -770,8 +964,26 @@ export function clampTranscodeProfile(
       const supportedEncoderId = next.audio.encoderId && container?.supportedAudioEncoderIds.includes(next.audio.encoderId)
         ? next.audio.encoderId
         : container?.defaultAudioEncoderId ?? container?.supportedAudioEncoderIds[0];
+      const encoder = getAudioEncoderCapability(capabilities, supportedEncoderId);
       next.audio.encoderId = supportedEncoderId;
+      next.audio.bitrateKbps = normalizeOptionalPositiveInt(next.audio.bitrateKbps);
+      next.audio.channels = normalizeOptionalPositiveInt(next.audio.channels);
+      next.audio.sampleRate = normalizeOptionalPositiveInt(next.audio.sampleRate);
+
+      if (encoder?.supportsBitrate === false || encoder?.codec === 'flac') {
+        next.audio.bitrateKbps = undefined;
+      }
+
+      if (encoder?.supportsChannels === false) {
+        next.audio.channels = undefined;
+      }
+
+      if (encoder?.supportsSampleRate === false) {
+        next.audio.sampleRate = undefined;
+      }
     }
+
+    next.audio.trackOverrides = normalizeAudioTrackOverrides(next.audio, capabilities, container, file);
   }
 
   if (!hasSubtitleTracks || container?.kind !== 'video') {
@@ -918,8 +1130,29 @@ export function getTranscodeCompatibilityIssues(
     issues.push(`No compatible audio encoder is available for container ${container.label} on this machine.`);
   }
 
-  if (file.hasAudio && file.profile.audio.mode === 'copy' && !canCopyAudioTracksToContainer(file, container.id)) {
-    issues.push(`Container ${container.label} cannot copy one or more audio tracks from this file.`);
+  if (file.hasAudio) {
+    for (const track of getTracksByType(file, 'audio')) {
+      const effectiveSettings = getEffectiveAudioSettingsForTrack(file.profile.audio, track.id);
+      const trackLabel = track.title?.trim()
+        ? track.title
+        : `audio track ${getTracksByType(file, 'audio').findIndex((item) => item.id === track.id) + 1}`;
+
+      if (effectiveSettings.mode === 'copy' && !canContainerCopyAudioCodec(container.id, track.codec)) {
+        issues.push(`Container ${container.label} cannot copy ${trackLabel} (${track.codec.toUpperCase()}).`);
+        break;
+      }
+
+      if (effectiveSettings.mode === 'transcode' && effectiveSettings.encoderId
+        && !container.supportedAudioEncoderIds.includes(effectiveSettings.encoderId)) {
+        issues.push(`Container ${container.label} does not support the selected encoder for ${trackLabel}.`);
+        break;
+      }
+
+      if (effectiveSettings.mode === 'transcode' && !effectiveSettings.encoderId) {
+        issues.push(`No compatible audio encoder is available for ${trackLabel} in container ${container.label}.`);
+        break;
+      }
+    }
   }
 
   if (getTracksByType(file, 'subtitle').length > 0) {
@@ -939,6 +1172,14 @@ export function getTranscodeCompatibilityIssues(
         issues.push(`Container ${container.label} cannot keep one or more non-text subtitle tracks for this file.`);
       }
     }
+  }
+
+  const hasEnabledVideo = file.hasVideo && file.profile.video.mode !== 'disable';
+  const hasEnabledAudio = file.hasAudio && hasEnabledAudioOutput(file.profile, file);
+  const hasEnabledSubtitles = getTracksByType(file, 'subtitle').length > 0 && file.profile.subtitles.mode !== 'disable';
+
+  if (!hasEnabledVideo && !hasEnabledAudio && !hasEnabledSubtitles) {
+    issues.push('At least one stream must remain enabled for output.');
   }
 
   return issues;
