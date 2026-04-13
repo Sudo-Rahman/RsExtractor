@@ -39,6 +39,17 @@ function parseDerivedBitDepth(stream: FFprobeStream): number | undefined {
   return undefined;
 }
 
+function firstNonEmptyTagValue(...values: Array<string | undefined>): string | undefined {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+
+  return undefined;
+}
+
 /**
  * Parse FFprobe output and convert to our Track format
  */
@@ -59,7 +70,7 @@ function parseStream(stream: FFprobeStream): Track | null {
     profile: stream.profile,
     level: stream.level,
     language: stream.tags?.language,
-    title: stream.tags?.title,
+    title: firstNonEmptyTagValue(stream.tags?.title, stream.tags?.name),
     bitrate: stream.bit_rate ? parseInt(stream.bit_rate) : 
              stream.tags?.BPS ? parseInt(stream.tags.BPS) :
              stream.tags?.["BPS-eng"] ? parseInt(stream.tags["BPS-eng"]) : undefined,

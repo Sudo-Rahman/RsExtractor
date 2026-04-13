@@ -2,6 +2,7 @@ pub(crate) mod data;
 pub(crate) mod ffmpeg;
 pub(crate) mod ffprobe;
 pub(crate) mod fs;
+pub(crate) mod media_metadata;
 pub(crate) mod merge;
 pub(crate) mod ocr;
 pub(crate) mod power;

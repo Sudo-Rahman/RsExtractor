@@ -3,6 +3,9 @@ use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::store::{resolve_ffmpeg_path, resolve_ffprobe_path};
 use crate::shared::validation::{validate_media_path, validate_output_path};
 use crate::tools::ffprobe::FFPROBE_TIMEOUT;
+use crate::tools::media_metadata::{
+    OutputStreamMetadata, apply_metadata_args, output_stream_metadata_from_config,
+};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -44,12 +47,13 @@ fn enabled_source_indices(
 struct SourceTrackSelection<'a> {
     input_idx: usize,
     original_index: usize,
+    source_stream: Option<&'a Value>,
     config: Option<&'a Value>,
 }
 
 fn build_source_track_selections<'a>(
     source_track_configs: Option<&'a [Value]>,
-    original_stream_count: usize,
+    source_streams: &'a [Value],
     args: &mut Vec<String>,
     video_path: &str,
 ) -> (Vec<SourceTrackSelection<'a>>, usize) {
@@ -102,14 +106,25 @@ fn build_source_track_selections<'a>(
             selections.push(SourceTrackSelection {
                 input_idx,
                 original_index,
+                source_stream: source_streams.iter().find(|stream| {
+                    stream
+                        .get("index")
+                        .and_then(|value| value.as_u64())
+                        .is_some_and(|index| index as usize == original_index)
+                }),
                 config: source_config.get("config"),
             });
         }
     } else {
-        for original_index in 0..original_stream_count {
+        for (stream_position, source_stream) in source_streams.iter().enumerate() {
+            let original_index = source_stream
+                .get("index")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(stream_position as u64) as usize;
             selections.push(SourceTrackSelection {
                 input_idx: 0,
                 original_index,
+                source_stream: Some(source_stream),
                 config: None,
             });
         }
@@ -122,17 +137,14 @@ fn build_merge_args(
     video_path: &str,
     tracks: &[Value],
     source_track_configs: Option<&[Value]>,
-    original_stream_count: usize,
+    source_streams: &[Value],
     output_path: &str,
 ) -> Vec<String> {
     let mut args = vec!["-y".to_string(), "-i".to_string(), video_path.to_string()];
-    let (source_track_selections, mut next_input_idx) = build_source_track_selections(
-        source_track_configs,
-        original_stream_count,
-        &mut args,
-        video_path,
-    );
+    let (source_track_selections, mut next_input_idx) =
+        build_source_track_selections(source_track_configs, source_streams, &mut args, video_path);
     let mut attached_track_inputs: Vec<(usize, &Value)> = Vec::new();
+    let mut output_metadata = Vec::<OutputStreamMetadata>::new();
 
     for track in tracks {
         if let Some(input_path) = track.get("inputPath").and_then(|v| v.as_str()) {
@@ -161,6 +173,11 @@ fn build_merge_args(
             "{}:{}",
             source_track.input_idx, source_track.original_index
         ));
+        output_metadata.push(output_stream_metadata_from_config(
+            output_metadata.len(),
+            source_track.source_stream,
+            source_track.config,
+        ));
     }
 
     for (input_idx, _) in &attached_track_inputs {
@@ -175,87 +192,18 @@ fn build_merge_args(
     args.push("-c:s".to_string());
     args.push("copy".to_string());
 
-    for (output_stream_idx, source_track) in source_track_selections.iter().enumerate() {
-        if let Some(cfg) = source_track.config {
-            if let Some(lang) = cfg.get("language").and_then(|v| v.as_str()) {
-                if !lang.is_empty() {
-                    args.push(format!("-metadata:s:{}", output_stream_idx));
-                    args.push(format!("language={}", lang));
-                }
-            }
-
-            if let Some(title) = cfg.get("title").and_then(|v| v.as_str()) {
-                args.push(format!("-metadata:s:{}", output_stream_idx));
-                args.push(format!("title={}", title));
-            }
-
-            let is_default = cfg
-                .get("default")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let is_forced = cfg.get("forced").and_then(|v| v.as_bool()).unwrap_or(false);
-
-            if is_default || is_forced {
-                let mut disposition = Vec::new();
-                if is_default {
-                    disposition.push("default");
-                }
-                if is_forced {
-                    disposition.push("forced");
-                }
-                args.push(format!("-disposition:{}", output_stream_idx));
-                args.push(disposition.join("+"));
-            } else {
-                args.push(format!("-disposition:{}", output_stream_idx));
-                args.push("0".to_string());
-            }
-        }
-    }
-
     let attached_start_idx = source_track_selections.len();
     for (i, (_, track)) in attached_track_inputs.iter().enumerate() {
         let output_stream_idx = attached_start_idx + i;
 
-        if let Some(config) = track.get("config") {
-            if let Some(lang) = config.get("language").and_then(|v| v.as_str()) {
-                if !lang.is_empty() && lang != "und" {
-                    args.push(format!("-metadata:s:{}", output_stream_idx));
-                    args.push(format!("language={}", lang));
-                }
-            }
-
-            if let Some(title) = config.get("title").and_then(|v| v.as_str()) {
-                if !title.is_empty() {
-                    args.push(format!("-metadata:s:{}", output_stream_idx));
-                    args.push(format!("title={}", title));
-                }
-            }
-
-            let is_default = config
-                .get("default")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let is_forced = config
-                .get("forced")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-
-            if is_default || is_forced {
-                let mut disposition = Vec::new();
-                if is_default {
-                    disposition.push("default");
-                }
-                if is_forced {
-                    disposition.push("forced");
-                }
-                args.push(format!("-disposition:{}", output_stream_idx));
-                args.push(disposition.join("+"));
-            } else {
-                args.push(format!("-disposition:{}", output_stream_idx));
-                args.push("0".to_string());
-            }
-        }
+        output_metadata.push(output_stream_metadata_from_config(
+            output_stream_idx,
+            None,
+            track.get("config"),
+        ));
     }
+
+    apply_metadata_args(&mut args, "mkv", None, &output_metadata);
 
     args.push("-progress".to_string());
     args.push("pipe:1".to_string());
@@ -334,13 +282,11 @@ pub(super) async fn merge_tracks_with_bins(
         .and_then(|s| s.as_array())
         .cloned()
         .unwrap_or_default();
-    let original_stream_count = streams.len();
-
     let args = build_merge_args(
         video_path,
         tracks,
         source_track_configs,
-        original_stream_count,
+        &streams,
         output_path,
     );
 
@@ -435,13 +381,11 @@ pub(crate) async fn merge_tracks(
         .cloned()
         .unwrap_or_default();
 
-    let original_stream_count = streams.len();
-
     let args = build_merge_args(
         &video_path,
         &tracks,
         source_track_configs.as_deref(),
-        original_stream_count,
+        &streams,
         &output_path,
     );
 
@@ -562,6 +506,23 @@ mod tests {
             .count()
     }
 
+    fn mock_streams(count: usize) -> Vec<Value> {
+        (0..count)
+            .map(|index| {
+                json!({
+                    "index": index,
+                    "tags": {
+                        "language": "und"
+                    },
+                    "disposition": {
+                        "default": 0,
+                        "forced": 0
+                    }
+                })
+            })
+            .collect()
+    }
+
     fn stream_start_time(stream: &Value) -> f64 {
         stream
             .get("start_time")
@@ -601,7 +562,14 @@ mod tests {
             }
         })];
 
-        let args = build_merge_args("/tmp/video.mkv", &tracks, None, 2, "/tmp/out.mkv");
+        let source_streams = mock_streams(2);
+        let args = build_merge_args(
+            "/tmp/video.mkv",
+            &tracks,
+            None,
+            &source_streams,
+            "/tmp/out.mkv",
+        );
 
         assert!(args.windows(2).any(|w| w == ["-itsoffset", "1.500"]));
         assert!(args.windows(2).any(|w| w == ["-map", "0:0"]));
@@ -618,7 +586,14 @@ mod tests {
             json!({"inputPath": "/tmp/sub2.srt", "config": {"language": "fra"}}),
         ];
 
-        let args = build_merge_args("/tmp/video.mkv", &tracks, None, 2, "/tmp/out.mkv");
+        let source_streams = mock_streams(2);
+        let args = build_merge_args(
+            "/tmp/video.mkv",
+            &tracks,
+            None,
+            &source_streams,
+            "/tmp/out.mkv",
+        );
 
         assert!(has_arg_pair(&args, "-map", "0:0"));
         assert!(has_arg_pair(&args, "-map", "0:1"));
@@ -637,7 +612,7 @@ mod tests {
             "/tmp/video.mkv",
             &[],
             Some(&source_configs),
-            2,
+            &mock_streams(2),
             "/tmp/out.mkv",
         );
 
@@ -658,7 +633,7 @@ mod tests {
             "/tmp/video.mkv",
             &[],
             Some(&source_configs),
-            3,
+            &mock_streams(3),
             "/tmp/out.mkv",
         );
 
@@ -683,7 +658,7 @@ mod tests {
             "/tmp/video.mkv",
             &tracks,
             Some(&source_configs),
-            2,
+            &mock_streams(2),
             "/tmp/out.mkv",
         );
 
@@ -721,7 +696,7 @@ mod tests {
             "/tmp/video.mkv",
             &tracks,
             Some(&source_configs),
-            1,
+            &mock_streams(1),
             "/tmp/out.mkv",
         );
 

@@ -15,6 +15,10 @@ use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::store::{resolve_ffmpeg_path, resolve_ffprobe_path};
 use crate::shared::validation::{validate_media_path, validate_output_path};
 use crate::tools::ffprobe::{get_media_duration_us_with_ffprobe, probe::probe_file_with_ffprobe};
+use crate::tools::media_metadata::{
+    MediaMetadataRequest, OutputStreamMetadata, apply_metadata_args,
+    output_stream_metadata_from_request,
+};
 
 const TRANSCODE_TIMEOUT: Duration = Duration::from_secs(7200);
 
@@ -99,6 +103,8 @@ pub(crate) struct TranscodeRequest {
     pub(crate) video: TranscodeVideoSettings,
     pub(crate) audio: TranscodeAudioSettings,
     pub(crate) subtitles: TranscodeSubtitleSettings,
+    #[serde(default)]
+    pub(crate) metadata: MediaMetadataRequest,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +114,7 @@ struct StreamInfo {
     codec_name: String,
     channels: u64,
     channel_layout: Option<String>,
+    probe_stream: Value,
 }
 
 #[derive(Debug, Clone)]
@@ -306,6 +313,7 @@ fn extract_streams_by_type(streams: &[Value], codec_type: &str) -> Vec<StreamInf
                 .get("channel_layout")
                 .and_then(|value| value.as_str())
                 .map(|value| value.to_string()),
+            probe_stream: stream.clone(),
         })
         .collect()
 }
@@ -479,10 +487,16 @@ fn build_transcode_args(
     ];
 
     let mut mapped_any_stream = false;
+    let mut output_metadata = Vec::<OutputStreamMetadata>::new();
 
     if !video_streams.is_empty() && request.video.mode != "disable" {
         args.push("-map".to_string());
         args.push("0:v:0".to_string());
+        output_metadata.push(output_stream_metadata_from_request(
+            output_metadata.len(),
+            &video_streams[0].probe_stream,
+            &request.metadata,
+        ));
         mapped_any_stream = true;
     }
 
@@ -496,6 +510,11 @@ fn build_transcode_args(
 
             args.push("-map".to_string());
             args.push(format!("0:a:{}", audio_stream.relative_index));
+            output_metadata.push(output_stream_metadata_from_request(
+                output_metadata.len(),
+                &audio_stream.probe_stream,
+                &request.metadata,
+            ));
             mapped_any_stream = true;
             mapped_audio_streams.push((
                 mapped_audio_streams.len(),
@@ -510,6 +529,11 @@ fn build_transcode_args(
         for subtitle_stream in &subtitle_streams {
             args.push("-map".to_string());
             args.push(format!("0:s:{}", subtitle_stream.relative_index));
+            output_metadata.push(output_stream_metadata_from_request(
+                output_metadata.len(),
+                &subtitle_stream.probe_stream,
+                &request.metadata,
+            ));
             mapped_subtitle_output_indices.push(subtitle_stream.codec_name.clone());
             mapped_any_stream = true;
         }
@@ -736,6 +760,13 @@ fn build_transcode_args(
         }
     }
 
+    apply_metadata_args(
+        &mut args,
+        &request.container_id,
+        Some(&request.metadata),
+        &output_metadata,
+    );
+
     if let Some(duration_us) = duration_us {
         if duration_us > 0 {
             let duration_seconds = duration_us as f64 / 1_000_000.0;
@@ -954,6 +985,8 @@ mod tests {
         get_transcode_capabilities_with_ffmpeg_path,
     };
 
+    use crate::tools::media_metadata::{MediaMetadataRequest, TrackMetadataEdit};
+
     use super::{
         TranscodeAdditionalArg, TranscodeAudioSettings, TranscodeAudioTrackOverride,
         TranscodeRequest, TranscodeSubtitleSettings, TranscodeVideoSettings, build_transcode_args,
@@ -1004,6 +1037,7 @@ mod tests {
                 encoder_id: Some("mov_text".to_string()),
                 additional_args: Vec::new(),
             },
+            metadata: MediaMetadataRequest::default(),
         }
     }
 
@@ -2142,7 +2176,10 @@ mod tests {
             args.windows(2)
                 .any(|window| window == ["-application:a:1", "audio"])
         );
-        assert!(args.windows(2).any(|window| window == ["-cutoff:a:1", "18000"]));
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["-cutoff:a:1", "18000"])
+        );
         assert!(!args.iter().any(|arg| arg == "-application:a:0"));
         assert!(!args.iter().any(|arg| arg == "-cutoff:a:0"));
     }
@@ -2211,6 +2248,84 @@ mod tests {
             vec!["0:a:1".to_string(), "0:a:2".to_string()]
         );
         assert!(!args.windows(2).any(|window| window == ["-map", "0:a:0"]));
+    }
+
+    #[test]
+    fn build_transcode_args_applies_metadata_to_output_indices_after_disabled_tracks() {
+        let mut request = build_request("/tmp/output.mkv");
+        request.container_id = "mkv".to_string();
+        request.video.mode = "disable".to_string();
+        request.subtitles.mode = "disable".to_string();
+        request.audio.mode = "copy".to_string();
+        request.audio.encoder_id = None;
+        request.audio.bitrate_kbps = None;
+        request.audio.channels = None;
+        request.audio.sample_rate = None;
+        request.audio.track_overrides = vec![TranscodeAudioTrackOverride {
+            track_id: 3,
+            mode: "disable".to_string(),
+            encoder_id: None,
+            bitrate_kbps: None,
+            channels: None,
+            sample_rate: None,
+            additional_args: Vec::new(),
+        }];
+        request.metadata = MediaMetadataRequest {
+            container_title: None,
+            track_edits: vec![
+                TrackMetadataEdit {
+                    source_track_id: 5,
+                    title: Some("Second audio".to_string()),
+                    language: Some("eng".to_string()),
+                    default: Some(true),
+                    forced: Some(false),
+                },
+                TrackMetadataEdit {
+                    source_track_id: 7,
+                    title: Some("Third audio".to_string()),
+                    language: Some("jpn".to_string()),
+                    default: Some(false),
+                    forced: Some(true),
+                },
+            ],
+        };
+        let streams = vec![
+            json!({ "index": 3, "codec_type": "audio", "codec_name": "flac" }),
+            json!({ "index": 5, "codec_type": "audio", "codec_name": "ac3" }),
+            json!({ "index": 7, "codec_type": "audio", "codec_name": "mp3" }),
+        ];
+
+        let args = build_transcode_args(&request, &streams, None)
+            .expect("metadata args should build after disabling the first track");
+
+        assert!(args.windows(2).any(|window| window == ["-map", "0:a:1"]));
+        assert!(args.windows(2).any(|window| window == ["-map", "0:a:2"]));
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["-metadata:s:0", "title=Second audio"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["-metadata:s:0", "language=eng"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["-disposition:0", "default"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["-metadata:s:1", "title=Third audio"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["-metadata:s:1", "language=jpn"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["-disposition:1", "forced"])
+        );
+        assert!(!args.iter().any(|arg| arg == "-metadata:s:5"));
+        assert!(!args.iter().any(|arg| arg == "-metadata:s:7"));
     }
 
     #[test]

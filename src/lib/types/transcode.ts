@@ -3,7 +3,7 @@ import type { FFprobeOutput, Track } from './media';
 import type { LLMProvider } from './translation';
 
 export type TranscodeMode = 'ai' | 'advanced';
-export type TranscodeTab = 'video' | 'audio' | 'subtitles' | 'output';
+export type TranscodeTab = 'video' | 'audio' | 'subtitles' | 'metadata' | 'output';
 export type TranscodeAiIntent = 'speed' | 'quality' | 'archive';
 export type TranscodeAiStatus = 'idle' | 'analyzing' | 'completed' | 'error';
 export type TranscodeVideoMode = 'copy' | 'transcode' | 'disable';
@@ -12,6 +12,16 @@ export type TranscodeSubtitleMode = 'copy' | 'convert_text' | 'disable';
 export type TranscodeQualityMode = 'crf' | 'bitrate' | 'qp';
 export type TranscodeContainerKind = 'video' | 'audio';
 export type TranscodePresetTab = 'video' | 'audio' | 'subtitles';
+export type TranscodeOutputTrackMode = 'copy' | 'transcode' | 'convert_text';
+
+export interface TranscodeContainerMetadataSchema {
+  supportsContainerTitle: boolean;
+  supportsTrackTitle: boolean;
+  supportsLanguage: boolean;
+  supportsDefault: boolean;
+  supportsForced: boolean;
+  clearsMatroskaStatistics: boolean;
+}
 
 export interface TranscodeAdditionalArg {
   id: string;
@@ -67,6 +77,30 @@ export interface TranscodeProfile {
   subtitles: TranscodeSubtitleSettings;
 }
 
+export interface TranscodeTrackMetadataEdit {
+  sourceTrackId: number;
+  title?: string;
+  language?: string;
+  default?: boolean;
+  forced?: boolean;
+}
+
+export interface TranscodeMetadata {
+  containerTitle?: string;
+  trackEdits: TranscodeTrackMetadataEdit[];
+}
+
+export interface TranscodeOutputTrackPlan {
+  key: string;
+  outputIndex: number;
+  sourceTrackId: number;
+  type: Track['type'];
+  sourceTrack: Track;
+  mode: TranscodeOutputTrackMode;
+  codec: string;
+  metadata: TranscodeTrackMetadataEdit;
+}
+
 export interface TranscodeVideoEncoderCapability {
   id: string;
   codec: string;
@@ -111,6 +145,7 @@ export interface TranscodeContainerCapability {
   defaultVideoEncoderId?: string;
   defaultAudioEncoderId?: string;
   defaultSubtitleEncoderId?: string;
+  metadataSchema: TranscodeContainerMetadataSchema;
 }
 
 export interface TranscodeCapabilities {
@@ -164,6 +199,7 @@ export interface TranscodeFile {
   hasVideo: boolean;
   hasAudio: boolean;
   profile: TranscodeProfile;
+  metadata: TranscodeMetadata;
   analysisFrames: string[];
   aiStatus: TranscodeAiStatus;
   aiError?: string;
@@ -195,6 +231,7 @@ export interface TranscodeRequest {
   video: TranscodeVideoSettings;
   audio: TranscodeAudioSettings;
   subtitles: TranscodeSubtitleSettings;
+  metadata: TranscodeMetadata;
 }
 
 export interface TranscodePreset<TData = TranscodeVideoSettings | TranscodeAudioSettings | TranscodeSubtitleSettings> {

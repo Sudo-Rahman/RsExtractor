@@ -17,6 +17,7 @@
   import { scanFiles } from '$lib/services/ffprobe';
   import { analyzeTranscodeProfile } from '$lib/services/transcode-ai';
   import {
+    buildDefaultTranscodeMetadata,
     buildDefaultTranscodeProfile,
     clampTranscodeProfile,
     cloneTranscodeProfile,
@@ -57,6 +58,7 @@
     TranscodeEmptyState,
     TranscodeFileSidebar,
     TranscodeInfoDialog,
+    TranscodeMetadataTab,
     TranscodeOutputNamingView,
     TranscodeOutputTab,
     TranscodePresetDialog,
@@ -184,6 +186,12 @@
     const name = path.split('/').pop() || path.split('\\').pop() || path;
     const hasVideo = guessHasVideo(path);
     const hasAudio = true;
+    const profile = buildDefaultTranscodeProfile(transcodeStore.capabilities, {
+      path,
+      hasVideo,
+      hasAudio,
+      tracks: [],
+    });
 
     return {
       id: transcodeStore.generateId(),
@@ -201,12 +209,13 @@
       modifiedAt: undefined,
       hasVideo,
       hasAudio,
-      profile: buildDefaultTranscodeProfile(transcodeStore.capabilities, {
-        path,
+      profile,
+      metadata: buildDefaultTranscodeMetadata({
+        tracks: [],
         hasVideo,
         hasAudio,
-        tracks: [],
-      }),
+        profile,
+      }, transcodeStore.capabilities),
       analysisFrames: [],
       aiStatus: 'idle',
       aiError: undefined,
@@ -283,6 +292,24 @@
     }
 
     transcodeStore.setFileContainer(file.id, containerId);
+  }
+
+  function handleUpdateMetadata(metadata: TranscodeFile['metadata']): void {
+    const file = transcodeStore.selectedFile;
+    if (!file) {
+      return;
+    }
+
+    transcodeStore.setFileMetadata(file.id, metadata);
+  }
+
+  function handleResetMetadata(): void {
+    const file = transcodeStore.selectedFile;
+    if (!file) {
+      return;
+    }
+
+    transcodeStore.resetFileMetadata(file.id);
   }
 
   function getPresetTriggerLabel(tab: TranscodePresetTab): string {
@@ -661,14 +688,14 @@
           continue;
         }
 
-        const metadata = metadataByPath.get(scanned.path);
+        const fileMetadata = metadataByPath.get(scanned.path);
         if (scanned.status === 'error') {
           transcodeStore.updateFile(fileId, {
             status: 'error',
             error: scanned.error,
-            size: metadata?.size ?? scanned.size,
-            createdAt: metadata?.createdAt,
-            modifiedAt: metadata?.modifiedAt,
+            size: fileMetadata?.size ?? scanned.size,
+            createdAt: fileMetadata?.createdAt,
+            modifiedAt: fileMetadata?.modifiedAt,
           });
           continue;
         }
@@ -679,9 +706,9 @@
           transcodeStore.updateFile(fileId, {
             status: 'error',
             error: 'This tool supports video or audio-only media files.',
-            size: metadata?.size ?? scanned.size,
-            createdAt: metadata?.createdAt,
-            modifiedAt: metadata?.modifiedAt,
+            size: fileMetadata?.size ?? scanned.size,
+            createdAt: fileMetadata?.createdAt,
+            modifiedAt: fileMetadata?.modifiedAt,
           });
           continue;
         }
@@ -690,14 +717,14 @@
           id: fileId,
           path: scanned.path,
           name: scanned.name,
-          size: metadata?.size ?? scanned.size,
+          size: fileMetadata?.size ?? scanned.size,
           duration: scanned.duration,
           bitrate: scanned.bitrate,
           format: scanned.format,
           tracks: scanned.tracks,
           rawData: scanned.rawData,
-          createdAt: metadata?.createdAt,
-          modifiedAt: metadata?.modifiedAt,
+          createdAt: fileMetadata?.createdAt,
+          modifiedAt: fileMetadata?.modifiedAt,
           hasVideo,
           hasAudio,
         };
@@ -707,12 +734,17 @@
           transcodeStore.capabilities,
           nextFileData,
         );
+        const transcodeMetadata = buildDefaultTranscodeMetadata({
+          ...nextFileData,
+          profile,
+        }, transcodeStore.capabilities);
 
         transcodeStore.updateFile(fileId, {
           ...nextFileData,
           status: 'ready',
           error: undefined,
           profile,
+          metadata: transcodeMetadata,
         });
         added += 1;
       }
@@ -927,14 +959,15 @@
             onValueChange={(value) => transcodeStore.setActiveTab(value as TranscodeTab)}
             class="gap-4"
           >
-            <Tabs.List class="grid w-full grid-cols-4">
+            <Tabs.List class="grid w-full grid-cols-5">
               <Tabs.Trigger value="video">Video</Tabs.Trigger>
               <Tabs.Trigger value="audio">Audio</Tabs.Trigger>
               <Tabs.Trigger value="subtitles">Subtitles</Tabs.Trigger>
+              <Tabs.Trigger value="metadata">Metadata</Tabs.Trigger>
               <Tabs.Trigger value="output">Output</Tabs.Trigger>
             </Tabs.List>
 
-            {#if transcodeStore.activeTab !== 'output'}
+            {#if transcodeStore.activeTab !== 'output' && transcodeStore.activeTab !== 'metadata'}
               <div class="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 px-3 py-2">
                 <p class="min-w-0 flex-1 text-sm text-muted-foreground">
                   Saved presets for the current <span class="font-medium text-foreground">{activePresetTab}</span> tab.
@@ -984,6 +1017,17 @@
                 commonOverrideFlags={COMMON_OVERRIDE_FLAGS.subtitles}
                 updateProfile={updateSelectedProfile}
                 createId={transcodeStore.generateId}
+              />
+            </Tabs.Content>
+
+            <Tabs.Content value="metadata" class="space-y-4">
+              <TranscodeMetadataTab
+                file={selectedFile}
+                capabilities={transcodeStore.capabilities}
+                selectedContainer={selectedContainer}
+                isProcessing={transcodeStore.isProcessing}
+                onUpdateMetadata={handleUpdateMetadata}
+                onResetMetadata={handleResetMetadata}
               />
             </Tabs.Content>
 
