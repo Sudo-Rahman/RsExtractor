@@ -1,12 +1,15 @@
 import { LazyStore } from '@tauri-apps/plugin-store';
 
 import {
+  buildDefaultTranscodeMetadata,
   clampTranscodeProfile,
   cloneAudioSettings,
   cloneSubtitleSettings,
+  cloneTranscodeMetadata,
   cloneTranscodeProfile,
   cloneVideoSettings,
   createTranscodeId,
+  normalizeTranscodeMetadata,
   normalizeProfileForContainerChange,
   normalizeProfileForProfileChange,
   stripAudioTrackOverrides,
@@ -24,6 +27,7 @@ import type {
   TranscodeRuntimeProgress,
   TranscodeTab,
   TranscodeAudioSettings,
+  TranscodeMetadata,
   TranscodeSubtitleSettings,
   TranscodeVideoSettings,
 } from '$lib/types';
@@ -314,10 +318,15 @@ export const transcodeStore = {
     capabilities = nextCapabilities;
     capabilitiesStatus = 'ready';
     capabilitiesError = null;
-    files = files.map((file) => ({
-      ...file,
-      profile: clampTranscodeProfile(file.profile, nextCapabilities, file),
-    }));
+    files = files.map((file) => {
+      const profile = clampTranscodeProfile(file.profile, nextCapabilities, file);
+      const fileWithProfile = { ...file, profile };
+      return {
+        ...file,
+        profile,
+        metadata: normalizeTranscodeMetadata(file.metadata, fileWithProfile, nextCapabilities),
+      };
+    });
   },
 
   setCapabilitiesError(nextError: string) {
@@ -346,8 +355,12 @@ export const transcodeStore = {
     const file = files.find((item) => item.id === fileId);
     if (!file) return;
 
+    const nextProfile = normalizeProfileChange(file, profile);
+    const fileWithProfile = { ...file, profile: nextProfile };
+
     updateFileInternal(fileId, {
-      profile: normalizeProfileChange(file, profile),
+      profile: nextProfile,
+      metadata: normalizeTranscodeMetadata(file.metadata, fileWithProfile, capabilities),
     });
   },
 
@@ -355,19 +368,47 @@ export const transcodeStore = {
     const file = files.find((item) => item.id === fileId);
     if (!file) return;
 
+    const nextProfile = normalizeContainerChange(file, containerId);
+    const fileWithProfile = { ...file, profile: nextProfile };
+
     updateFileInternal(fileId, {
-      profile: normalizeContainerChange(file, containerId),
+      profile: nextProfile,
+      metadata: normalizeTranscodeMetadata(file.metadata, fileWithProfile, capabilities),
     });
   },
 
   applyProfileToAll(profile: TranscodeProfile) {
-    files = files.map((file) => ({
-      ...file,
-      profile: normalizeProfileChange(file, {
+    files = files.map((file) => {
+      const nextProfile = normalizeProfileChange(file, {
         ...cloneTranscodeProfile(profile),
         audio: stripAudioTrackOverrides(profile.audio),
-      }),
-    }));
+      });
+      const fileWithProfile = { ...file, profile: nextProfile };
+
+      return {
+        ...file,
+        profile: nextProfile,
+        metadata: normalizeTranscodeMetadata(file.metadata, fileWithProfile, capabilities),
+      };
+    });
+  },
+
+  setFileMetadata(fileId: string, metadata: TranscodeMetadata) {
+    const file = files.find((item) => item.id === fileId);
+    if (!file) return;
+
+    updateFileInternal(fileId, {
+      metadata: normalizeTranscodeMetadata(cloneTranscodeMetadata(metadata), file, capabilities),
+    });
+  },
+
+  resetFileMetadata(fileId: string) {
+    const file = files.find((item) => item.id === fileId);
+    if (!file) return;
+
+    updateFileInternal(fileId, {
+      metadata: buildDefaultTranscodeMetadata(file, capabilities),
+    });
   },
 
   selectFile(fileId: string | null) {
@@ -413,6 +454,7 @@ export const transcodeStore = {
     if (!file) return;
 
     const normalizedProfile = normalizeProfileChange(file, recommendation.profile);
+    const fileWithProfile = { ...file, profile: normalizedProfile };
     updateFileInternal(fileId, {
       aiStatus: 'completed',
       aiError: undefined,
@@ -421,6 +463,7 @@ export const transcodeStore = {
         profile: normalizedProfile,
       },
       profile: normalizedProfile,
+      metadata: normalizeTranscodeMetadata(file.metadata, fileWithProfile, capabilities),
     });
   },
 
@@ -626,8 +669,12 @@ export const transcodeStore = {
         break;
     }
 
+    const normalizedProfile = normalizeProfileChange(file, nextProfile);
+    const fileWithProfile = { ...file, profile: normalizedProfile };
+
     updateFileInternal(fileId, {
-      profile: normalizeProfileChange(file, nextProfile),
+      profile: normalizedProfile,
+      metadata: normalizeTranscodeMetadata(file.metadata, fileWithProfile, capabilities),
     });
   },
 

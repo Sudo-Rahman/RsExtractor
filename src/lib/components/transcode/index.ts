@@ -4,6 +4,7 @@ export { default as TranscodeEmptyState } from './TranscodeEmptyState.svelte';
 export { default as TranscodeAudioSettingsForm } from './TranscodeAudioSettingsForm.svelte';
 export { default as TranscodeFileSidebar } from './TranscodeFileSidebar.svelte';
 export { default as TranscodeInfoDialog } from './TranscodeInfoDialog.svelte';
+export { default as TranscodeMetadataTab } from './TranscodeMetadataTab.svelte';
 export { default as TranscodeAudioTrackOverridesDialog } from './TranscodeAudioTrackOverridesDialog.svelte';
 export { default as TranscodeOutputNamingView } from './TranscodeOutputNamingView.svelte';
 export { default as TranscodeOutputTab } from './TranscodeOutputTab.svelte';
@@ -16,6 +17,7 @@ export { default as TranscodeAudioTab } from './TranscodeAudioTab.svelte';
 
 export type {
   TranscodeContainerUpdater,
+  TranscodeMetadataUpdater,
   TranscodeOutputPathBuilder,
   TranscodeProfileUpdater,
 } from './types';

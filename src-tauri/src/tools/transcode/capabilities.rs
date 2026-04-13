@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use crate::shared::store::resolve_ffmpeg_path;
+use crate::tools::media_metadata::{ContainerMetadataSchema, metadata_schema_for_container};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +33,7 @@ pub(crate) struct TranscodeContainerCapability {
     pub(crate) default_video_encoder_id: Option<String>,
     pub(crate) default_audio_encoder_id: Option<String>,
     pub(crate) default_subtitle_encoder_id: Option<String>,
+    pub(crate) metadata_schema: ContainerMetadataSchema,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -767,6 +769,7 @@ fn build_container_capabilities(
                         .collect::<HashSet<_>>(),
                     container.default_subtitle_encoder_priority,
                 ),
+                metadata_schema: metadata_schema_for_container(container.id),
             }
         })
         .collect()

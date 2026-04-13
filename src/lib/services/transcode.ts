@@ -9,10 +9,13 @@ import type {
   TranscodeCapabilities,
   TranscodeContainerCapability,
   TranscodeFile,
+  TranscodeMetadata,
+  TranscodeOutputTrackPlan,
   TranscodeProfile,
   TranscodeRequest,
   TranscodeSubtitleEncoderCapability,
   TranscodeSubtitleSettings,
+  TranscodeTrackMetadataEdit,
   TranscodeVideoEncoderCapability,
   TranscodeVideoSettings,
 } from '$lib/types';
@@ -206,6 +209,67 @@ export function cloneTranscodeProfile(profile: TranscodeProfile): TranscodeProfi
   };
 }
 
+export function cloneTranscodeMetadata(metadata: TranscodeMetadata): TranscodeMetadata {
+  return {
+    containerTitle: metadata.containerTitle,
+    trackEdits: metadata.trackEdits.map((trackEdit) => ({ ...trackEdit })),
+  };
+}
+
+const FALLBACK_METADATA_SCHEMA = {
+  supportsContainerTitle: true,
+  supportsTrackTitle: true,
+  supportsLanguage: true,
+  supportsDefault: true,
+  supportsForced: true,
+  clearsMatroskaStatistics: false,
+};
+
+export function getMetadataSchemaForContainer(
+  capabilities: TranscodeCapabilities | null,
+  containerId: string,
+): TranscodeContainerCapability['metadataSchema'] {
+  const container = getContainerCapability(capabilities, containerId);
+  if (container?.metadataSchema) {
+    return container.metadataSchema;
+  }
+
+  if (containerId === 'mkv' || containerId === 'webm') {
+    return {
+      supportsContainerTitle: true,
+      supportsTrackTitle: true,
+      supportsLanguage: true,
+      supportsDefault: true,
+      supportsForced: containerId === 'mkv',
+      clearsMatroskaStatistics: true,
+    };
+  }
+
+  if (['aac', 'flac', 'mp3', 'ogg', 'opus', 'wav'].includes(containerId)) {
+    return {
+      supportsContainerTitle: true,
+      supportsTrackTitle: true,
+      supportsLanguage: true,
+      supportsDefault: false,
+      supportsForced: false,
+      clearsMatroskaStatistics: false,
+    };
+  }
+
+  if (containerId === 'mp4' || containerId === 'mov') {
+    return {
+      supportsContainerTitle: true,
+      supportsTrackTitle: true,
+      supportsLanguage: true,
+      supportsDefault: true,
+      supportsForced: false,
+      clearsMatroskaStatistics: false,
+    };
+  }
+
+  return FALLBACK_METADATA_SCHEMA;
+}
+
 export async function getTranscodeCapabilities(): Promise<TranscodeCapabilities> {
   return invoke<TranscodeCapabilities>('get_transcode_capabilities');
 }
@@ -265,6 +329,181 @@ export function getPrimaryVideoTrack(file: Pick<TranscodeFile, 'tracks'>): Track
 
 export function getPrimaryAudioTrack(file: Pick<TranscodeFile, 'tracks'>): Track | undefined {
   return getTracksByType(file, 'audio')[0];
+}
+
+function createTrackMetadataEdit(
+  track: Track,
+  existing?: TranscodeTrackMetadataEdit,
+): TranscodeTrackMetadataEdit {
+  return {
+    sourceTrackId: track.id,
+    title: existing?.title ?? track.title ?? '',
+    language: existing?.language ?? track.language ?? 'und',
+    default: existing?.default ?? track.default ?? false,
+    forced: existing?.forced ?? track.forced ?? false,
+  };
+}
+
+function findTrackMetadataEdit(
+  metadata: TranscodeMetadata | undefined,
+  sourceTrackId: number,
+): TranscodeTrackMetadataEdit | undefined {
+  return metadata?.trackEdits.find((trackEdit) => trackEdit.sourceTrackId === sourceTrackId);
+}
+
+function resolveOutputTrackCodec(
+  track: Track,
+  mode: TranscodeOutputTrackPlan['mode'],
+  encoderId: string | undefined,
+  capabilities: TranscodeCapabilities | null,
+): string {
+  if (mode === 'copy') {
+    return track.codec;
+  }
+
+  if (track.type === 'video') {
+    return getVideoEncoderCapability(capabilities, encoderId)?.codec ?? encoderId ?? track.codec;
+  }
+
+  if (track.type === 'audio') {
+    return getAudioEncoderCapability(capabilities, encoderId)?.codec ?? encoderId ?? track.codec;
+  }
+
+  return getSubtitleEncoderCapability(capabilities, encoderId)?.codec ?? encoderId ?? track.codec;
+}
+
+export function buildTranscodeOutputTrackPlan(
+  file: Pick<TranscodeFile, 'tracks' | 'hasVideo' | 'hasAudio' | 'profile' | 'metadata'>,
+  capabilities: TranscodeCapabilities | null,
+): TranscodeOutputTrackPlan[] {
+  const plan: TranscodeOutputTrackPlan[] = [];
+  const addTrack = (
+    track: Track,
+    mode: TranscodeOutputTrackPlan['mode'],
+    encoderId?: string,
+  ) => {
+    const outputIndex = plan.length;
+    const metadata = createTrackMetadataEdit(
+      track,
+      findTrackMetadataEdit(file.metadata, track.id),
+    );
+
+    plan.push({
+      key: `${outputIndex}-${track.id}-${track.type}`,
+      outputIndex,
+      sourceTrackId: track.id,
+      type: track.type,
+      sourceTrack: track,
+      mode,
+      codec: resolveOutputTrackCodec(track, mode, encoderId, capabilities),
+      metadata,
+    });
+  };
+
+  const videoTrack = getPrimaryVideoTrack(file);
+  if (file.hasVideo && videoTrack && file.profile.video.mode !== 'disable') {
+    addTrack(
+      videoTrack,
+      file.profile.video.mode === 'copy' ? 'copy' : 'transcode',
+      file.profile.video.encoderId,
+    );
+  }
+
+  if (file.hasAudio) {
+    for (const audioTrack of getTracksByType(file, 'audio')) {
+      const audioSettings = getEffectiveAudioSettingsForTrack(file.profile.audio, audioTrack.id);
+      if (audioSettings.mode === 'disable') {
+        continue;
+      }
+
+      addTrack(
+        audioTrack,
+        audioSettings.mode === 'copy' ? 'copy' : 'transcode',
+        audioSettings.encoderId,
+      );
+    }
+  }
+
+  if (file.profile.subtitles.mode !== 'disable') {
+    for (const subtitleTrack of getTracksByType(file, 'subtitle')) {
+      const shouldConvert = file.profile.subtitles.mode === 'convert_text' && isTextSubtitleCodec(subtitleTrack.codec);
+      addTrack(
+        subtitleTrack,
+        shouldConvert ? 'convert_text' : 'copy',
+        shouldConvert ? file.profile.subtitles.encoderId : undefined,
+      );
+    }
+  }
+
+  return plan;
+}
+
+export function normalizeTranscodeMetadata(
+  metadata: TranscodeMetadata | undefined,
+  file: Pick<TranscodeFile, 'tracks' | 'hasVideo' | 'hasAudio' | 'profile'>,
+  capabilities: TranscodeCapabilities | null,
+): TranscodeMetadata {
+  const metadataSource = metadata ?? { trackEdits: [] };
+  const fileWithMetadata = {
+    ...file,
+    metadata: metadataSource,
+  };
+
+  return {
+    containerTitle: metadataSource.containerTitle,
+    trackEdits: buildTranscodeOutputTrackPlan(fileWithMetadata, capabilities)
+      .map((track) => track.metadata),
+  };
+}
+
+export function buildDefaultTranscodeMetadata(
+  file: Pick<TranscodeFile, 'tracks' | 'hasVideo' | 'hasAudio' | 'profile'>,
+  capabilities: TranscodeCapabilities | null,
+): TranscodeMetadata {
+  return normalizeTranscodeMetadata({ trackEdits: [] }, file, capabilities);
+}
+
+export function updateTranscodeMetadataTrack(
+  metadata: TranscodeMetadata,
+  sourceTrackId: number,
+  updates: Partial<TranscodeTrackMetadataEdit>,
+): TranscodeMetadata {
+  return {
+    ...metadata,
+    trackEdits: metadata.trackEdits.map((trackEdit) =>
+      trackEdit.sourceTrackId === sourceTrackId
+        ? { ...trackEdit, ...updates, sourceTrackId }
+        : trackEdit,
+    ),
+  };
+}
+
+export function applyTranscodeMetadataBatch(
+  metadata: TranscodeMetadata,
+  sourceTrackIds: number[],
+  patch: Partial<Pick<TranscodeTrackMetadataEdit, 'language' | 'default' | 'forced'>>,
+  titlePattern?: string,
+): TranscodeMetadata {
+  const selectedIds = new Set(sourceTrackIds);
+  let selectedIndex = 0;
+
+  return {
+    ...metadata,
+    trackEdits: metadata.trackEdits.map((trackEdit) => {
+      if (!selectedIds.has(trackEdit.sourceTrackId)) {
+        return trackEdit;
+      }
+
+      selectedIndex += 1;
+      return {
+        ...trackEdit,
+        ...patch,
+        title: titlePattern !== undefined
+          ? titlePattern.replaceAll('{n}', selectedIndex.toString())
+          : trackEdit.title,
+      };
+    }),
+  };
 }
 
 export function getAudioTrackOverride(
@@ -1193,6 +1432,7 @@ export function createTranscodeRequest(file: TranscodeFile, outputPath: string):
     video: cloneVideoSettings(file.profile.video),
     audio: cloneAudioSettings(file.profile.audio),
     subtitles: cloneSubtitleSettings(file.profile.subtitles),
+    metadata: cloneTranscodeMetadata(file.metadata),
   };
 }
 

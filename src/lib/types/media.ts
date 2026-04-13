@@ -106,6 +106,7 @@ export interface FFprobeStream {
   tags?: {
     language?: string;
     title?: string;
+    name?: string;
     // bitrate in tags can sometimes be present
     "BPS-eng"?: string;
     BPS?: string;
