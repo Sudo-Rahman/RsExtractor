@@ -35,7 +35,8 @@ pub(crate) struct TranscodeProgressEvent {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TranscodeAdditionalArg {
-    pub(crate) id: Option<String>,
+    #[serde(rename = "id")]
+    pub(crate) _id: Option<String>,
     pub(crate) flag: String,
     pub(crate) value: Option<String>,
     pub(crate) enabled: bool,
@@ -1659,7 +1660,7 @@ mod tests {
                 level: None,
                 pixel_format: None,
                 additional_args: vec![TranscodeAdditionalArg {
-                    id: Some("gop".to_string()),
+                    _id: Some("gop".to_string()),
                     flag: "-g".to_string(),
                     value: Some("12".to_string()),
                     enabled: true,
@@ -1682,7 +1683,7 @@ mod tests {
                 level: None,
                 pixel_format: None,
                 additional_args: vec![TranscodeAdditionalArg {
-                    id: Some("gop".to_string()),
+                    _id: Some("gop".to_string()),
                     flag: "-g".to_string(),
                     value: Some("12".to_string()),
                     enabled: true,
@@ -1957,7 +1958,7 @@ mod tests {
     fn build_transcode_args_rejects_blocked_additional_args() {
         let mut request = build_request("/tmp/output.mp4");
         request.video.additional_args = vec![TranscodeAdditionalArg {
-            id: None,
+            _id: None,
             flag: "-map".to_string(),
             value: Some("0".to_string()),
             enabled: true,
@@ -2123,7 +2124,7 @@ mod tests {
         request.audio.channels = None;
         request.audio.sample_rate = None;
         request.audio.additional_args = vec![TranscodeAdditionalArg {
-            id: Some("application".to_string()),
+            _id: Some("application".to_string()),
             flag: "-application".to_string(),
             value: Some("audio".to_string()),
             enabled: true,
@@ -2137,7 +2138,7 @@ mod tests {
                 channels: None,
                 sample_rate: Some(48_000),
                 additional_args: vec![TranscodeAdditionalArg {
-                    id: Some("cutoff".to_string()),
+                    _id: Some("cutoff".to_string()),
                     flag: "-cutoff".to_string(),
                     value: Some("18000".to_string()),
                     enabled: true,

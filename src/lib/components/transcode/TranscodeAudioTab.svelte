@@ -142,6 +142,7 @@
     description="Optional safe FFmpeg flags for audio transcoding."
     emptyMessage="No audio overrides added."
     commonFlags={commonOverrideFlags}
+    encoderOptions={selectedAudioEncoder?.options ?? []}
     args={file.profile.audio.additionalArgs}
     createId={createId}
     updateProfile={updateProfile}

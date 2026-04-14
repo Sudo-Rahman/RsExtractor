@@ -329,6 +329,7 @@
     description="Optional safe FFmpeg flags for the current video encoder."
     emptyMessage="No video overrides added."
     commonFlags={commonOverrideFlags}
+    encoderOptions={selectedVideoEncoder?.options ?? []}
     args={file.profile.video.additionalArgs}
     createId={createId}
     updateProfile={updateProfile}

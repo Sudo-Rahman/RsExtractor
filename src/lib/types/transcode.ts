@@ -13,6 +13,7 @@ export type TranscodeQualityMode = 'crf' | 'bitrate' | 'qp';
 export type TranscodeContainerKind = 'video' | 'audio';
 export type TranscodePresetTab = 'video' | 'audio' | 'subtitles';
 export type TranscodeOutputTrackMode = 'copy' | 'transcode' | 'convert_text';
+export type TranscodeEncoderOptionValueKind = 'boolean' | 'int' | 'float' | 'string' | 'dictionary' | 'unknown';
 
 export interface TranscodeContainerMetadataSchema {
   supportsContainerTitle: boolean;
@@ -101,6 +102,21 @@ export interface TranscodeOutputTrackPlan {
   metadata: TranscodeTrackMetadataEdit;
 }
 
+export interface TranscodeEncoderOptionChoice {
+  value: string;
+  description: string;
+}
+
+export interface TranscodeEncoderOption {
+  flag: string;
+  valueKind: TranscodeEncoderOptionValueKind;
+  description: string;
+  defaultValue?: string;
+  min?: number;
+  max?: number;
+  choices: TranscodeEncoderOptionChoice[];
+}
+
 export interface TranscodeVideoEncoderCapability {
   id: string;
   codec: string;
@@ -114,6 +130,7 @@ export interface TranscodeVideoEncoderCapability {
   supportsCrf: boolean;
   supportsQp: boolean;
   supportsBitrate: boolean;
+  options: TranscodeEncoderOption[];
 }
 
 export interface TranscodeAudioEncoderCapability {
@@ -123,6 +140,7 @@ export interface TranscodeAudioEncoderCapability {
   supportsBitrate: boolean;
   supportsChannels: boolean;
   supportsSampleRate: boolean;
+  options: TranscodeEncoderOption[];
 }
 
 export interface TranscodeSubtitleEncoderCapability {
@@ -130,6 +148,7 @@ export interface TranscodeSubtitleEncoderCapability {
   codec: string;
   label: string;
   kind: string;
+  options: TranscodeEncoderOption[];
 }
 
 export interface TranscodeContainerCapability {
