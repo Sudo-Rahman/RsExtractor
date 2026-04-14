@@ -148,6 +148,8 @@ const CONTAINER_AUDIO_COPY_CODECS: Record<string, string[]> = {
   wav: ['pcm_f32le', 'pcm_f64le', 'pcm_s16le', 'pcm_s24le', 'pcm_s32le', 'pcm_u8', 'pcm_alaw', 'pcm_mulaw'],
 };
 
+const AUDIO_ONLY_CONTAINER_IDS = new Set(['aac', 'flac', 'mp3', 'ogg', 'opus', 'wav']);
+
 const SOURCE_CONTAINER_IDS_BY_EXTENSION: Record<string, string> = {
   '.aac': 'aac',
   '.flac': 'flac',
@@ -276,6 +278,18 @@ export function getMetadataSchemaForContainer(
   }
 
   return FALLBACK_METADATA_SCHEMA;
+}
+
+export function canEditTranscodeMetadata(
+  file: Pick<TranscodeFile, 'hasVideo' | 'profile'>,
+  capabilities: TranscodeCapabilities | null,
+): boolean {
+  if (!file.hasVideo) {
+    return false;
+  }
+
+  const container = getContainerCapability(capabilities, file.profile.containerId);
+  return container?.kind !== 'audio' && !AUDIO_ONLY_CONTAINER_IDS.has(file.profile.containerId);
 }
 
 export async function getTranscodeCapabilities(): Promise<TranscodeCapabilities> {

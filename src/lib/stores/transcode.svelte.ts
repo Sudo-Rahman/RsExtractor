@@ -2,6 +2,7 @@ import { LazyStore } from '@tauri-apps/plugin-store';
 
 import {
   buildDefaultTranscodeMetadata,
+  canEditTranscodeMetadata,
   clampTranscodeProfile,
   cloneAudioSettings,
   cloneSubtitleSettings,
@@ -182,6 +183,27 @@ function normalizeContainerChange(file: TranscodeFile, containerId: string): Tra
   return normalizeProfileForContainerChange(file.profile, containerId, capabilities, file);
 }
 
+function getSelectedFile(): TranscodeFile | undefined {
+  return files.find((file) => file.id === selectedFileId);
+}
+
+function normalizeActiveTabForFile(file: TranscodeFile | undefined): void {
+  if (activeTab === 'metadata' && file && !canEditTranscodeMetadata(file, capabilities)) {
+    activeTab = 'audio';
+  }
+}
+
+function normalizeActiveTabForSelectedFile(): void {
+  normalizeActiveTabForFile(getSelectedFile());
+}
+
+function resolveActiveTab(nextTab: TranscodeTab): TranscodeTab {
+  const selectedFile = getSelectedFile();
+  return nextTab === 'metadata' && selectedFile && !canEditTranscodeMetadata(selectedFile, capabilities)
+    ? 'audio'
+    : nextTab;
+}
+
 export const transcodeStore = {
   get files() {
     return files;
@@ -192,7 +214,7 @@ export const transcodeStore = {
   },
 
   get selectedFile(): TranscodeFile | undefined {
-    return files.find((file) => file.id === selectedFileId);
+    return getSelectedFile();
   },
 
   get hasFiles(): boolean {
@@ -284,7 +306,7 @@ export const transcodeStore = {
   },
 
   setActiveTab(nextTab: TranscodeTab) {
-    activeTab = nextTab;
+    activeTab = resolveActiveTab(nextTab);
   },
 
   setAiProvider(provider: LLMProvider) {
@@ -327,6 +349,7 @@ export const transcodeStore = {
         metadata: normalizeTranscodeMetadata(file.metadata, fileWithProfile, nextCapabilities),
       };
     });
+    normalizeActiveTabForSelectedFile();
   },
 
   setCapabilitiesError(nextError: string) {
@@ -345,10 +368,14 @@ export const transcodeStore = {
     if (!selectedFileId) {
       selectedFileId = uniqueFiles[0]?.id ?? null;
     }
+    normalizeActiveTabForSelectedFile();
   },
 
   updateFile(fileId: string, updates: Partial<TranscodeFile>) {
     updateFileInternal(fileId, updates);
+    if (fileId === selectedFileId) {
+      normalizeActiveTabForSelectedFile();
+    }
   },
 
   setFileProfile(fileId: string, profile: TranscodeProfile) {
@@ -362,6 +389,9 @@ export const transcodeStore = {
       profile: nextProfile,
       metadata: normalizeTranscodeMetadata(file.metadata, fileWithProfile, capabilities),
     });
+    if (fileId === selectedFileId) {
+      normalizeActiveTabForFile(fileWithProfile);
+    }
   },
 
   setFileContainer(fileId: string, containerId: string) {
@@ -375,6 +405,9 @@ export const transcodeStore = {
       profile: nextProfile,
       metadata: normalizeTranscodeMetadata(file.metadata, fileWithProfile, capabilities),
     });
+    if (fileId === selectedFileId) {
+      normalizeActiveTabForFile(fileWithProfile);
+    }
   },
 
   applyProfileToAll(profile: TranscodeProfile) {
@@ -391,6 +424,7 @@ export const transcodeStore = {
         metadata: normalizeTranscodeMetadata(file.metadata, fileWithProfile, capabilities),
       };
     });
+    normalizeActiveTabForSelectedFile();
   },
 
   setFileMetadata(fileId: string, metadata: TranscodeMetadata) {
@@ -413,6 +447,7 @@ export const transcodeStore = {
 
   selectFile(fileId: string | null) {
     selectedFileId = fileId && files.some((file) => file.id === fileId) ? fileId : files[0]?.id ?? null;
+    normalizeActiveTabForSelectedFile();
   },
 
   removeFile(fileId: string) {
@@ -424,6 +459,7 @@ export const transcodeStore = {
     }
     if (selectedFileId === fileId) {
       selectedFileId = files[0]?.id ?? null;
+      normalizeActiveTabForSelectedFile();
     }
   },
 
@@ -676,6 +712,9 @@ export const transcodeStore = {
       profile: normalizedProfile,
       metadata: normalizeTranscodeMetadata(file.metadata, fileWithProfile, capabilities),
     });
+    if (fileId === selectedFileId) {
+      normalizeActiveTabForFile(fileWithProfile);
+    }
   },
 
   reset() {
