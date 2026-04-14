@@ -32,13 +32,27 @@
     stage: string;
   };
 
+  type BinaryPathSource = 'bundled' | 'custom' | 'system';
+
+  type FFmpegInfo = {
+    ffmpegPath: string;
+    ffprobePath: string;
+    source: BinaryPathSource;
+    ffmpegSource: BinaryPathSource;
+    ffprobeSource: BinaryPathSource;
+    version: string;
+  };
+
   let ffmpegStatus = $state<'checking' | 'found' | 'not-found'>('checking');
   let ffmpegVersion = $state<string | null>(null);
   let ffmpegError = $state<string | null>(null);
+  let ffmpegInfo = $state<FFmpegInfo | null>(null);
   let isDownloading = $state(false);
   let downloadProgress = $state<number | null>(null);
   let downloadStage = $state<string | null>(null);
   let unlistenProgress: (() => void) | null = null;
+
+  const isDebugBuild = import.meta.env.DEV;
 
   // Deepgram API key visibility
   let showDeepgramApiKey = $state(false);
@@ -93,21 +107,12 @@
   async function checkFFmpeg() {
     ffmpegStatus = 'checking';
     ffmpegError = null;
+    ffmpegInfo = null;
     try {
-      const available = await invoke<boolean>('check_ffmpeg');
-      if (available) {
-        ffmpegStatus = 'found';
-        // Try to get version
-        try {
-          const version = await invoke<string>('get_ffmpeg_version');
-          ffmpegVersion = version;
-        } catch {
-          ffmpegVersion = 'Unknown version';
-        }
-      } else {
-        ffmpegStatus = 'not-found';
-        ffmpegVersion = null;
-      }
+      const info = await invoke<FFmpegInfo>('get_ffmpeg_info');
+      ffmpegInfo = info;
+      ffmpegStatus = 'found';
+      ffmpegVersion = info.version || 'Unknown version';
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       ffmpegError = message;
@@ -168,6 +173,7 @@
   }
 
   async function handleDownloadFFmpeg() {
+    if (!isDebugBuild) return;
     if (isDownloading) return;
     isDownloading = true;
     downloadProgress = 0;
@@ -191,6 +197,12 @@
     } finally {
       isDownloading = false;
     }
+  }
+
+  function formatBinarySource(source: BinaryPathSource): string {
+    if (source === 'bundled') return 'Bundled';
+    if (source === 'custom') return 'Custom path';
+    return 'System PATH';
   }
 
   async function handleOpenDeepgramConsole() {
@@ -226,13 +238,15 @@
           <Card.Title>FFmpeg</Card.Title>
         </div>
         <Card.Description>
-          Configure FFmpeg and FFprobe paths for multimedia processing
+          {isDebugBuild
+            ? 'Configure FFmpeg and FFprobe paths for multimedia processing'
+            : 'Production builds use the bundled FFmpeg and FFprobe binaries'}
         </Card.Description>
       </Card.Header>
       <Card.Content class="space-y-4">
         <!-- Status -->
         <div class="flex items-center justify-between p-3 rounded-md bg-muted/50">
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
             {#if ffmpegStatus === 'checking'}
               <RefreshCw class="size-4 animate-spin text-muted-foreground" />
               <span class="text-sm">Checking FFmpeg...</span>
@@ -241,6 +255,9 @@
               <span class="text-sm">FFmpeg found</span>
               {#if ffmpegVersion}
                 <Badge variant="secondary" class="text-xs">{ffmpegVersion}</Badge>
+              {/if}
+              {#if ffmpegInfo}
+                <Badge variant="outline" class="text-xs">{formatBinarySource(ffmpegInfo.source)}</Badge>
               {/if}
             {:else}
               <XCircle class="size-4 text-destructive" />
@@ -252,48 +269,71 @@
           </Button>
         </div>
 
-        <!-- FFmpeg path -->
-        <div class="space-y-2">
-          <Label for="ffmpeg-path">FFmpeg Path (optional)</Label>
-          <div class="flex gap-2">
-            <Input
-              id="ffmpeg-path"
-              placeholder="Leave empty to use system PATH"
-              value={settingsStore.settings.ffmpegPath}
-              oninput={(e) => void handleFFmpegPathInput(e.currentTarget.value)}
-              class="flex-1"
-            />
-            <Button variant="outline" size="icon" onclick={handleBrowseFFmpeg}>
-              <FolderOpen class="size-4" />
-            </Button>
+        {#if isDebugBuild}
+          <!-- FFmpeg path -->
+          <div class="space-y-2">
+            <Label for="ffmpeg-path">FFmpeg Path (optional)</Label>
+            <div class="flex gap-2">
+              <Input
+                id="ffmpeg-path"
+                placeholder="Leave empty to use bundled FFmpeg or system PATH"
+                value={settingsStore.settings.ffmpegPath}
+                oninput={(e) => void handleFFmpegPathInput(e.currentTarget.value)}
+                class="flex-1"
+              />
+              <Button variant="outline" size="icon" onclick={handleBrowseFFmpeg}>
+                <FolderOpen class="size-4" />
+              </Button>
+            </div>
+            <p class="text-xs text-muted-foreground">
+              If empty, the application will try the bundled FFmpeg first, then system PATH
+            </p>
           </div>
-          <p class="text-xs text-muted-foreground">
-            If empty, the application will use FFmpeg from system PATH
-          </p>
-        </div>
 
-        <!-- FFprobe path -->
-        <div class="space-y-2">
-          <Label for="ffprobe-path">FFprobe Path (optional)</Label>
-          <div class="flex gap-2">
-            <Input
-              id="ffprobe-path"
-              placeholder="Leave empty to use system PATH"
-              value={settingsStore.settings.ffprobePath}
-              oninput={(e) => void handleFFprobePathInput(e.currentTarget.value)}
-              class="flex-1"
-            />
-            <Button variant="outline" size="icon" onclick={handleBrowseFFprobe}>
-              <FolderOpen class="size-4" />
-            </Button>
+          <!-- FFprobe path -->
+          <div class="space-y-2">
+            <Label for="ffprobe-path">FFprobe Path (optional)</Label>
+            <div class="flex gap-2">
+              <Input
+                id="ffprobe-path"
+                placeholder="Leave empty to use bundled FFprobe or system PATH"
+                value={settingsStore.settings.ffprobePath}
+                oninput={(e) => void handleFFprobePathInput(e.currentTarget.value)}
+                class="flex-1"
+              />
+              <Button variant="outline" size="icon" onclick={handleBrowseFFprobe}>
+                <FolderOpen class="size-4" />
+              </Button>
+            </div>
+            {#if ffmpegError}
+              <p class="text-xs text-destructive">{ffmpegError}</p>
+            {/if}
+          </div>
+        {:else}
+          <div class="space-y-3">
+            <div class="space-y-1">
+              <Label>Active FFmpeg</Label>
+              <p class="break-all rounded bg-muted px-2 py-1 text-xs">
+                {ffmpegInfo?.ffmpegPath ?? 'Unavailable'}
+              </p>
+            </div>
+            <div class="space-y-1">
+              <Label>Active FFprobe</Label>
+              <p class="break-all rounded bg-muted px-2 py-1 text-xs">
+                {ffmpegInfo?.ffprobePath ?? 'Unavailable'}
+              </p>
+            </div>
+            <p class="text-xs text-muted-foreground">
+              Production builds always use the bundled FFmpeg tools.
+            </p>
           </div>
           {#if ffmpegError}
             <p class="text-xs text-destructive">{ffmpegError}</p>
           {/if}
-        </div>
+        {/if}
 
         <!-- Download button -->
-        {#if ffmpegStatus === 'not-found'}
+        {#if isDebugBuild && ffmpegStatus === 'not-found'}
           <Button
             variant="outline"
             class="w-full"
@@ -513,7 +553,7 @@
       </Card.Header>
       <Card.Content>
         <RadioGroup.Root value={currentMode} onValueChange={handleThemeChange} class="grid gap-3">
-          {#each themeOptions as option}
+          {#each themeOptions as option (option.value)}
             {@const Icon = option.icon}
             <Label
               for={option.value}

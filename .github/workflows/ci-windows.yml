@@ -1,0 +1,183 @@
+name: CI Windows
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 25.8.1
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install FFmpeg
+        shell: pwsh
+        run: choco install ffmpeg -y
+
+      - name: Install Visual C++ Runtime
+        shell: pwsh
+        run: choco install vcredist140 -y
+
+      - name: Setup Vulkan SDK
+        uses: humbletim/setup-vulkan-sdk@v1.2.1
+        with:
+          vulkan-query-version: 1.3.296.0
+          vulkan-components: Vulkan-Headers, Vulkan-Loader
+          vulkan-use-cache: true
+
+      - name: Fix Vulkan lib naming
+        shell: pwsh
+        run: |
+          $vulkanLib = Join-Path $env:VULKAN_SDK "lib"
+          $vulkanBin = Join-Path $env:VULKAN_SDK "Bin"
+          if (Test-Path "$vulkanLib\vulkan-1.lib") {
+            Copy-Item "$vulkanLib\vulkan-1.lib" "$vulkanLib\vulkan.lib"
+            Write-Host "Created vulkan.lib from vulkan-1.lib in $vulkanLib"
+          }
+          echo "LIB=$vulkanLib;$env:LIB" >> $env:GITHUB_ENV
+          echo "$vulkanBin" >> $env:GITHUB_PATH
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify FFmpeg tools
+        shell: pwsh
+        run: |
+          ffmpeg -version
+          ffprobe -version
+
+      - name: Run Rust tests
+        working-directory: src-tauri
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $targetDir = Join-Path (Get-Location) "target"
+          New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+          $manifestPath = Join-Path $targetDir "ci.common-controls.manifest"
+          @"
+          <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+            <dependency>
+              <dependentAssembly>
+                <assemblyIdentity
+                  type="win32"
+                  name="Microsoft.Windows.Common-Controls"
+                  version="6.0.0.0"
+                  processorArchitecture="*"
+                  publicKeyToken="6595b64144ccf1df"
+                  language="*" />
+              </dependentAssembly>
+            </dependency>
+          </assembly>
+          "@ | Set-Content -Path $manifestPath -Encoding utf8
+
+          $env:CARGO_ENCODED_RUSTFLAGS = @(
+            "-C",
+            "target-feature=+crt-static",
+            "-C",
+            "link-arg=/MANIFEST:EMBED",
+            "-C",
+            "link-arg=/MANIFESTINPUT:$manifestPath"
+          ) -join [char]31
+
+          function Get-LatestLibTestExe {
+            $depsDir = Join-Path (Get-Location) "target\debug\deps"
+            Get-ChildItem -Path $depsDir -Filter "mediaflow_lib-*.exe" |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1
+          }
+
+          function Show-WindowsCrashDiagnostics {
+            $libTestExe = Get-LatestLibTestExe
+
+            Write-Host "::group::Windows test crash diagnostics"
+            if ($libTestExe) {
+              Write-Host "lib test executable: $($libTestExe.FullName)"
+
+              $cdb = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Debuggers\x64\cdb.exe"
+              if (Test-Path $cdb) {
+                & $cdb -c "g;qd" $libTestExe.FullName
+              }
+
+              $dumpbin = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
+              if ($dumpbin) {
+                & $dumpbin.Source /dependents $libTestExe.FullName
+              }
+            }
+            Write-Host "::endgroup::"
+          }
+
+          function Invoke-LibHarness {
+            param([string[]]$Args)
+
+            $libTestExe = Get-LatestLibTestExe
+            if (-not $libTestExe) {
+              throw "Could not locate compiled mediaflow_lib test executable"
+            }
+
+            & $libTestExe.FullName @Args
+            if ($LASTEXITCODE -eq 0) {
+              return
+            }
+
+            Show-WindowsCrashDiagnostics
+            throw "Windows lib test harness failed with exit code $LASTEXITCODE"
+          }
+
+          # Avoid the Tauri bin test target on Windows: it collides with the embedded app manifest.
+          cargo test --no-run --lib
+
+          $depsDir = Join-Path (Get-Location) "target\debug\deps"
+          $vulkanDll = Join-Path $env:VULKAN_SDK "Bin\vulkan-1.dll"
+
+          if (!(Test-Path $vulkanDll)) {
+            throw "Missing Vulkan loader DLL: $vulkanDll"
+          }
+
+          $vulkanDllInDeps = Join-Path $depsDir "vulkan-1.dll"
+          Copy-Item $vulkanDll $vulkanDllInDeps -Force
+          Write-Host "Copied Vulkan loader to $vulkanDllInDeps"
+
+          $pathEntries = @(
+            $depsDir,
+            (Split-Path -Parent $vulkanDll)
+          ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+
+          $env:PATH = (($pathEntries -join ';') + ';' + $env:PATH)
+
+          where.exe ffmpeg
+          where.exe ffprobe
+          where.exe vulkan-1.dll
+          if ($LASTEXITCODE -ne 0) {
+            throw "vulkan-1.dll not found on PATH after setup"
+          }
+
+          Invoke-LibHarness
+          Invoke-LibHarness "--ignored"
+
+      - name: Build Tauri app
+        run: pnpm tauri build --no-bundle

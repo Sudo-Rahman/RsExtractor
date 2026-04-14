@@ -1,0 +1,69 @@
+name: CI macOS
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Apple Silicon
+            target: aarch64-apple-darwin
+          # - name: Intel
+          #   target: x86_64-apple-darwin
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 25.8.1
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install macOS Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: macos-${{ matrix.target }}
+
+      - name: Install FFmpeg
+        run: |
+          brew update
+          brew install ffmpeg
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify FFmpeg tools
+        run: |
+          ffmpeg -version
+          ffprobe -version
+
+      - name: Run Rust tests
+        working-directory: src-tauri
+        run: |
+          cargo test
+          cargo test -- --ignored
+
+      - name: Build Tauri app (${{ matrix.name }})
+        run: pnpm tauri build --no-bundle --target ${{ matrix.target }}

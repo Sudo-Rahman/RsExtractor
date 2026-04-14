@@ -13,10 +13,10 @@ const BTBN_LATEST_URL: &str = "https://github.com/BtbN/FFmpeg-Builds/wiki/Latest
 
 pub(super) fn resolve_btbn_variant(os: &str, arch: &str) -> Result<&'static str, String> {
     match (os, arch) {
-        ("windows", "x86_64") => Ok("win64-gpl-8.0"),
-        ("windows", "aarch64") => Ok("winarm64-gpl-8.0"),
-        ("linux", "x86_64") => Ok("linux64-gpl-8.0"),
-        ("linux", "aarch64") => Ok("linuxarm64-gpl-8.0"),
+        ("windows", "x86_64") => Ok("win64-gpl-8.1"),
+        ("windows", "aarch64") => Ok("winarm64-gpl-8.1"),
+        ("linux", "x86_64") => Ok("linux64-gpl-8.1"),
+        ("linux", "aarch64") => Ok("linuxarm64-gpl-8.1"),
         _ => Err(format!("Unsupported platform: {} {}", os, arch)),
     }
 }
@@ -134,11 +134,11 @@ mod tests {
     fn resolve_btbn_variant_maps_supported_platforms() {
         assert_eq!(
             resolve_btbn_variant("windows", "x86_64").expect("variant expected"),
-            "win64-gpl-8.0"
+            "win64-gpl-8.1"
         );
         assert_eq!(
             resolve_btbn_variant("linux", "aarch64").expect("variant expected"),
-            "linuxarm64-gpl-8.0"
+            "linuxarm64-gpl-8.1"
         );
     }
 
@@ -151,15 +151,15 @@ mod tests {
     #[test]
     fn find_btbn_url_with_ext_prefers_absolute_and_relative_urls() {
         let page = r#"
-            <a href="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-8.0.zip">zip</a>
-            <a href="/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-8.0.tar.xz">tar</a>
+            <a href="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-8.1.zip">zip</a>
+            <a href="/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-8.1.tar.xz">tar</a>
         "#;
 
         let url_zip =
-            find_btbn_url_with_ext(page, "win64-gpl-8.0", ".zip").expect("zip url should be found");
+            find_btbn_url_with_ext(page, "win64-gpl-8.1", ".zip").expect("zip url should be found");
         assert!(url_zip.ends_with(".zip"));
 
-        let url_tar = find_btbn_url_with_ext(page, "win64-gpl-8.0", ".tar.xz")
+        let url_tar = find_btbn_url_with_ext(page, "win64-gpl-8.1", ".tar.xz")
             .expect("tar.xz url should be found");
         assert!(url_tar.starts_with("https://github.com/"));
     }
@@ -167,10 +167,10 @@ mod tests {
     #[test]
     fn find_btbn_url_falls_back_to_secondary_extension() {
         let page = r#"
-            <a href="/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl-8.0.zip">zip</a>
+            <a href="/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl-8.1.zip">zip</a>
         "#;
 
-        let url = find_btbn_url(page, "linux64-gpl-8.0", ".tar.xz", ".zip")
+        let url = find_btbn_url(page, "linux64-gpl-8.1", ".tar.xz", ".zip")
             .expect("fallback zip url should be found");
         assert!(url.ends_with(".zip"));
     }
