@@ -108,6 +108,7 @@
     description="Optional safe FFmpeg flags for subtitle handling."
     emptyMessage="No subtitle overrides added."
     commonFlags={commonOverrideFlags}
+    encoderOptions={selectedSubtitleEncoder?.options ?? []}
     args={file.profile.subtitles.additionalArgs}
     createId={createId}
     updateProfile={updateProfile}

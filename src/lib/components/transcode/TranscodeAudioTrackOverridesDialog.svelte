@@ -206,15 +206,16 @@
     upsertTrackOverride(selectedTrack.id, { mode });
   }
 
-  function handleTrackAdditionalOverrideAdd(flag?: string): void {
+  function handleTrackAdditionalOverrideAdd(flag?: string): string | void {
     if (!selectedTrack || !selectedTrackOverride) {
       return;
     }
 
+    const argId = createId('transcode-arg-audio-track');
     const nextAdditionalArgs: TranscodeAdditionalArg[] = [
       ...(selectedTrackOverride.additionalArgs ?? []),
       {
-        id: createId('transcode-arg-audio-track'),
+        id: argId,
         flag: flag ?? '',
         value: '',
         enabled: true,
@@ -222,6 +223,7 @@
     ];
 
     upsertTrackOverride(selectedTrack.id, { additionalArgs: nextAdditionalArgs });
+    return argId;
   }
 
   function handleTrackAdditionalOverrideUpdate(
@@ -356,6 +358,7 @@
                       description="Optional safe FFmpeg flags applied only to this track."
                       emptyMessage="No per-track audio overrides added."
                       commonFlags={commonOverrideFlags}
+                      encoderOptions={selectedTrackEncoder?.options ?? []}
                       args={selectedTrackOverride.additionalArgs ?? []}
                       onAddOverride={handleTrackAdditionalOverrideAdd}
                       onUpdateOverride={handleTrackAdditionalOverrideUpdate}

@@ -51,6 +51,7 @@ pub(crate) struct TranscodeVideoEncoderCapability {
     pub(crate) supports_crf: bool,
     pub(crate) supports_qp: bool,
     pub(crate) supports_bitrate: bool,
+    pub(crate) options: Vec<TranscodeEncoderOption>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +63,7 @@ pub(crate) struct TranscodeAudioEncoderCapability {
     pub(crate) supports_bitrate: bool,
     pub(crate) supports_channels: bool,
     pub(crate) supports_sample_rate: bool,
+    pub(crate) options: Vec<TranscodeEncoderOption>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,6 +73,37 @@ pub(crate) struct TranscodeSubtitleEncoderCapability {
     pub(crate) codec: String,
     pub(crate) label: String,
     pub(crate) kind: String,
+    pub(crate) options: Vec<TranscodeEncoderOption>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TranscodeEncoderOptionValueKind {
+    Boolean,
+    Int,
+    Float,
+    String,
+    Dictionary,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TranscodeEncoderOptionChoice {
+    pub(crate) value: String,
+    pub(crate) description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TranscodeEncoderOption {
+    pub(crate) flag: String,
+    pub(crate) value_kind: TranscodeEncoderOptionValueKind,
+    pub(crate) description: String,
+    pub(crate) default_value: Option<String>,
+    pub(crate) min: Option<f64>,
+    pub(crate) max: Option<f64>,
+    pub(crate) choices: Vec<TranscodeEncoderOptionChoice>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -550,6 +583,182 @@ fn parse_option_enum_values(output: &str, option_name: &str) -> Vec<String> {
     results
 }
 
+fn value_kind_from_ffmpeg_type(value_type: &str) -> TranscodeEncoderOptionValueKind {
+    match value_type.trim_matches(['<', '>']) {
+        "boolean" => TranscodeEncoderOptionValueKind::Boolean,
+        "int" => TranscodeEncoderOptionValueKind::Int,
+        "float" | "double" => TranscodeEncoderOptionValueKind::Float,
+        "string" => TranscodeEncoderOptionValueKind::String,
+        "dictionary" => TranscodeEncoderOptionValueKind::Dictionary,
+        _ => TranscodeEncoderOptionValueKind::Unknown,
+    }
+}
+
+fn looks_like_ffmpeg_option_caps(value: &str) -> bool {
+    value.len() >= 4
+        && value.contains('.')
+        && value
+            .chars()
+            .all(|character| character == '.' || character.is_ascii_uppercase())
+}
+
+fn find_parenthesized_segment<'a>(input: &'a str, prefix: &str) -> Option<&'a str> {
+    let mut rest = input;
+
+    while let Some(start) = rest.find('(') {
+        let after_open = &rest[start + 1..];
+        let Some(end) = after_open.find(')') else {
+            break;
+        };
+
+        let segment = &after_open[..end];
+        if let Some(value) = segment.strip_prefix(prefix) {
+            return Some(value.trim());
+        }
+
+        rest = &after_open[end + 1..];
+    }
+
+    None
+}
+
+fn parse_numeric_option_bound(value: &str) -> Option<f64> {
+    let parsed = value.trim().parse::<f64>().ok()?;
+    parsed.is_finite().then_some(parsed)
+}
+
+fn parse_option_range(description: &str) -> (Option<f64>, Option<f64>) {
+    let Some(range) = find_parenthesized_segment(description, "from ") else {
+        return (None, None);
+    };
+    let Some((min, max)) = range.split_once(" to ") else {
+        return (None, None);
+    };
+
+    (
+        parse_numeric_option_bound(min),
+        parse_numeric_option_bound(max),
+    )
+}
+
+fn parse_option_default_value(description: &str) -> Option<String> {
+    find_parenthesized_segment(description, "default ").map(|value| {
+        value
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_string()
+    })
+}
+
+fn strip_option_metadata_segments(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+
+    while let Some(start) = rest.find('(') {
+        output.push_str(&rest[..start]);
+        let after_open = &rest[start + 1..];
+        let Some(end) = after_open.find(')') else {
+            output.push_str(&rest[start..]);
+            return output.split_whitespace().collect::<Vec<_>>().join(" ");
+        };
+
+        let segment = &after_open[..end];
+        if !(segment.starts_with("from ") || segment.starts_with("default ")) {
+            output.push('(');
+            output.push_str(segment);
+            output.push(')');
+        }
+
+        rest = &after_open[end + 1..];
+    }
+
+    output.push_str(rest);
+    output.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn parse_encoder_option_line(line: &str) -> Option<TranscodeEncoderOption> {
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with('-') {
+        return None;
+    }
+
+    let mut parts = trimmed.split_whitespace();
+    let flag = parts.next()?;
+    let value_type = parts.next()?;
+    if !value_type.starts_with('<') || !value_type.ends_with('>') {
+        return None;
+    }
+
+    let _caps = parts.next()?;
+    let raw_description = parts.collect::<Vec<_>>().join(" ");
+    let (min, max) = parse_option_range(&raw_description);
+
+    Some(TranscodeEncoderOption {
+        flag: flag.to_string(),
+        value_kind: value_kind_from_ffmpeg_type(value_type),
+        description: strip_option_metadata_segments(&raw_description),
+        default_value: parse_option_default_value(&raw_description),
+        min,
+        max,
+        choices: Vec::new(),
+    })
+}
+
+fn parse_encoder_option_choice_line(line: &str) -> Option<TranscodeEncoderOptionChoice> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('-') {
+        return None;
+    }
+
+    let tokens = trimmed.split_whitespace().collect::<Vec<_>>();
+    let value = tokens.first()?;
+    let caps_index = tokens
+        .iter()
+        .position(|token| looks_like_ffmpeg_option_caps(token))?;
+    let description = tokens.get(caps_index + 1..).unwrap_or_default().join(" ");
+
+    Some(TranscodeEncoderOptionChoice {
+        value: (*value).to_string(),
+        description,
+    })
+}
+
+pub(crate) fn parse_encoder_options(output: &str) -> Vec<TranscodeEncoderOption> {
+    let mut options = Vec::new();
+    let mut in_avoptions = false;
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.ends_with("AVOptions:") {
+            in_avoptions = true;
+            continue;
+        }
+
+        if !in_avoptions {
+            continue;
+        }
+
+        if trimmed.is_empty() || trimmed.starts_with("Exiting with exit code") {
+            continue;
+        }
+
+        if let Some(option) = parse_encoder_option_line(line) {
+            options.push(option);
+            continue;
+        }
+
+        if let Some(choice) = parse_encoder_option_choice_line(line) {
+            if let Some(option) = options.last_mut() {
+                option.choices.push(choice);
+            }
+        }
+    }
+
+    options
+}
+
 fn help_supports_flag(output: &str, flag: &str) -> bool {
     output.lines().any(|line| line.contains(flag))
 }
@@ -600,6 +809,7 @@ async fn build_video_encoder_capabilities(
         let supported_levels = parse_option_enum_values(&help, "level");
         let supports_crf = help_supports_flag(&help, "-crf");
         let supports_qp = help_supports_flag(&help, "-qp");
+        let options = parse_encoder_options(&help);
 
         capabilities.push(TranscodeVideoEncoderCapability {
             id: encoder.id.to_string(),
@@ -614,6 +824,7 @@ async fn build_video_encoder_capabilities(
             supports_crf,
             supports_qp,
             supports_bitrate: video_encoder_supports_bitrate(&help),
+            options,
         });
     }
 
@@ -631,12 +842,13 @@ async fn build_audio_encoder_capabilities(
             continue;
         }
 
-        let _help = run_ffmpeg_command(
+        let help = run_ffmpeg_command(
             ffmpeg_path,
             &["-hide_banner", "-h", &format!("encoder={}", encoder.id)],
         )
         .await
         .unwrap_or_default();
+        let options = parse_encoder_options(&help);
 
         capabilities.push(TranscodeAudioEncoderCapability {
             id: encoder.id.to_string(),
@@ -645,6 +857,7 @@ async fn build_audio_encoder_capabilities(
             supports_bitrate: encoder.codec != "pcm_s16le",
             supports_channels: true,
             supports_sample_rate: true,
+            options,
         });
     }
 
@@ -662,18 +875,20 @@ async fn build_subtitle_encoder_capabilities(
             continue;
         }
 
-        let _ = run_ffmpeg_command(
+        let help = run_ffmpeg_command(
             ffmpeg_path,
             &["-hide_banner", "-h", &format!("encoder={}", encoder.id)],
         )
         .await
         .unwrap_or_default();
+        let options = parse_encoder_options(&help);
 
         capabilities.push(TranscodeSubtitleEncoderCapability {
             id: encoder.id.to_string(),
             codec: encoder.codec.to_string(),
             label: encoder.label.to_string(),
             kind: encoder.kind.to_string(),
+            options,
         });
     }
 
@@ -830,11 +1045,11 @@ pub(crate) async fn get_transcode_capabilities(
 #[cfg(test)]
 mod tests {
     use super::{
-        TranscodeAudioEncoderCapability, TranscodeSubtitleEncoderCapability,
-        TranscodeVideoEncoderCapability, build_container_capabilities,
-        derive_bit_depths_from_pixel_formats, parse_ffmpeg_encoder_names,
-        parse_ffmpeg_hwaccel_names, parse_ffmpeg_muxer_names, parse_option_enum_values,
-        parse_supported_pixel_formats, video_encoder_supports_bitrate,
+        TranscodeAudioEncoderCapability, TranscodeEncoderOptionValueKind,
+        TranscodeSubtitleEncoderCapability, TranscodeVideoEncoderCapability,
+        build_container_capabilities, derive_bit_depths_from_pixel_formats, parse_encoder_options,
+        parse_ffmpeg_encoder_names, parse_ffmpeg_hwaccel_names, parse_ffmpeg_muxer_names,
+        parse_option_enum_values, parse_supported_pixel_formats, video_encoder_supports_bitrate,
     };
     use std::collections::HashSet;
 
@@ -856,6 +1071,7 @@ mod tests {
             supports_crf: false,
             supports_qp: false,
             supports_bitrate: true,
+            options: vec![],
         }
     }
 
@@ -867,6 +1083,7 @@ mod tests {
             supports_bitrate: true,
             supports_channels: true,
             supports_sample_rate: true,
+            options: vec![],
         }
     }
 
@@ -932,6 +1149,140 @@ mod tests {
         );
     }
 
+    fn find_option<'a>(
+        options: &'a [super::TranscodeEncoderOption],
+        flag: &str,
+    ) -> &'a super::TranscodeEncoderOption {
+        options
+            .iter()
+            .find(|option| option.flag == flag)
+            .expect("encoder option should exist")
+    }
+
+    #[test]
+    fn parse_encoder_options_extracts_libx264_metadata() {
+        let sample = r#"
+Encoder libx264 [libx264 H.264]:
+libx264 AVOptions:
+  -preset            <string>     E..V....... Set the encoding preset (default "medium")
+  -crf               <float>      E..V....... Select the quality for constant quality mode (from -1 to FLT_MAX) (default -1)
+  -aq-mode           <int>        E..V....... AQ method (from -1 to INT_MAX) (default -1)
+     none            0            E..V.......
+     variance        1            E..V....... Variance AQ
+     autovariance-biased 3        E..V....... Auto-variance AQ with bias
+"#;
+        let options = parse_encoder_options(sample);
+
+        let preset = find_option(&options, "-preset");
+        assert_eq!(preset.value_kind, TranscodeEncoderOptionValueKind::String);
+        assert_eq!(preset.default_value.as_deref(), Some("medium"));
+
+        let crf = find_option(&options, "-crf");
+        assert_eq!(crf.value_kind, TranscodeEncoderOptionValueKind::Float);
+        assert_eq!(crf.min, Some(-1.0));
+        assert_eq!(crf.max, None);
+        assert_eq!(crf.default_value.as_deref(), Some("-1"));
+
+        let aq_mode = find_option(&options, "-aq-mode");
+        assert_eq!(aq_mode.choices.len(), 3);
+        assert_eq!(aq_mode.choices[2].value, "autovariance-biased");
+    }
+
+    #[test]
+    fn parse_encoder_options_extracts_libsvtav1_ranges_and_dictionary() {
+        let sample = r#"
+Encoder libsvtav1 [SVT-AV1]:
+libsvtav1 AVOptions:
+  -preset            <int>        E..V....... Encoding preset (from -2 to 13) (default -2)
+  -crf               <int>        E..V....... Constant Rate Factor value (from 0 to 63) (default 0)
+  -svtav1-params     <dictionary> E..V....... Set options using key=value pairs
+"#;
+        let options = parse_encoder_options(sample);
+
+        let preset = find_option(&options, "-preset");
+        assert_eq!(preset.value_kind, TranscodeEncoderOptionValueKind::Int);
+        assert_eq!(preset.min, Some(-2.0));
+        assert_eq!(preset.max, Some(13.0));
+
+        let params = find_option(&options, "-svtav1-params");
+        assert_eq!(
+            params.value_kind,
+            TranscodeEncoderOptionValueKind::Dictionary
+        );
+    }
+
+    #[test]
+    fn parse_encoder_options_extracts_libopus_choices_and_float_ranges() {
+        let sample = r#"
+Encoder libopus [libopus Opus]:
+libopus AVOptions:
+  -application       <int>        E...A...... Intended application type (from 2048 to 2051) (default audio)
+     voip            2048         E...A...... Favor speech
+     audio           2049         E...A...... Favor faithfulness
+  -frame_duration    <float>      E...A...... Duration of a frame in milliseconds (from 2.5 to 120) (default 20)
+  -fec               <boolean>    E...A...... Enable inband FEC (default false)
+"#;
+        let options = parse_encoder_options(sample);
+
+        let application = find_option(&options, "-application");
+        assert_eq!(application.default_value.as_deref(), Some("audio"));
+        assert_eq!(application.choices[0].value, "voip");
+
+        let frame_duration = find_option(&options, "-frame_duration");
+        assert_eq!(frame_duration.min, Some(2.5));
+        assert_eq!(frame_duration.max, Some(120.0));
+
+        let fec = find_option(&options, "-fec");
+        assert_eq!(fec.value_kind, TranscodeEncoderOptionValueKind::Boolean);
+    }
+
+    #[test]
+    fn parse_encoder_options_extracts_videotoolbox_boolean_and_double() {
+        let sample = r#"
+Encoder hevc_videotoolbox [VideoToolbox H.265 Encoder]:
+hevc_videotoolbox AVOptions:
+  -profile           <int>        E..V....... Profile (from -99 to INT_MAX) (default -99)
+     main            1            E..V....... Main Profile
+  -alpha_quality     <double>     E..V....... Compression quality for the alpha channel (from 0 to 1) (default 0)
+  -allow_sw          <boolean>    E..V....... Allow software encoding (default false)
+"#;
+        let options = parse_encoder_options(sample);
+
+        let profile = find_option(&options, "-profile");
+        assert_eq!(profile.min, Some(-99.0));
+        assert_eq!(profile.max, None);
+        assert_eq!(profile.choices[0].description, "Main Profile");
+
+        let alpha_quality = find_option(&options, "-alpha_quality");
+        assert_eq!(
+            alpha_quality.value_kind,
+            TranscodeEncoderOptionValueKind::Float
+        );
+        assert_eq!(alpha_quality.min, Some(0.0));
+        assert_eq!(alpha_quality.max, Some(1.0));
+        assert_eq!(
+            alpha_quality.description,
+            "Compression quality for the alpha channel"
+        );
+
+        let allow_sw = find_option(&options, "-allow_sw");
+        assert_eq!(
+            allow_sw.value_kind,
+            TranscodeEncoderOptionValueKind::Boolean
+        );
+    }
+
+    #[test]
+    fn parse_encoder_options_returns_empty_without_avoptions() {
+        let sample = r#"
+Encoder srt [SubRip subtitle]:
+    General capabilities: none
+
+Exiting with exit code 0
+"#;
+        assert!(parse_encoder_options(sample).is_empty());
+    }
+
     #[test]
     fn derive_bit_depths_from_pixel_formats_detects_ten_bit() {
         let pixel_formats = vec!["yuv420p".to_string(), "p010le".to_string()];
@@ -994,6 +1345,7 @@ prores_videotoolbox AVOptions:
             codec: "mov_text".to_string(),
             label: "mov_text".to_string(),
             kind: "text".to_string(),
+            options: vec![],
         }];
 
         let containers = build_container_capabilities(
@@ -1095,6 +1447,7 @@ prores_videotoolbox AVOptions:
                 supports_crf: false,
                 supports_qp: false,
                 supports_bitrate: false,
+                options: vec![],
             },
             TranscodeVideoEncoderCapability {
                 id: "prores_ks".to_string(),
@@ -1109,6 +1462,7 @@ prores_videotoolbox AVOptions:
                 supports_crf: false,
                 supports_qp: false,
                 supports_bitrate: false,
+                options: vec![],
             },
             TranscodeVideoEncoderCapability {
                 id: "hevc_videotoolbox".to_string(),
@@ -1123,6 +1477,7 @@ prores_videotoolbox AVOptions:
                 supports_crf: false,
                 supports_qp: false,
                 supports_bitrate: true,
+                options: vec![],
             },
             TranscodeVideoEncoderCapability {
                 id: "h264_videotoolbox".to_string(),
@@ -1137,6 +1492,7 @@ prores_videotoolbox AVOptions:
                 supports_crf: false,
                 supports_qp: false,
                 supports_bitrate: true,
+                options: vec![],
             },
         ];
 
