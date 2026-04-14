@@ -1,17 +1,18 @@
 <script lang="ts">
   import type { Track, TranscodeFile, TranscodeSubtitleEncoderCapability, TranscodeSubtitleMode } from '$lib/types';
+  import type { TranscodeModeOption } from '$lib/services/transcode';
   import { formatLanguage } from '$lib/utils/format';
   import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
 
   import TranscodeAdditionalOverrides from './TranscodeAdditionalOverrides.svelte';
   import type { TranscodeProfileUpdater } from './types';
-    import ScrollArea from '../ui/scroll-area/scroll-area.svelte';
 
   interface Props {
     file: TranscodeFile;
     selectedSubtitleTracks: Track[];
     selectedSubtitleEncoder: TranscodeSubtitleEncoderCapability | null;
+    availableSubtitleModeOptions: TranscodeModeOption<TranscodeSubtitleMode>[];
     availableSubtitleEncoders: TranscodeSubtitleEncoderCapability[];
     commonOverrideFlags: string[];
     updateProfile: TranscodeProfileUpdater;
@@ -22,6 +23,7 @@
     file,
     selectedSubtitleTracks,
     selectedSubtitleEncoder,
+    availableSubtitleModeOptions,
     availableSubtitleEncoders,
     commonOverrideFlags,
     updateProfile,
@@ -49,9 +51,9 @@
         >
           <Select.Trigger class="w-full">{file.profile.subtitles.mode}</Select.Trigger>
           <Select.Content>
-            <Select.Item value="copy">copy</Select.Item>
-            <Select.Item value="convert_text">convert_text</Select.Item>
-            <Select.Item value="disable">disable</Select.Item>
+            {#each availableSubtitleModeOptions as option (option.value)}
+              <Select.Item value={option.value}>{option.label}</Select.Item>
+            {/each}
           </Select.Content>
         </Select.Root>
       </div>
@@ -87,14 +89,14 @@
 
     <div class="rounded-md max-h-48 overflow-y-scroll border bg-muted/30 p-3 text-sm space-y-2">
       <p class="font-medium">Detected subtitle tracks</p>
-        {#each selectedSubtitleTracks as track (track.id)}
+      {#each selectedSubtitleTracks as track (track.id)}
         <div class="rounded-md border bg-background px-3 py-2">
-            <p>{track.codec.toUpperCase()} {track.language ? `· ${formatLanguage(track.language)}` : ''}</p>
-            <p class="text-xs text-muted-foreground">
+          <p>{track.codec.toUpperCase()} {track.language ? `· ${formatLanguage(track.language)}` : ''}</p>
+          <p class="text-xs text-muted-foreground">
             {track.title ?? 'Untitled'} {track.default ? '· default' : ''} {track.forced ? '· forced' : ''}
-            </p>
+          </p>
         </div>
-        {/each}
+      {/each}
     </div>
   </div>
 {/if}

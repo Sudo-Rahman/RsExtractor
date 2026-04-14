@@ -4,6 +4,7 @@ import type {
   FFprobeOutput,
   Track,
   TranscodeAudioEncoderCapability,
+  TranscodeAudioMode,
   TranscodeAudioSettings,
   TranscodeAudioTrackOverride,
   TranscodeCapabilities,
@@ -14,9 +15,11 @@ import type {
   TranscodeProfile,
   TranscodeRequest,
   TranscodeSubtitleEncoderCapability,
+  TranscodeSubtitleMode,
   TranscodeSubtitleSettings,
   TranscodeTrackMetadataEdit,
   TranscodeVideoEncoderCapability,
+  TranscodeVideoMode,
   TranscodeVideoSettings,
 } from '$lib/types';
 
@@ -24,6 +27,11 @@ let transcodeIdCounter = 0;
 
 export interface TranscodePresetOption {
   value: string;
+  label: string;
+}
+
+export interface TranscodeModeOption<TMode extends string> {
+  value: TMode;
   label: string;
 }
 
@@ -317,6 +325,45 @@ export function getSubtitleEncoderCapability(
 ): TranscodeSubtitleEncoderCapability | undefined {
   if (!encoderId) return undefined;
   return capabilities?.subtitleEncoders.find((encoder) => encoder.id === encoderId);
+}
+
+function mapContainerEncoders<TEncoder>(
+  encoderIds: string[],
+  resolveEncoder: (encoderId: string) => TEncoder | undefined,
+): TEncoder[] {
+  return encoderIds
+    .map((encoderId) => resolveEncoder(encoderId))
+    .filter((encoder): encoder is TEncoder => Boolean(encoder));
+}
+
+export function getCompatibleVideoEncoders(
+  capabilities: TranscodeCapabilities | null,
+  container?: TranscodeContainerCapability | null,
+): TranscodeVideoEncoderCapability[] {
+  return mapContainerEncoders(
+    container?.supportedVideoEncoderIds ?? [],
+    (encoderId) => getVideoEncoderCapability(capabilities, encoderId),
+  );
+}
+
+export function getCompatibleAudioEncoders(
+  capabilities: TranscodeCapabilities | null,
+  container?: TranscodeContainerCapability | null,
+): TranscodeAudioEncoderCapability[] {
+  return mapContainerEncoders(
+    container?.supportedAudioEncoderIds ?? [],
+    (encoderId) => getAudioEncoderCapability(capabilities, encoderId),
+  );
+}
+
+export function getCompatibleSubtitleEncoders(
+  capabilities: TranscodeCapabilities | null,
+  container?: TranscodeContainerCapability | null,
+): TranscodeSubtitleEncoderCapability[] {
+  return mapContainerEncoders(
+    container?.supportedSubtitleEncoderIds ?? [],
+    (encoderId) => getSubtitleEncoderCapability(capabilities, encoderId),
+  );
 }
 
 export function getTracksByType(file: Pick<TranscodeFile, 'tracks'>, type: Track['type']): Track[] {
@@ -627,6 +674,91 @@ export function hasOnlyTextSubtitleTracks(file: Pick<TranscodeFile, 'tracks'>): 
   return subtitleTracks.length > 0 && subtitleTracks.every((track) => isTextSubtitleCodec(track.codec));
 }
 
+export function getAvailableVideoModeOptions(
+  file: Pick<TranscodeFile, 'hasVideo' | 'tracks'>,
+  container?: TranscodeContainerCapability | null,
+): TranscodeModeOption<TranscodeVideoMode>[] {
+  if (!file.hasVideo) {
+    return [{ value: 'disable', label: 'disable' }];
+  }
+
+  const options: TranscodeModeOption<TranscodeVideoMode>[] = [];
+  if (!container || canCopyPrimaryVideoTrackToContainer(file, container.id)) {
+    options.push({ value: 'copy', label: 'copy' });
+  }
+
+  if (!container || container.supportedVideoEncoderIds.length > 0) {
+    options.push({ value: 'transcode', label: 'transcode' });
+  }
+
+  options.push({ value: 'disable', label: 'disable' });
+  return options;
+}
+
+export function getAvailableAudioModeOptions(
+  file: Pick<TranscodeFile, 'hasAudio' | 'tracks'>,
+  container?: TranscodeContainerCapability | null,
+): TranscodeModeOption<TranscodeAudioMode>[] {
+  if (!file.hasAudio) {
+    return [{ value: 'disable', label: 'disable' }];
+  }
+
+  const options: TranscodeModeOption<TranscodeAudioMode>[] = [];
+  if (!container || canCopyAudioTracksToContainer(file, container.id)) {
+    options.push({ value: 'copy', label: 'copy' });
+  }
+
+  if (!container || container.supportedAudioEncoderIds.length > 0) {
+    options.push({ value: 'transcode', label: 'transcode' });
+  }
+
+  options.push({ value: 'disable', label: 'disable' });
+  return options;
+}
+
+export function getAvailableAudioTrackModeOptions(
+  track: Track | null,
+  container?: TranscodeContainerCapability | null,
+): TranscodeModeOption<TranscodeAudioMode>[] {
+  if (!track) {
+    return [{ value: 'disable', label: 'disable' }];
+  }
+
+  const options: TranscodeModeOption<TranscodeAudioMode>[] = [];
+  if (!container || canContainerCopyAudioCodec(container.id, track.codec)) {
+    options.push({ value: 'copy', label: 'copy' });
+  }
+
+  if (!container || container.supportedAudioEncoderIds.length > 0) {
+    options.push({ value: 'transcode', label: 'transcode' });
+  }
+
+  options.push({ value: 'disable', label: 'disable' });
+  return options;
+}
+
+export function getAvailableSubtitleModeOptions(
+  file: Pick<TranscodeFile, 'hasVideo' | 'tracks'>,
+  container?: TranscodeContainerCapability | null,
+): TranscodeModeOption<TranscodeSubtitleMode>[] {
+  const hasSubtitleTracks = getTracksByType(file, 'subtitle').length > 0;
+  if (!file.hasVideo || !hasSubtitleTracks || (container && container.kind !== 'video')) {
+    return [{ value: 'disable', label: 'disable' }];
+  }
+
+  const options: TranscodeModeOption<TranscodeSubtitleMode>[] = [];
+  if (!container || canCopySubtitleTracksToContainer(file, container.id)) {
+    options.push({ value: 'copy', label: 'copy' });
+  }
+
+  if (!container || (hasOnlyTextSubtitleTracks(file) && container.supportedSubtitleEncoderIds.length > 0)) {
+    options.push({ value: 'convert_text', label: 'convert_text' });
+  }
+
+  options.push({ value: 'disable', label: 'disable' });
+  return options;
+}
+
 function normalizeCodecName(codec?: string): string | undefined {
   const normalized = codec?.trim().toLowerCase();
   return normalized ? normalized : undefined;
@@ -748,81 +880,6 @@ function applyVideoQualityDefaults(
   } else {
     settings.bitrateKbps = undefined;
   }
-}
-
-function getContainerCandidates(
-  capabilities: TranscodeCapabilities | null,
-  hasVideo: boolean,
-): TranscodeContainerCapability[] {
-  return capabilities?.containers.filter((container) =>
-    hasVideo ? container.kind === 'video' : container.kind === 'audio',
-  ) ?? [];
-}
-
-function containerSupportsTranscodeProfile(
-  container: TranscodeContainerCapability,
-  profile: TranscodeProfile,
-  file: Pick<TranscodeFile, 'hasVideo' | 'hasAudio' | 'tracks'>,
-): boolean {
-  if (file.hasVideo && profile.video.mode === 'copy' && !canCopyPrimaryVideoTrackToContainer(file, container.id)) {
-    return false;
-  }
-
-  if (file.hasVideo && profile.video.mode === 'transcode') {
-    if (!profile.video.encoderId) {
-      return container.supportedVideoEncoderIds.length > 0;
-    }
-
-    if (!container.supportedVideoEncoderIds.includes(profile.video.encoderId)) {
-      return false;
-    }
-  }
-
-  if (file.hasAudio && profile.audio.mode === 'transcode') {
-    if (!containerSupportsAudioProfile(container, profile, file)) {
-      return false;
-    }
-  }
-
-  if (file.hasAudio && (profile.audio.mode === 'copy' || profile.audio.trackOverrides.length > 0)) {
-    if (!containerSupportsAudioProfile(container, profile, file)) {
-      return false;
-    }
-  }
-
-  if (getTracksByType(file, 'subtitle').length > 0 && profile.subtitles.mode === 'convert_text') {
-    if (!profile.subtitles.encoderId) {
-      return container.supportedSubtitleEncoderIds.length > 0;
-    }
-
-    if (!container.supportedSubtitleEncoderIds.includes(profile.subtitles.encoderId)) {
-      return false;
-    }
-  }
-
-  if (getTracksByType(file, 'subtitle').length > 0 && profile.subtitles.mode === 'copy') {
-    return canCopySubtitleTracksToContainer(file, container.id);
-  }
-
-  return true;
-}
-
-export function findCompatibleContainerId(
-  capabilities: TranscodeCapabilities | null,
-  profile: TranscodeProfile,
-  file: Pick<TranscodeFile, 'hasVideo' | 'hasAudio' | 'tracks'>,
-): string | undefined {
-  const candidates = getContainerCandidates(capabilities, file.hasVideo);
-  if (candidates.length === 0) {
-    return undefined;
-  }
-
-  const requestedContainer = candidates.find((container) => container.id === profile.containerId);
-  if (requestedContainer && containerSupportsTranscodeProfile(requestedContainer, profile, file)) {
-    return requestedContainer.id;
-  }
-
-  return candidates.find((container) => containerSupportsTranscodeProfile(container, profile, file))?.id;
 }
 
 export function buildDefaultVideoSettings(
@@ -1119,32 +1176,6 @@ function normalizeAudioTrackOverrides(
     });
 }
 
-function containerSupportsAudioProfile(
-  container: TranscodeContainerCapability,
-  profile: Pick<TranscodeProfile, 'audio'>,
-  file: Pick<TranscodeFile, 'tracks'>,
-): boolean {
-  const audioTracks = getTracksByType(file, 'audio');
-
-  return audioTracks.every((track) => {
-    const effectiveSettings = getEffectiveAudioSettingsForTrack(profile.audio, track.id);
-
-    if (effectiveSettings.mode === 'disable') {
-      return true;
-    }
-
-    if (effectiveSettings.mode === 'copy') {
-      return canContainerCopyAudioCodec(container.id, track.codec);
-    }
-
-    if (!effectiveSettings.encoderId) {
-      return container.supportedAudioEncoderIds.length > 0;
-    }
-
-    return container.supportedAudioEncoderIds.includes(effectiveSettings.encoderId);
-  });
-}
-
 function hasEnabledAudioOutput(
   profile: Pick<TranscodeProfile, 'audio'>,
   file: Pick<TranscodeFile, 'tracks'>,
@@ -1168,6 +1199,15 @@ export function clampTranscodeProfile(
     next.video = buildDefaultVideoSettings(capabilities, containerId, false);
   } else {
     next.video.mode = next.video.mode === 'copy' || next.video.mode === 'disable' ? next.video.mode : 'transcode';
+    const hasCompatibleVideoEncoder = (container?.supportedVideoEncoderIds.length ?? 0) > 0;
+
+    if (next.video.mode === 'copy' && !canCopyPrimaryVideoTrackToContainer(file, containerId)) {
+      next.video.mode = hasCompatibleVideoEncoder ? 'transcode' : 'disable';
+    }
+
+    if (next.video.mode === 'transcode' && !hasCompatibleVideoEncoder) {
+      next.video.mode = 'disable';
+    }
 
     if (next.video.mode === 'transcode') {
       const supportedEncoderId = next.video.encoderId && container?.supportedVideoEncoderIds.includes(next.video.encoderId)
@@ -1198,6 +1238,15 @@ export function clampTranscodeProfile(
     next.audio = buildDefaultAudioSettings(capabilities, containerId, false);
   } else {
     next.audio.mode = next.audio.mode === 'copy' || next.audio.mode === 'disable' ? next.audio.mode : 'transcode';
+    const hasCompatibleAudioEncoder = (container?.supportedAudioEncoderIds.length ?? 0) > 0;
+
+    if (next.audio.mode === 'copy' && !canCopyAudioTracksToContainer(file, containerId)) {
+      next.audio.mode = hasCompatibleAudioEncoder ? 'transcode' : 'disable';
+    }
+
+    if (next.audio.mode === 'transcode' && !hasCompatibleAudioEncoder) {
+      next.audio.mode = 'disable';
+    }
 
     if (next.audio.mode === 'transcode') {
       const supportedEncoderId = next.audio.encoderId && container?.supportedAudioEncoderIds.includes(next.audio.encoderId)
@@ -1228,8 +1277,11 @@ export function clampTranscodeProfile(
   if (!hasSubtitleTracks || container?.kind !== 'video') {
     next.subtitles = buildDefaultSubtitleSettings(capabilities, containerId, false);
   } else {
-    if (next.subtitles.mode === 'copy' && !canCopySubtitleTracksToContainer(file, containerId)) {
-      if (hasOnlyTextSubtitleTracks(file) && (container?.supportedSubtitleEncoderIds.length ?? 0) > 0) {
+    const canCopySubtitles = canCopySubtitleTracksToContainer(file, containerId);
+    const canConvertTextSubtitles = hasOnlyTextSubtitleTracks(file) && (container?.supportedSubtitleEncoderIds.length ?? 0) > 0;
+
+    if (next.subtitles.mode === 'copy' && !canCopySubtitles) {
+      if (canConvertTextSubtitles) {
         next.subtitles.mode = 'convert_text';
         next.subtitles.encoderId = container?.defaultSubtitleEncoderId ?? container?.supportedSubtitleEncoderIds[0];
       } else {
@@ -1244,21 +1296,17 @@ export function clampTranscodeProfile(
         ? next.subtitles.encoderId
         : container?.defaultSubtitleEncoderId ?? container?.supportedSubtitleEncoderIds[0];
 
-      const hasUnsupportedImageSubtitles = getTracksByType(file, 'subtitle').some((track) =>
-        !isTextSubtitleCodec(track.codec) && !canContainerCopySubtitleCodec(containerId, track.codec),
-      );
-
-      if (hasUnsupportedImageSubtitles) {
-        next.subtitles.mode = 'disable';
-        next.subtitles.encoderId = undefined;
-      } else if (!supportedEncoderId) {
-        if (canCopySubtitleTracksToContainer(file, containerId)) {
+      if (!canConvertTextSubtitles) {
+        if (canCopySubtitles) {
           next.subtitles.mode = 'copy';
           next.subtitles.encoderId = undefined;
         } else {
           next.subtitles.mode = 'disable';
           next.subtitles.encoderId = undefined;
         }
+      } else if (!supportedEncoderId) {
+        next.subtitles.mode = 'disable';
+        next.subtitles.encoderId = undefined;
       } else {
         next.subtitles.encoderId = supportedEncoderId;
       }
@@ -1273,13 +1321,7 @@ export function normalizeProfileForProfileChange(
   capabilities: TranscodeCapabilities | null,
   file: Pick<TranscodeFile, 'hasVideo' | 'hasAudio' | 'tracks'>,
 ): TranscodeProfile {
-  const next = cloneTranscodeProfile(profile);
-  const compatibleContainerId = findCompatibleContainerId(capabilities, next, file);
-  if (compatibleContainerId) {
-    next.containerId = compatibleContainerId;
-  }
-
-  return clampTranscodeProfile(next, capabilities, file);
+  return clampTranscodeProfile(profile, capabilities, file);
 }
 
 export function normalizeProfileForContainerChange(

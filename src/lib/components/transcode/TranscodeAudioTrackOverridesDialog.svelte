@@ -6,6 +6,7 @@
     TranscodeAdditionalArg,
     TranscodeAudioEncoderCapability,
     TranscodeAudioTrackOverride,
+    TranscodeContainerCapability,
     TranscodeFile,
     TranscodeAudioMode,
   } from '$lib/types';
@@ -17,6 +18,7 @@
   import {
     cloneAudioTrackOverride,
     cloneAudioTrackOverrides,
+    getAvailableAudioTrackModeOptions,
     getEffectiveAudioSettingsForTrack,
   } from '$lib/services/transcode';
   import { formatLanguage } from '$lib/utils/format';
@@ -30,6 +32,7 @@
     open: boolean;
     file: TranscodeFile | null;
     audioTracks: Track[];
+    selectedContainer: TranscodeContainerCapability | null;
     availableAudioEncoders: TranscodeAudioEncoderCapability[];
     commonOverrideFlags: string[];
     createId: (prefix: string) => string;
@@ -40,6 +43,7 @@
     open = $bindable(),
     file,
     audioTracks,
+    selectedContainer,
     availableAudioEncoders,
     commonOverrideFlags,
     createId,
@@ -69,6 +73,9 @@
     selectedTrackEffectiveSettings
       ? availableAudioEncoders.find((encoder) => encoder.id === selectedTrackEffectiveSettings.encoderId) ?? null
       : null,
+  );
+  const selectedTrackModeOptions = $derived.by(() =>
+    getAvailableAudioTrackModeOptions(selectedTrack, selectedContainer),
   );
 
   $effect(() => {
@@ -331,6 +338,7 @@
                     settings={selectedTrackEffectiveSettings}
                     sourceTrack={selectedTrack}
                     selectedEncoder={selectedTrackEncoder}
+                    modeOptions={selectedTrackModeOptions}
                     availableAudioEncoders={availableAudioEncoders}
                     copyMessage="This track will be copied without re-encoding."
                     disableMessage="This track is disabled for this output."

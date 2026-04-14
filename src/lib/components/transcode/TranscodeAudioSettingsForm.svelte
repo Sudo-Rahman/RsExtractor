@@ -6,6 +6,7 @@
     TranscodeAudioSettings,
     TranscodeAudioTrackOverride,
   } from '$lib/types';
+  import type { TranscodeModeOption } from '$lib/services/transcode';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Switch } from '$lib/components/ui/switch';
@@ -18,6 +19,7 @@
     sourceTrack: Track | null;
     showSourceTrackDetails?: boolean;
     selectedEncoder: TranscodeAudioEncoderCapability | null;
+    modeOptions: TranscodeModeOption<TranscodeAudioMode>[];
     availableAudioEncoders: TranscodeAudioEncoderCapability[];
     copyMessage: string;
     disableMessage: string;
@@ -34,6 +36,7 @@
     sourceTrack,
     showSourceTrackDetails = true,
     selectedEncoder,
+    modeOptions,
     availableAudioEncoders,
     copyMessage,
     disableMessage,
@@ -76,9 +79,9 @@
       >
         <Select.Trigger class="w-full">{settings.mode}</Select.Trigger>
         <Select.Content>
-          <Select.Item value="copy">copy</Select.Item>
-          <Select.Item value="transcode">transcode</Select.Item>
-          <Select.Item value="disable">disable</Select.Item>
+          {#each modeOptions as option (option.value)}
+            <Select.Item value={option.value}>{option.label}</Select.Item>
+          {/each}
         </Select.Content>
       </Select.Root>
     </div>

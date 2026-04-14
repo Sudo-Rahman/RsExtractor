@@ -9,6 +9,7 @@
   import {
     getDefaultVideoPresetValue,
     hasManualVideoQualityControls,
+    type TranscodeModeOption,
     type TranscodePresetOption,
   } from '$lib/services/transcode';
   import { formatResolution } from '$lib/utils/format';
@@ -23,6 +24,7 @@
     file: TranscodeFile;
     selectedVideoTrack: Track | null;
     selectedVideoEncoder: TranscodeVideoEncoderCapability | null;
+    availableVideoModeOptions: TranscodeModeOption<TranscodeVideoMode>[];
     availableVideoEncoders: TranscodeVideoEncoderCapability[];
     videoProfileOptions: string[];
     videoLevelOptions: string[];
@@ -37,6 +39,7 @@
     file,
     selectedVideoTrack,
     selectedVideoEncoder,
+    availableVideoModeOptions,
     availableVideoEncoders,
     videoProfileOptions,
     videoLevelOptions,
@@ -90,9 +93,9 @@
         >
           <Select.Trigger class="w-full">{file.profile.video.mode}</Select.Trigger>
           <Select.Content>
-            <Select.Item value="copy">copy</Select.Item>
-            <Select.Item value="transcode">transcode</Select.Item>
-            <Select.Item value="disable">disable</Select.Item>
+            {#each availableVideoModeOptions as option (option.value)}
+              <Select.Item value={option.value}>{option.label}</Select.Item>
+            {/each}
           </Select.Content>
         </Select.Root>
       </div>

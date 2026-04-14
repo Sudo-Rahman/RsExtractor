@@ -1,7 +1,14 @@
 <script lang="ts">
   import { Settings2 } from '@lucide/svelte';
 
-  import type { Track, TranscodeAudioEncoderCapability, TranscodeAudioMode, TranscodeFile } from '$lib/types';
+  import type {
+    Track,
+    TranscodeAudioEncoderCapability,
+    TranscodeAudioMode,
+    TranscodeContainerCapability,
+    TranscodeFile,
+  } from '$lib/types';
+  import type { TranscodeModeOption } from '$lib/services/transcode';
   import { Button } from '$lib/components/ui/button';
 
   import TranscodeAdditionalOverrides from './TranscodeAdditionalOverrides.svelte';
@@ -14,6 +21,8 @@
     audioTracks: Track[];
     selectedAudioTrack: Track | null;
     selectedAudioEncoder: TranscodeAudioEncoderCapability | null;
+    selectedContainer: TranscodeContainerCapability | null;
+    availableAudioModeOptions: TranscodeModeOption<TranscodeAudioMode>[];
     availableAudioEncoders: TranscodeAudioEncoderCapability[];
     commonOverrideFlags: string[];
     updateProfile: TranscodeProfileUpdater;
@@ -25,6 +34,8 @@
     audioTracks,
     selectedAudioTrack,
     selectedAudioEncoder,
+    selectedContainer,
+    availableAudioModeOptions,
     availableAudioEncoders,
     commonOverrideFlags,
     updateProfile,
@@ -90,6 +101,7 @@
       sourceTrack={selectedAudioTrack}
       showSourceTrackDetails={!hasMultipleAudioTracks}
       selectedEncoder={selectedAudioEncoder}
+      modeOptions={availableAudioModeOptions}
       availableAudioEncoders={availableAudioEncoders}
       copyMessage="Audio streams will be copied without re-encoding."
       disableMessage="Audio streams are disabled for this output."
@@ -140,6 +152,7 @@
   bind:open={trackOverridesDialogOpen}
   file={file}
   audioTracks={audioTracks}
+  selectedContainer={selectedContainer}
   availableAudioEncoders={availableAudioEncoders}
   commonOverrideFlags={commonOverrideFlags}
   createId={createId}

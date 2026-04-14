@@ -147,14 +147,21 @@ const KNOWN_VIDEO_ENCODERS: &[KnownVideoEncoder] = &[
         codec: "av1",
         label: "AV1 (SVT-AV1)",
         is_hardware: false,
-        supported_container_ids: &["mp4", "mkv"],
+        supported_container_ids: &["mp4", "mkv", "webm"],
     },
     KnownVideoEncoder {
         id: "libaom-av1",
         codec: "av1",
         label: "AV1 (libaom)",
         is_hardware: false,
-        supported_container_ids: &["mp4", "mkv"],
+        supported_container_ids: &["mp4", "mkv", "webm"],
+    },
+    KnownVideoEncoder {
+        id: "libvpx",
+        codec: "vp8",
+        label: "VP8 (libvpx)",
+        is_hardware: false,
+        supported_container_ids: &["webm", "mkv"],
     },
     KnownVideoEncoder {
         id: "libvpx-vp9",
@@ -201,7 +208,7 @@ const KNOWN_AUDIO_ENCODERS: &[KnownAudioEncoder] = &[
     KnownAudioEncoder {
         id: "libvorbis",
         codec: "vorbis",
-        label: "Vorbis",
+        label: "Vorbis (libvorbis)",
         supported_container_ids: &["mkv", "webm", "ogg"],
     },
     KnownAudioEncoder {
@@ -284,6 +291,7 @@ const KNOWN_CONTAINERS: &[KnownContainer] = &[
             "libx264",
             "libsvtav1",
             "libaom-av1",
+            "libvpx",
             "libvpx-vp9",
         ],
         default_audio_encoder_priority: &[
@@ -319,7 +327,7 @@ const KNOWN_CONTAINERS: &[KnownContainer] = &[
         extension: ".webm",
         kind: "video",
         muxer_name: "webm",
-        default_video_encoder_priority: &["libvpx-vp9", "libsvtav1", "libaom-av1"],
+        default_video_encoder_priority: &["libvpx-vp9", "libsvtav1", "libaom-av1", "libvpx"],
         default_audio_encoder_priority: &["libopus", "libvorbis"],
         default_subtitle_encoder_priority: &["webvtt"],
     },
@@ -834,6 +842,34 @@ mod tests {
         values.iter().map(|value| (*value).to_string()).collect()
     }
 
+    fn video_encoder(id: &str, codec: &str) -> TranscodeVideoEncoderCapability {
+        TranscodeVideoEncoderCapability {
+            id: id.to_string(),
+            codec: codec.to_string(),
+            label: id.to_string(),
+            is_hardware: false,
+            supported_pixel_formats: vec!["yuv420p".to_string()],
+            supported_profiles: vec![],
+            supported_levels: vec![],
+            supported_bit_depths: vec![8],
+            supports_preset: false,
+            supports_crf: false,
+            supports_qp: false,
+            supports_bitrate: true,
+        }
+    }
+
+    fn audio_encoder(id: &str, codec: &str) -> TranscodeAudioEncoderCapability {
+        TranscodeAudioEncoderCapability {
+            id: id.to_string(),
+            codec: codec.to_string(),
+            label: id.to_string(),
+            supports_bitrate: true,
+            supports_channels: true,
+            supports_sample_rate: true,
+        }
+    }
+
     #[test]
     fn parse_ffmpeg_encoder_names_extracts_encoder_ids() {
         let sample = r#"
@@ -946,27 +982,13 @@ prores_videotoolbox AVOptions:
     fn build_container_capabilities_filters_by_muxers_and_encoder_support() {
         let muxers = to_set(&["mp4", "matroska"]);
         let video_encoders = vec![TranscodeVideoEncoderCapability {
-            id: "hevc_videotoolbox".to_string(),
-            codec: "hevc".to_string(),
-            label: "HEVC".to_string(),
             is_hardware: true,
             supported_pixel_formats: vec!["p010le".to_string()],
             supported_profiles: vec!["main10".to_string()],
-            supported_levels: vec![],
             supported_bit_depths: vec![10],
-            supports_preset: false,
-            supports_crf: false,
-            supports_qp: false,
-            supports_bitrate: true,
+            ..video_encoder("hevc_videotoolbox", "hevc")
         }];
-        let audio_encoders = vec![TranscodeAudioEncoderCapability {
-            id: "aac".to_string(),
-            codec: "aac".to_string(),
-            label: "AAC".to_string(),
-            supports_bitrate: true,
-            supports_channels: true,
-            supports_sample_rate: true,
-        }];
+        let audio_encoders = vec![audio_encoder("aac", "aac")];
         let subtitle_encoders = vec![TranscodeSubtitleEncoderCapability {
             id: "mov_text".to_string(),
             codec: "mov_text".to_string(),
@@ -999,6 +1021,61 @@ prores_videotoolbox AVOptions:
             .find(|container| container.id == "mkv")
             .expect("mkv capability should exist");
         assert!(mkv.supported_audio_encoder_ids.contains(&"aac".to_string()));
+    }
+
+    #[test]
+    fn build_container_capabilities_includes_webm_av1_vp8_and_libvorbis() {
+        let muxers = to_set(&["webm"]);
+        let video_encoders = vec![
+            video_encoder("libsvtav1", "av1"),
+            video_encoder("libaom-av1", "av1"),
+            video_encoder("libvpx", "vp8"),
+            video_encoder("libvpx-vp9", "vp9"),
+            video_encoder("prores_ks", "prores"),
+        ];
+        let audio_encoders = vec![
+            audio_encoder("libopus", "opus"),
+            audio_encoder("libvorbis", "vorbis"),
+            audio_encoder("aac", "aac"),
+        ];
+
+        let containers =
+            build_container_capabilities(&muxers, &video_encoders, &audio_encoders, &[]);
+        let webm = containers
+            .iter()
+            .find(|container| container.id == "webm")
+            .expect("webm capability should exist");
+
+        assert!(
+            webm.supported_video_encoder_ids
+                .contains(&"libsvtav1".to_string())
+        );
+        assert!(
+            webm.supported_video_encoder_ids
+                .contains(&"libaom-av1".to_string())
+        );
+        assert!(
+            webm.supported_video_encoder_ids
+                .contains(&"libvpx".to_string())
+        );
+        assert!(
+            webm.supported_video_encoder_ids
+                .contains(&"libvpx-vp9".to_string())
+        );
+        assert!(
+            !webm
+                .supported_video_encoder_ids
+                .contains(&"prores_ks".to_string())
+        );
+        assert!(
+            webm.supported_audio_encoder_ids
+                .contains(&"libvorbis".to_string())
+        );
+        assert!(
+            !webm
+                .supported_audio_encoder_ids
+                .contains(&"aac".to_string())
+        );
     }
 
     #[test]
