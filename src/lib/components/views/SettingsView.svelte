@@ -565,7 +565,7 @@
         <div class="text-sm text-muted-foreground">
           <p>
             MediaFlow is an all-in-one desktop toolkit for multimedia workflows: Extraction, Merge,
-            Audio to Subs, Video OCR, AI Translation, Rename, and file Info analysis.
+            Transcode, Audio to Subs, Video OCR, AI Translation, Rename, and file Info analysis.
           </p>
           <p class="mt-2">
             Built with Tauri, Svelte 5, TypeScript, Rust, and FFmpeg for fast local processing.
