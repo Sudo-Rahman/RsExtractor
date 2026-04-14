@@ -7,13 +7,13 @@
 </p>
 
 <p align="center">
-  <strong>Desktop multimedia toolbox for extraction, merge, OCR, transcription, translation, renaming, and analysis.</strong>
+  <strong>Desktop multimedia toolbox for extraction, merge, transcoding, OCR, transcription, translation, renaming, and analysis.</strong>
 </p>
 
 ## Why MediaFlow
 
 MediaFlow is a local-first desktop app built for high-volume subtitle and track workflows.
-It combines FFmpeg-powered media processing with AI-assisted tools in one interface.
+It combines FFmpeg-powered media processing, including transcoding, with AI-assisted tools in one interface.
 
 ## Tools
 
@@ -28,26 +28,31 @@ It combines FFmpeg-powered media processing with AI-assisted tools in one interf
 - Auto-match by episode naming patterns.
 - Configure language/title/default/forced/delay per track.
 
-### 3. Audio to Subs
+### 3. Transcode
+- Repackage and transcode media with advanced FFmpeg profiles.
+- Configure video, audio, subtitle, and metadata outputs.
+- Use AI-assisted analysis to guide transcode settings.
+
+### 4. Audio to Subs
 - Transcribe audio/video to subtitles with Deepgram.
 - Manage multiple transcription versions.
 - Batch process and export SRT/VTT/TXT.
 
-### 4. Video OCR
+### 5. Video OCR
 - Extract burned-in subtitles from video frames.
 - Use a global OCR region for all files with per-file override when needed.
 - Review OCR versions and export subtitles.
 
-### 5. AI Translation
+### 6. AI Translation
 - Translate subtitle files with OpenAI, Anthropic, Google, or OpenRouter.
 - Multi-file queue with progress and batch splitting.
 - Keep formatting and subtitle timing structure.
 
-### 6. Rename
+### 7. Rename
 - Rule-based bulk rename/copy workflows.
 - Preview results, detect conflicts, then execute safely.
 
-### 7. Info
+### 8. Info
 - Quick media inspection for container, tracks, codecs, bitrate, and metadata.
 
 ## Core Features
