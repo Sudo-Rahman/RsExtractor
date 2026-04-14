@@ -25,6 +25,12 @@
     extractTranscodeAnalysisFrames,
     fileHasAudio,
     fileHasVideo,
+    getAvailableAudioModeOptions,
+    getAvailableSubtitleModeOptions,
+    getAvailableVideoModeOptions,
+    getCompatibleAudioEncoders,
+    getCompatibleSubtitleEncoders,
+    getCompatibleVideoEncoders,
     getAudioEncoderCapability,
     getContainerCapability,
     getContainerExtension,
@@ -128,15 +134,24 @@
       : null,
   );
   const availableVideoEncoders = $derived.by(() =>
-    selectedFile?.hasVideo ? transcodeStore.capabilities?.videoEncoders ?? [] : [],
+    selectedFile?.hasVideo ? getCompatibleVideoEncoders(transcodeStore.capabilities, selectedContainer) : [],
   );
   const availableAudioEncoders = $derived.by(() =>
-    selectedFile?.hasAudio ? transcodeStore.capabilities?.audioEncoders ?? [] : [],
+    selectedFile?.hasAudio ? getCompatibleAudioEncoders(transcodeStore.capabilities, selectedContainer) : [],
   );
   const availableSubtitleEncoders = $derived.by(() =>
-    (selectedContainer?.supportedSubtitleEncoderIds ?? [])
-      .map((encoderId) => getSubtitleEncoderCapability(transcodeStore.capabilities, encoderId))
-      .filter((encoder): encoder is NonNullable<typeof encoder> => Boolean(encoder)),
+    selectedSubtitleTracks.length > 0
+      ? getCompatibleSubtitleEncoders(transcodeStore.capabilities, selectedContainer)
+      : [],
+  );
+  const availableVideoModeOptions = $derived.by(() =>
+    selectedFile ? getAvailableVideoModeOptions(selectedFile, selectedContainer) : [],
+  );
+  const availableAudioModeOptions = $derived.by(() =>
+    selectedFile ? getAvailableAudioModeOptions(selectedFile, selectedContainer) : [],
+  );
+  const availableSubtitleModeOptions = $derived.by(() =>
+    selectedFile ? getAvailableSubtitleModeOptions(selectedFile, selectedContainer) : [],
   );
   const selectedVideoEncoder = $derived.by(() =>
     selectedFile
@@ -984,6 +999,7 @@
                 file={selectedFile}
                 selectedVideoTrack={selectedVideoTrack}
                 selectedVideoEncoder={selectedVideoEncoder}
+                availableVideoModeOptions={availableVideoModeOptions}
                 availableVideoEncoders={availableVideoEncoders}
                 videoProfileOptions={videoProfileOptions}
                 videoLevelOptions={videoLevelOptions}
@@ -1001,6 +1017,8 @@
                 audioTracks={selectedAudioTracks}
                 selectedAudioTrack={selectedAudioTrack}
                 selectedAudioEncoder={selectedAudioEncoder}
+                selectedContainer={selectedContainer}
+                availableAudioModeOptions={availableAudioModeOptions}
                 availableAudioEncoders={availableAudioEncoders}
                 commonOverrideFlags={COMMON_OVERRIDE_FLAGS.audio}
                 updateProfile={updateSelectedProfile}
@@ -1013,6 +1031,7 @@
                 file={selectedFile}
                 selectedSubtitleTracks={selectedSubtitleTracks}
                 selectedSubtitleEncoder={selectedSubtitleEncoder}
+                availableSubtitleModeOptions={availableSubtitleModeOptions}
                 availableSubtitleEncoders={availableSubtitleEncoders}
                 commonOverrideFlags={COMMON_OVERRIDE_FLAGS.subtitles}
                 updateProfile={updateSelectedProfile}

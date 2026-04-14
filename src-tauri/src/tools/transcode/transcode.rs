@@ -1206,8 +1206,7 @@ mod tests {
         let preferred_container_id = match encoder_id {
             "libx264" | "h264_videotoolbox" => Some("mp4"),
             "libx265" | "hevc_videotoolbox" => Some("mp4"),
-            "libsvtav1" | "libaom-av1" => Some("mkv"),
-            "libvpx-vp9" => Some("webm"),
+            "libsvtav1" | "libaom-av1" | "libvpx" | "libvpx-vp9" => Some("webm"),
             "prores_ks" | "prores_videotoolbox" => Some("mov"),
             _ => None,
         };
@@ -1874,6 +1873,7 @@ mod tests {
             "hevc_videotoolbox",
             "libsvtav1",
             "libaom-av1",
+            "libvpx",
             "libvpx-vp9",
             "prores_ks",
             "prores_videotoolbox",
