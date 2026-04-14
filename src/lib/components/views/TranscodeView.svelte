@@ -19,6 +19,7 @@
   import {
     buildDefaultTranscodeMetadata,
     buildDefaultTranscodeProfile,
+    canEditTranscodeMetadata,
     clampTranscodeProfile,
     cloneTranscodeProfile,
     createTranscodeRequest,
@@ -186,6 +187,9 @@
   const videoLevelOptions = $derived(selectedVideoEncoder?.supportedLevels ?? []);
   const videoPixelFormatOptions = $derived(selectedVideoEncoder?.supportedPixelFormats ?? []);
   const videoPresetOptions = $derived.by(() => getVideoPresetOptions(selectedVideoEncoder?.id));
+  const metadataTabAvailable = $derived.by(() =>
+    selectedFile ? canEditTranscodeMetadata(selectedFile, transcodeStore.capabilities) : false,
+  );
 
   function getExtensionFromPath(path: string): string {
     const normalized = path.toLowerCase();
@@ -974,11 +978,13 @@
             onValueChange={(value) => transcodeStore.setActiveTab(value as TranscodeTab)}
             class="gap-4"
           >
-            <Tabs.List class="grid w-full grid-cols-5">
+            <Tabs.List class={`grid w-full ${metadataTabAvailable ? 'grid-cols-5' : 'grid-cols-4'}`}>
               <Tabs.Trigger value="video">Video</Tabs.Trigger>
               <Tabs.Trigger value="audio">Audio</Tabs.Trigger>
               <Tabs.Trigger value="subtitles">Subtitles</Tabs.Trigger>
-              <Tabs.Trigger value="metadata">Metadata</Tabs.Trigger>
+              {#if metadataTabAvailable}
+                <Tabs.Trigger value="metadata">Metadata</Tabs.Trigger>
+              {/if}
               <Tabs.Trigger value="output">Output</Tabs.Trigger>
             </Tabs.List>
 
@@ -1039,16 +1045,18 @@
               />
             </Tabs.Content>
 
-            <Tabs.Content value="metadata" class="space-y-4">
-              <TranscodeMetadataTab
-                file={selectedFile}
-                capabilities={transcodeStore.capabilities}
-                selectedContainer={selectedContainer}
-                isProcessing={transcodeStore.isProcessing}
-                onUpdateMetadata={handleUpdateMetadata}
-                onResetMetadata={handleResetMetadata}
-              />
-            </Tabs.Content>
+            {#if metadataTabAvailable}
+              <Tabs.Content value="metadata" class="space-y-4">
+                <TranscodeMetadataTab
+                  file={selectedFile}
+                  capabilities={transcodeStore.capabilities}
+                  selectedContainer={selectedContainer}
+                  isProcessing={transcodeStore.isProcessing}
+                  onUpdateMetadata={handleUpdateMetadata}
+                  onResetMetadata={handleResetMetadata}
+                />
+              </Tabs.Content>
+            {/if}
 
             <Tabs.Content value="output" class="space-y-4">
               <TranscodeOutputTab
