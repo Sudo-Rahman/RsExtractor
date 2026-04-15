@@ -41,7 +41,7 @@ jobs:
         run: rustup target add ${{ matrix.target }}
 
       - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2.9.1
         with:
           workspaces: src-tauri -> target
           shared-key: macos-${{ matrix.target }}
