@@ -849,7 +849,7 @@ mod tests {
             .expect("failed to prepare ocr video");
         let models_dir = ensure_models_dir().await.expect("models should exist");
         let result = run_ocr_pipeline_with_bins(
-            "ffmpeg",
+            crate::test_support::ffmpeg::ffmpeg_path(),
             video.to_string_lossy().as_ref(),
             "sample-pipeline",
             &models_dir,
@@ -887,7 +887,7 @@ mod tests {
             let models_dir = models_dir.clone();
             async move {
                 run_ocr_pipeline_with_bins(
-                    "ffmpeg",
+                    crate::test_support::ffmpeg::ffmpeg_path(),
                     &video_path,
                     &file_id,
                     &models_dir,

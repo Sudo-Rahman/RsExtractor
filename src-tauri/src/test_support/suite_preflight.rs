@@ -18,8 +18,8 @@ fn run_suite_preflight_on_test_start() {
 
 pub(crate) fn run_suite_preflight() -> Result<(), String> {
     let result = SUITE_PREFLIGHT_RESULT.get_or_init(|| {
-        ensure_binary_available("ffmpeg")?;
-        ensure_binary_available("ffprobe")?;
+        ensure_binary_available("ffmpeg", crate::test_support::ffmpeg::try_ffmpeg_path()?)?;
+        ensure_binary_available("ffprobe", crate::test_support::ffmpeg::try_ffprobe_path()?)?;
         crate::test_support::assets::ensure_sample_video_sync()?;
         crate::test_support::assets::ensure_ocr_video_sync()?;
         Ok(())
@@ -75,25 +75,23 @@ where
     true
 }
 
-fn ensure_binary_available(binary: &str) -> Result<(), String> {
-    let output = Command::new(binary).arg("-version").output().map_err(|e| {
+fn ensure_binary_available(binary: &str, path: &str) -> Result<(), String> {
+    let output = Command::new(path).arg("-version").output().map_err(|e| {
         format!(
-            "Missing dependency: `{}` is not available.\n\
-                 Install commands:\n\
-                 - macOS: brew install ffmpeg\n\
-                 - Ubuntu/Debian: sudo apt install ffmpeg\n\
-                 - Windows (Chocolatey): choco install ffmpeg -y\n\
-                 Details: {}",
-            binary, e
+            "Missing bundled dependency: `{}` could not be executed at `{}`.\n\
+             CI must use the FFmpeg binaries downloaded by src-tauri/build.rs.\n\
+             Local test runs may fall back to `{}` on PATH when CI is not set.\n\
+             Details: {}",
+            binary, path, binary, e
         )
     })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
-            "Dependency check failed: `{}` exists but cannot run `-version`.\n\
+            "Dependency check failed: `{}` exists at `{}` but cannot run `-version`.\n\
              stderr: {}",
-            binary, stderr
+            binary, path, stderr
         ));
     }
 

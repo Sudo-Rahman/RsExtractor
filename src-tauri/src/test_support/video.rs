@@ -46,7 +46,7 @@ pub(crate) async fn generate_test_pattern_video(
     let path = temp_dir.path().join("testsrc.mkv");
     let filter = format!("testsrc2=size={}x{}:rate=12:duration=0.24", width, height);
 
-    let output = Command::new("ffmpeg")
+    let output = Command::new(crate::test_support::ffmpeg::ffmpeg_path())
         .args([
             "-hide_banner",
             "-loglevel",
@@ -74,7 +74,8 @@ pub(crate) async fn generate_test_pattern_video(
         ));
     }
 
-    let probe = probe_primary_video_stream("ffprobe", &path).await?;
+    let probe =
+        probe_primary_video_stream(crate::test_support::ffmpeg::ffprobe_path(), &path).await?;
 
     Ok(GeneratedVideoFixture {
         _temp_dir: temp_dir,
@@ -88,7 +89,7 @@ pub(crate) async fn generate_test_pattern_av_mp4() -> Result<GeneratedAvFixture,
     let temp_dir = new_temp_dir("av-fixture-");
     let path = temp_dir.path().join("test_av.mp4");
 
-    let output = Command::new("ffmpeg")
+    let output = Command::new(crate::test_support::ffmpeg::ffmpeg_path())
         .args([
             "-hide_banner",
             "-loglevel",

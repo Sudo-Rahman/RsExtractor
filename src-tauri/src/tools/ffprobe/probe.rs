@@ -67,9 +67,12 @@ mod tests {
             .await
             .expect("failed to load local sample video");
 
-        let json = probe_file_with_ffprobe("ffprobe", video.to_string_lossy().as_ref())
-            .await
-            .expect("probe should succeed");
+        let json = probe_file_with_ffprobe(
+            crate::test_support::ffmpeg::ffprobe_path(),
+            video.to_string_lossy().as_ref(),
+        )
+        .await
+        .expect("probe should succeed");
         let value: serde_json::Value = serde_json::from_str(&json).expect("valid json expected");
         assert!(value.get("streams").is_some());
     }

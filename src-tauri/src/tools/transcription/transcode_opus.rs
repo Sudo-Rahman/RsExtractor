@@ -238,8 +238,8 @@ mod tests {
         let output = temp.path().join("audio.opus");
 
         let result_path = transcode_to_opus_with_bins(
-            "ffmpeg",
-            "ffprobe",
+            crate::test_support::ffmpeg::ffmpeg_path(),
+            crate::test_support::ffmpeg::ffprobe_path(),
             input.to_string_lossy().as_ref(),
             output.to_string_lossy().as_ref(),
             Some(0),

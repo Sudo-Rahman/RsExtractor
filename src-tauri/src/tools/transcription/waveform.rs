@@ -108,7 +108,7 @@ mod tests {
             .expect("failed to load local sample video");
 
         let output = convert_audio_for_waveform_with_ffmpeg(
-            "ffmpeg",
+            crate::test_support::ffmpeg::ffmpeg_path(),
             input.to_string_lossy().as_ref(),
             Some(0),
         )

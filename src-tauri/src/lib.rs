@@ -25,6 +25,7 @@ pub fn run() {
             commands::fs_open_folder::open_folder,
             commands::ffmpeg_version::check_ffmpeg,
             commands::ffmpeg_version::get_ffmpeg_version,
+            commands::ffmpeg_version::get_ffmpeg_info,
             commands::ffmpeg_download::download_ffmpeg,
             commands::merge::merge_tracks,
             commands::merge_cancel::cancel_merge,

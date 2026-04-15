@@ -36,7 +36,7 @@ pub(crate) async fn generate_silence_wav(
     let temp_dir = new_temp_dir(&format!("audio-fixture-{}-", layout_id));
     let path = temp_dir.path().join(format!("{}.wav", layout_id));
 
-    let output = Command::new("ffmpeg")
+    let output = Command::new(crate::test_support::ffmpeg::ffmpeg_path())
         .args([
             "-hide_banner",
             "-loglevel",
@@ -70,7 +70,8 @@ pub(crate) async fn generate_silence_wav(
         ));
     }
 
-    let probe = probe_primary_audio_stream("ffprobe", &path).await?;
+    let probe =
+        probe_primary_audio_stream(crate::test_support::ffmpeg::ffprobe_path(), &path).await?;
 
     Ok(GeneratedAudioFixture {
         _temp_dir: temp_dir,

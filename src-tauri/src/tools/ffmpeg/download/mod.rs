@@ -1,17 +1,28 @@
+#[cfg(any(debug_assertions, test))]
 use std::path::{Path, PathBuf};
+#[cfg(any(debug_assertions, test))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(any(debug_assertions, test))]
 use futures_util::StreamExt;
 use serde::Serialize;
+#[cfg(any(debug_assertions, test))]
 use tauri::Manager;
+#[cfg(any(debug_assertions, test))]
 use tokio::io::AsyncWriteExt;
 
+#[cfg(any(debug_assertions, test))]
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
+#[cfg(any(debug_assertions, test))]
 use crate::tools::ffmpeg::download::progress::{DownloadTracker, emit_download_progress};
 
+#[cfg(any(debug_assertions, test))]
 mod archive;
+#[cfg(any(debug_assertions, test))]
 mod btbn;
-mod evermeet;
+#[cfg(any(debug_assertions, test))]
+mod osxexperts;
+#[cfg(any(debug_assertions, test))]
 mod progress;
 
 #[derive(Serialize)]
@@ -23,6 +34,7 @@ pub(crate) struct DownloadResult {
     pub(crate) warning: Option<String>,
 }
 
+#[cfg(any(debug_assertions, test))]
 fn create_temp_dir(app: &tauri::AppHandle, prefix: &str) -> Result<PathBuf, String> {
     let base = app
         .path()
@@ -36,12 +48,14 @@ fn create_temp_dir(app: &tauri::AppHandle, prefix: &str) -> Result<PathBuf, Stri
     create_temp_dir_in(&base, prefix, nonce)
 }
 
+#[cfg(any(debug_assertions, test))]
 fn create_temp_dir_in(base: &Path, prefix: &str, nonce: u128) -> Result<PathBuf, String> {
     let dir = base.join(format!("{}_{}", prefix, nonce));
     std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create temp directory: {}", e))?;
     Ok(dir)
 }
 
+#[cfg(any(debug_assertions, test))]
 fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent("MediaFlow/1.0")
@@ -49,6 +63,7 @@ fn http_client() -> Result<reqwest::Client, String> {
         .map_err(|e| format!("Failed to create HTTP client: {}", e))
 }
 
+#[cfg(any(debug_assertions, test))]
 async fn download_to_file(
     app: &tauri::AppHandle,
     client: &reqwest::Client,
@@ -98,6 +113,7 @@ async fn download_to_file(
     Ok(())
 }
 
+#[cfg(any(debug_assertions, test))]
 async fn install_binaries(
     app: &tauri::AppHandle,
     ffmpeg_src: &Path,
@@ -112,6 +128,7 @@ async fn install_binaries(
     install_binaries_to_dir(&bin_dir, ffmpeg_src, ffprobe_src).await
 }
 
+#[cfg(any(debug_assertions, test))]
 async fn install_binaries_to_dir(
     bin_dir: &Path,
     ffmpeg_src: &Path,
@@ -166,15 +183,27 @@ async fn install_binaries_to_dir(
 /// Download and install FFmpeg + FFprobe for the current OS/arch
 #[tauri::command]
 pub(crate) async fn download_ffmpeg(app: tauri::AppHandle) -> Result<DownloadResult, String> {
-    let _sleep_guard = SleepInhibitGuard::try_acquire("Downloading FFmpeg").ok();
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = app;
+        return Err(
+            "FFmpeg downloads are only available in debug builds. Production uses bundled FFmpeg and FFprobe."
+                .to_string(),
+        );
+    }
 
-    let os = std::env::consts::OS;
-    let arch = std::env::consts::ARCH;
+    #[cfg(any(debug_assertions, test))]
+    {
+        let _sleep_guard = SleepInhibitGuard::try_acquire("Downloading FFmpeg").ok();
 
-    match os {
-        "macos" => evermeet::download_from_evermeet(&app, arch).await,
-        "windows" | "linux" => btbn::download_from_btbn(&app, os, arch).await,
-        _ => Err(format!("Unsupported OS: {}", os)),
+        let os = std::env::consts::OS;
+        let arch = std::env::consts::ARCH;
+
+        match os {
+            "macos" => osxexperts::download_from_osxexperts(&app, arch).await,
+            "windows" | "linux" => btbn::download_from_btbn(&app, os, arch).await,
+            _ => Err(format!("Unsupported OS: {}", os)),
+        }
     }
 }
 
