@@ -167,8 +167,8 @@ mod tests {
             .expect("failed to load local sample video");
 
         let output_paths = extract_transcode_analysis_frames_with_bins(
-            "ffmpeg",
-            "ffprobe",
+            crate::test_support::ffmpeg::ffmpeg_path(),
+            crate::test_support::ffmpeg::ffprobe_path(),
             input.to_string_lossy().as_ref(),
             3,
         )

@@ -387,7 +387,7 @@ mod tests {
         let output = temp.path().join("video.mkv");
 
         let probe_json = crate::tools::ffprobe::probe::probe_file_with_ffprobe(
-            "ffprobe",
+            crate::test_support::ffmpeg::ffprobe_path(),
             video.to_string_lossy().as_ref(),
         )
         .await
@@ -410,7 +410,7 @@ mod tests {
             .expect("video stream index should exist");
 
         extract_track_with_ffmpeg(
-            "ffmpeg",
+            crate::test_support::ffmpeg::ffmpeg_path(),
             video.to_string_lossy().as_ref(),
             output.to_string_lossy().as_ref(),
             track_index,
@@ -432,7 +432,7 @@ mod tests {
         let output = temp.path().join("invalid-track.mkv");
 
         let error = extract_track_with_ffmpeg(
-            "ffmpeg",
+            crate::test_support::ffmpeg::ffmpeg_path(),
             video.to_string_lossy().as_ref(),
             output.to_string_lossy().as_ref(),
             999,
@@ -454,7 +454,7 @@ mod tests {
         let output = temp.path().join("out.mkv");
 
         let error = extract_track_with_ffmpeg(
-            "ffmpeg",
+            crate::test_support::ffmpeg::ffmpeg_path(),
             input.to_string_lossy().as_ref(),
             output.to_string_lossy().as_ref(),
             0,

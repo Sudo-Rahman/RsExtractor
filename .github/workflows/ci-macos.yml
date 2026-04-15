@@ -16,8 +16,8 @@ jobs:
         include:
           - name: Apple Silicon
             target: aarch64-apple-darwin
-          # - name: Intel
-          #   target: x86_64-apple-darwin
+          - name: Intel
+            target: x86_64-apple-darwin
 
     steps:
       - name: Checkout
@@ -46,18 +46,8 @@ jobs:
           workspaces: src-tauri -> target
           shared-key: macos-${{ matrix.target }}
 
-      - name: Install FFmpeg
-        run: |
-          brew update
-          brew install ffmpeg
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Verify FFmpeg tools
-        run: |
-          ffmpeg -version
-          ffprobe -version
 
       - name: Run Rust tests
         working-directory: src-tauri

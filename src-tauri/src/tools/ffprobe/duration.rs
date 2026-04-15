@@ -53,10 +53,12 @@ mod tests {
             .await
             .expect("failed to load local sample video");
 
-        let duration =
-            get_media_duration_us_with_ffprobe("ffprobe", video.to_string_lossy().as_ref())
-                .await
-                .expect("duration probe should succeed");
+        let duration = get_media_duration_us_with_ffprobe(
+            crate::test_support::ffmpeg::ffprobe_path(),
+            video.to_string_lossy().as_ref(),
+        )
+        .await
+        .expect("duration probe should succeed");
 
         assert!(duration > 0);
     }

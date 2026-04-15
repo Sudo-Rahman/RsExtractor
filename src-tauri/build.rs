@@ -75,6 +75,14 @@ fn prepare_external_binaries() -> BuildResult<()> {
 
     let ffmpeg_dest = sidecar_binary_path(&binaries_dir, "ffmpeg", &target);
     let ffprobe_dest = sidecar_binary_path(&binaries_dir, "ffprobe", &target);
+    println!(
+        "cargo:rustc-env=MEDIAFLOW_BUNDLED_FFMPEG={}",
+        ffmpeg_dest.display()
+    );
+    println!(
+        "cargo:rustc-env=MEDIAFLOW_BUNDLED_FFPROBE={}",
+        ffprobe_dest.display()
+    );
 
     let force_download = env::var_os("MEDIAFLOW_FORCE_FFMPEG_DOWNLOAD").is_some();
     if !force_download && existing_binaries_are_valid(&platform, &ffmpeg_dest, &ffprobe_dest)? {

@@ -975,6 +975,7 @@ mod tests {
         ProbedAudioStream, generate_silence_wav, probe_audio_encoder_runtime_info,
         probe_primary_audio_stream,
     };
+    use crate::test_support::ffmpeg::{ffmpeg_path, ffprobe_path};
     use crate::test_support::paths::new_temp_dir;
     use crate::test_support::video::{
         MediaStreamCounts, ProbedVideoStream, generate_test_pattern_av_mp4,
@@ -982,11 +983,13 @@ mod tests {
     };
     use crate::tools::ffprobe::probe::probe_file_with_ffprobe;
     use crate::tools::transcode::capabilities::{
-        TranscodeAudioEncoderCapability, TranscodeCapabilities, TranscodeVideoEncoderCapability,
-        get_transcode_capabilities_with_ffmpeg_path,
+        TranscodeAudioEncoderCapability, TranscodeCapabilities, TranscodeContainerCapability,
+        TranscodeVideoEncoderCapability, get_transcode_capabilities_with_ffmpeg_path,
     };
 
-    use crate::tools::media_metadata::{MediaMetadataRequest, TrackMetadataEdit};
+    use crate::tools::media_metadata::{
+        MediaMetadataRequest, TrackMetadataEdit, metadata_schema_for_container,
+    };
 
     use super::{
         TranscodeAdditionalArg, TranscodeAudioSettings, TranscodeAudioTrackOverride,
@@ -1345,7 +1348,7 @@ mod tests {
 
     async fn collect_probe_streams(path: &Path) -> Result<Vec<Value>, String> {
         let probe_json =
-            probe_file_with_ffprobe("ffprobe", path.to_string_lossy().as_ref()).await?;
+            probe_file_with_ffprobe(ffprobe_path(), path.to_string_lossy().as_ref()).await?;
         let probe_value: Value = serde_json::from_str(&probe_json)
             .map_err(|error| format!("Invalid probe JSON: {}", error))?;
 
@@ -1888,7 +1891,148 @@ mod tests {
                     .iter()
                     .find(|encoder| encoder.id == *encoder_id)
             })
+            .filter(|encoder| !should_skip_runtime_video_encoder(&encoder.id))
             .collect()
+    }
+
+    fn should_skip_runtime_video_encoder(encoder_id: &str) -> bool {
+        should_skip_videotoolbox_encoder_in_ci(encoder_id, ci_env_enabled())
+    }
+
+    fn should_skip_videotoolbox_encoder_in_ci(encoder_id: &str, ci_enabled: bool) -> bool {
+        ci_enabled && is_videotoolbox_encoder(encoder_id)
+    }
+
+    fn is_videotoolbox_encoder(encoder_id: &str) -> bool {
+        matches!(
+            encoder_id,
+            "h264_videotoolbox" | "hevc_videotoolbox" | "prores_videotoolbox"
+        )
+    }
+
+    fn ci_env_enabled() -> bool {
+        std::env::var("CI").is_ok_and(|value| value.eq_ignore_ascii_case("true"))
+    }
+
+    fn select_runtime_video_encoder_for_container<'a>(
+        capabilities: &'a TranscodeCapabilities,
+        container: &TranscodeContainerCapability,
+    ) -> Option<&'a TranscodeVideoEncoderCapability> {
+        select_runtime_video_encoder_for_container_with_ci(
+            capabilities,
+            container,
+            ci_env_enabled(),
+        )
+    }
+
+    fn select_runtime_video_encoder_for_container_with_ci<'a>(
+        capabilities: &'a TranscodeCapabilities,
+        container: &TranscodeContainerCapability,
+        ci_enabled: bool,
+    ) -> Option<&'a TranscodeVideoEncoderCapability> {
+        let is_supported = |encoder: &&TranscodeVideoEncoderCapability| {
+            container
+                .supported_video_encoder_ids
+                .iter()
+                .any(|supported_id| supported_id == &encoder.id)
+        };
+
+        capabilities
+            .video_encoders
+            .iter()
+            .find(|encoder| {
+                Some(&encoder.id) == container.default_video_encoder_id.as_ref()
+                    && !should_skip_videotoolbox_encoder_in_ci(&encoder.id, ci_enabled)
+            })
+            .or_else(|| {
+                capabilities.video_encoders.iter().find(|encoder| {
+                    is_supported(encoder)
+                        && !should_skip_videotoolbox_encoder_in_ci(&encoder.id, ci_enabled)
+                })
+            })
+    }
+
+    fn test_video_encoder(id: &str, is_hardware: bool) -> TranscodeVideoEncoderCapability {
+        TranscodeVideoEncoderCapability {
+            id: id.to_string(),
+            codec: "h264".to_string(),
+            label: id.to_string(),
+            is_hardware,
+            supported_pixel_formats: Vec::new(),
+            supported_profiles: Vec::new(),
+            supported_levels: Vec::new(),
+            supported_bit_depths: Vec::new(),
+            supports_preset: false,
+            supports_crf: false,
+            supports_qp: false,
+            supports_bitrate: false,
+            options: Vec::new(),
+        }
+    }
+
+    fn test_video_container(
+        default_video_encoder_id: Option<&str>,
+        supported_video_encoder_ids: &[&str],
+    ) -> TranscodeContainerCapability {
+        TranscodeContainerCapability {
+            id: "mkv".to_string(),
+            label: "MKV".to_string(),
+            extension: ".mkv".to_string(),
+            kind: "video".to_string(),
+            muxer_name: "matroska".to_string(),
+            supported_video_encoder_ids: supported_video_encoder_ids
+                .iter()
+                .map(|id| id.to_string())
+                .collect(),
+            supported_audio_encoder_ids: Vec::new(),
+            supported_subtitle_encoder_ids: Vec::new(),
+            supported_subtitle_modes: Vec::new(),
+            default_video_encoder_id: default_video_encoder_id.map(str::to_string),
+            default_audio_encoder_id: None,
+            default_subtitle_encoder_id: None,
+            metadata_schema: metadata_schema_for_container("mkv"),
+        }
+    }
+
+    #[test]
+    fn videotoolbox_skip_predicate_only_applies_in_ci() {
+        assert!(should_skip_videotoolbox_encoder_in_ci(
+            "h264_videotoolbox",
+            true
+        ));
+        assert!(!should_skip_videotoolbox_encoder_in_ci(
+            "h264_videotoolbox",
+            false
+        ));
+        assert!(!should_skip_videotoolbox_encoder_in_ci("libx264", true));
+    }
+
+    #[test]
+    fn runtime_video_encoder_selection_prefers_software_when_default_is_skipped() {
+        let capabilities = TranscodeCapabilities {
+            ffmpeg_version: "8.1".to_string(),
+            hwaccels: Vec::new(),
+            containers: Vec::new(),
+            video_encoders: vec![
+                test_video_encoder("hevc_videotoolbox", true),
+                test_video_encoder("libx264", false),
+            ],
+            audio_encoders: Vec::new(),
+            subtitle_encoders: Vec::new(),
+            default_analysis_frame_count: 6,
+        };
+        let container =
+            test_video_container(Some("hevc_videotoolbox"), &["hevc_videotoolbox", "libx264"]);
+
+        assert!(should_skip_videotoolbox_encoder_in_ci(
+            "hevc_videotoolbox",
+            true
+        ));
+        let selected =
+            select_runtime_video_encoder_for_container_with_ci(&capabilities, &container, true)
+                .expect("software fallback should be selected");
+
+        assert_eq!(selected.id, "libx264");
     }
 
     fn assert_media_counts(
@@ -2384,7 +2528,7 @@ mod tests {
         let mut request = build_request(output.to_string_lossy().as_ref());
         request.input_path = input.to_string_lossy().to_string();
 
-        let result_path = transcode_media_with_bins("ffmpeg", "ffprobe", &request)
+        let result_path = transcode_media_with_bins(ffmpeg_path(), ffprobe_path(), &request)
             .await
             .expect("transcode should succeed");
 
@@ -2394,7 +2538,7 @@ mod tests {
 
     #[tokio::test]
     async fn transcode_audio_matrix_succeeds_for_available_encoders_and_layouts() {
-        let capabilities = get_transcode_capabilities_with_ffmpeg_path("ffmpeg")
+        let capabilities = get_transcode_capabilities_with_ffmpeg_path(ffmpeg_path())
             .await
             .expect("failed to query transcode capabilities");
 
@@ -2464,9 +2608,11 @@ mod tests {
                     ));
                 }
 
-                match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
+                match transcode_media_with_bins(ffmpeg_path(), ffprobe_path(), &request).await {
                     Ok(result_path) => {
-                        match probe_primary_audio_stream("ffprobe", Path::new(&result_path)).await {
+                        match probe_primary_audio_stream(ffprobe_path(), Path::new(&result_path))
+                            .await
+                        {
                             Ok(probed_stream) => {
                                 if let Some(error) = validate_transcoded_audio_stream(
                                     &encoder.id,
@@ -2502,7 +2648,7 @@ mod tests {
 
     #[tokio::test]
     async fn transcode_audio_libopus_handles_multichannel_as_source_layouts() {
-        let capabilities = get_transcode_capabilities_with_ffmpeg_path("ffmpeg")
+        let capabilities = get_transcode_capabilities_with_ffmpeg_path(ffmpeg_path())
             .await
             .expect("failed to query transcode capabilities");
         let Some(libopus) = capabilities
@@ -2531,9 +2677,10 @@ mod tests {
             let request =
                 build_audio_only_request(&fixture.path, &output_path, &container_id, libopus);
 
-            match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
+            match transcode_media_with_bins(ffmpeg_path(), ffprobe_path(), &request).await {
                 Ok(result_path) => {
-                    match probe_primary_audio_stream("ffprobe", Path::new(&result_path)).await {
+                    match probe_primary_audio_stream(ffprobe_path(), Path::new(&result_path)).await
+                    {
                         Ok(probed_stream) => {
                             if probed_stream.codec_name != "opus" {
                                 failures.push(format!(
@@ -2568,7 +2715,7 @@ mod tests {
 
     #[tokio::test]
     async fn transcode_audio_overrides_cover_channels_sample_rate_and_bitrate() {
-        let capabilities = get_transcode_capabilities_with_ffmpeg_path("ffmpeg")
+        let capabilities = get_transcode_capabilities_with_ffmpeg_path(ffmpeg_path())
             .await
             .expect("failed to query transcode capabilities");
         let stereo_fixture = generate_silence_wav("stereo")
@@ -2634,9 +2781,13 @@ mod tests {
                     ));
                 }
 
-                match transcode_media_with_bins("ffmpeg", "ffprobe", &bitrate_request).await {
+                match transcode_media_with_bins(ffmpeg_path(), ffprobe_path(), &bitrate_request)
+                    .await
+                {
                     Ok(result_path) => {
-                        match probe_primary_audio_stream("ffprobe", Path::new(&result_path)).await {
+                        match probe_primary_audio_stream(ffprobe_path(), Path::new(&result_path))
+                            .await
+                        {
                             Ok(probed_stream) => {
                                 if let Some(error) =
                                     validate_transcoded_audio_stream(&encoder.id, 2, &probed_stream)
@@ -2660,7 +2811,7 @@ mod tests {
                 }
             }
 
-            let runtime_info = probe_audio_encoder_runtime_info("ffmpeg", &encoder.id)
+            let runtime_info = probe_audio_encoder_runtime_info(ffmpeg_path(), &encoder.id)
                 .await
                 .unwrap_or_else(|_| crate::test_support::audio::AudioEncoderRuntimeInfo {
                     supported_sample_rates: Vec::new(),
@@ -2689,9 +2840,13 @@ mod tests {
                     ));
                 }
 
-                match transcode_media_with_bins("ffmpeg", "ffprobe", &sample_rate_request).await {
+                match transcode_media_with_bins(ffmpeg_path(), ffprobe_path(), &sample_rate_request)
+                    .await
+                {
                     Ok(result_path) => {
-                        match probe_primary_audio_stream("ffprobe", Path::new(&result_path)).await {
+                        match probe_primary_audio_stream(ffprobe_path(), Path::new(&result_path))
+                            .await
+                        {
                             Ok(probed_stream) => {
                                 if let Some(error) =
                                     validate_transcoded_audio_stream(&encoder.id, 2, &probed_stream)
@@ -2745,9 +2900,11 @@ mod tests {
                 ));
             }
 
-            match transcode_media_with_bins("ffmpeg", "ffprobe", &channels_request).await {
+            match transcode_media_with_bins(ffmpeg_path(), ffprobe_path(), &channels_request).await
+            {
                 Ok(result_path) => {
-                    match probe_primary_audio_stream("ffprobe", Path::new(&result_path)).await {
+                    match probe_primary_audio_stream(ffprobe_path(), Path::new(&result_path)).await
+                    {
                         Ok(probed_stream) => {
                             if let Some(error) =
                                 validate_transcoded_audio_stream(&encoder.id, 2, &probed_stream)
@@ -2780,7 +2937,7 @@ mod tests {
 
     #[tokio::test]
     async fn transcode_video_matrix_succeeds_for_available_encoders() {
-        let capabilities = get_transcode_capabilities_with_ffmpeg_path("ffmpeg")
+        let capabilities = get_transcode_capabilities_with_ffmpeg_path(ffmpeg_path())
             .await
             .expect("failed to query transcode capabilities");
         let fixture = generate_test_pattern_video(VIDEO_TEST_WIDTH, VIDEO_TEST_HEIGHT)
@@ -2796,6 +2953,10 @@ mod tests {
         let mut failures = Vec::new();
 
         for encoder in &capabilities.video_encoders {
+            if should_skip_runtime_video_encoder(&encoder.id) {
+                continue;
+            }
+
             let Some(container_id) = pick_video_test_container_id(&capabilities, &encoder.id)
             else {
                 failures.push(format!(
@@ -2833,9 +2994,10 @@ mod tests {
                 failures.push(format!("encoder={}: {}", encoder.id, error));
             }
 
-            match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
+            match transcode_media_with_bins(ffmpeg_path(), ffprobe_path(), &request).await {
                 Ok(result_path) => {
-                    match probe_primary_video_stream("ffprobe", Path::new(&result_path)).await {
+                    match probe_primary_video_stream(ffprobe_path(), Path::new(&result_path)).await
+                    {
                         Ok(probed_stream) => {
                             if let Some(error) =
                                 validate_transcoded_video_stream(&encoder.id, &probed_stream)
@@ -2865,7 +3027,7 @@ mod tests {
 
     #[tokio::test]
     async fn transcode_video_quality_modes_presets_and_params_cover_representative_codecs() {
-        let capabilities = get_transcode_capabilities_with_ffmpeg_path("ffmpeg")
+        let capabilities = get_transcode_capabilities_with_ffmpeg_path(ffmpeg_path())
             .await
             .expect("failed to query transcode capabilities");
         let fixture = generate_test_pattern_video(VIDEO_TEST_WIDTH, VIDEO_TEST_HEIGHT)
@@ -2926,9 +3088,11 @@ mod tests {
                     ));
                 }
 
-                match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
+                match transcode_media_with_bins(ffmpeg_path(), ffprobe_path(), &request).await {
                     Ok(result_path) => {
-                        match probe_primary_video_stream("ffprobe", Path::new(&result_path)).await {
+                        match probe_primary_video_stream(ffprobe_path(), Path::new(&result_path))
+                            .await
+                        {
                             Ok(probed_stream) => {
                                 if let Some(error) = validate_transcoded_video_output(
                                     encoder,
@@ -2965,7 +3129,7 @@ mod tests {
 
     #[tokio::test]
     async fn transcode_video_advanced_capabilities_cover_profiles_levels_and_ten_bit() {
-        let capabilities = get_transcode_capabilities_with_ffmpeg_path("ffmpeg")
+        let capabilities = get_transcode_capabilities_with_ffmpeg_path(ffmpeg_path())
             .await
             .expect("failed to query transcode capabilities");
         let fixture = generate_test_pattern_video(VIDEO_TEST_WIDTH, VIDEO_TEST_HEIGHT)
@@ -3019,9 +3183,11 @@ mod tests {
                     ));
                 }
 
-                match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
+                match transcode_media_with_bins(ffmpeg_path(), ffprobe_path(), &request).await {
                     Ok(result_path) => {
-                        match probe_primary_video_stream("ffprobe", Path::new(&result_path)).await {
+                        match probe_primary_video_stream(ffprobe_path(), Path::new(&result_path))
+                            .await
+                        {
                             Ok(probed_stream) => {
                                 if let Some(error) = validate_transcoded_video_output(
                                     encoder,
@@ -3062,7 +3228,7 @@ mod tests {
 
     #[tokio::test]
     async fn transcode_av_copy_and_mixed_modes_preserve_expected_streams() {
-        let capabilities = get_transcode_capabilities_with_ffmpeg_path("ffmpeg")
+        let capabilities = get_transcode_capabilities_with_ffmpeg_path(ffmpeg_path())
             .await
             .expect("failed to query transcode capabilities");
         let fixture = generate_test_pattern_av_mp4()
@@ -3073,19 +3239,9 @@ mod tests {
             .iter()
             .find(|container| container.id == "mkv")
             .expect("expected MKV container");
-        let video_encoder = capabilities
-            .video_encoders
-            .iter()
-            .find(|encoder| Some(&encoder.id) == mkv_container.default_video_encoder_id.as_ref())
-            .or_else(|| {
-                capabilities.video_encoders.iter().find(|encoder| {
-                    mkv_container
-                        .supported_video_encoder_ids
-                        .iter()
-                        .any(|supported_id| supported_id == &encoder.id)
-                })
-            })
-            .expect("expected a video encoder for MKV");
+        let video_encoder =
+            select_runtime_video_encoder_for_container(&capabilities, mkv_container)
+                .expect("expected a CI-testable video encoder for MKV");
         let audio_encoder = capabilities
             .audio_encoders
             .iter()
@@ -3124,9 +3280,9 @@ mod tests {
             request.audio.additional_args = Vec::new();
             request.audio.track_overrides = Vec::new();
 
-            match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
+            match transcode_media_with_bins(ffmpeg_path(), ffprobe_path(), &request).await {
                 Ok(result_path) => {
-                    let counts = probe_media_stream_counts("ffprobe", Path::new(&result_path))
+                    let counts = probe_media_stream_counts(ffprobe_path(), Path::new(&result_path))
                         .await
                         .expect("failed to probe copy-copy output");
                     if let Some(error) = assert_media_counts(&counts, 1, 1) {
@@ -3156,15 +3312,15 @@ mod tests {
             request.audio.additional_args = Vec::new();
             request.audio.track_overrides = Vec::new();
 
-            match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
+            match transcode_media_with_bins(ffmpeg_path(), ffprobe_path(), &request).await {
                 Ok(result_path) => {
-                    let counts = probe_media_stream_counts("ffprobe", Path::new(&result_path))
+                    let counts = probe_media_stream_counts(ffprobe_path(), Path::new(&result_path))
                         .await
                         .expect("failed to probe mixed output");
                     if let Some(error) = assert_media_counts(&counts, 1, 1) {
                         failures.push(format!("scenario=video_transcode_audio_copy: {}", error));
                     } else if let Ok(probed_stream) =
-                        probe_primary_video_stream("ffprobe", Path::new(&result_path)).await
+                        probe_primary_video_stream(ffprobe_path(), Path::new(&result_path)).await
                     {
                         if let Some(error) =
                             validate_transcoded_video_stream(&video_encoder.id, &probed_stream)
@@ -3198,15 +3354,15 @@ mod tests {
             request.video.additional_args = Vec::new();
             apply_audio_transcode_settings(&mut request, audio_encoder);
 
-            match transcode_media_with_bins("ffmpeg", "ffprobe", &request).await {
+            match transcode_media_with_bins(ffmpeg_path(), ffprobe_path(), &request).await {
                 Ok(result_path) => {
-                    let counts = probe_media_stream_counts("ffprobe", Path::new(&result_path))
+                    let counts = probe_media_stream_counts(ffprobe_path(), Path::new(&result_path))
                         .await
                         .expect("failed to probe mixed output");
                     if let Some(error) = assert_media_counts(&counts, 1, 1) {
                         failures.push(format!("scenario=video_copy_audio_transcode: {}", error));
                     } else if let Ok(probed_stream) =
-                        probe_primary_audio_stream("ffprobe", Path::new(&result_path)).await
+                        probe_primary_audio_stream(ffprobe_path(), Path::new(&result_path)).await
                     {
                         if let Some(error) =
                             validate_transcoded_audio_stream(&audio_encoder.id, 2, &probed_stream)

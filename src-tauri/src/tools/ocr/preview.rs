@@ -635,10 +635,13 @@ mod tests {
             .await
             .expect("failed to load local sample video");
 
-        let output =
-            transcode_for_preview_with_bins("ffmpeg", "ffprobe", input.to_string_lossy().as_ref())
-                .await
-                .expect("preview transcode should succeed");
+        let output = transcode_for_preview_with_bins(
+            crate::test_support::ffmpeg::ffmpeg_path(),
+            crate::test_support::ffmpeg::ffprobe_path(),
+            input.to_string_lossy().as_ref(),
+        )
+        .await
+        .expect("preview transcode should succeed");
 
         assert!(std::path::Path::new(&output).exists());
         assert!(output.ends_with(".mp4"));
@@ -654,27 +657,28 @@ mod tests {
         std::fs::copy(&input, &unique_input).expect("failed to copy sample video");
 
         let (output, active_encoder) = transcode_for_preview_with_bins_and_encoder(
-            "ffmpeg",
-            "ffprobe",
+            crate::test_support::ffmpeg::ffmpeg_path(),
+            crate::test_support::ffmpeg::ffprobe_path(),
             unique_input.to_string_lossy().as_ref(),
         )
         .await
         .expect("preview transcode should succeed");
 
-        let ffprobe_output = std::process::Command::new("ffprobe")
-            .args([
-                "-v",
-                "error",
-                "-select_streams",
-                "v:0",
-                "-show_entries",
-                "stream=codec_name,codec_tag_string",
-                "-of",
-                "default=noprint_wrappers=1",
-                &output,
-            ])
-            .output()
-            .expect("failed to run ffprobe");
+        let ffprobe_output =
+            std::process::Command::new(crate::test_support::ffmpeg::ffprobe_path())
+                .args([
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=codec_name,codec_tag_string",
+                    "-of",
+                    "default=noprint_wrappers=1",
+                    &output,
+                ])
+                .output()
+                .expect("failed to run ffprobe");
 
         assert!(
             ffprobe_output.status.success(),
@@ -777,7 +781,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_environment_prefers_videotoolbox_when_encoder_is_available() {
-        let output = std::process::Command::new("ffmpeg")
+        let output = std::process::Command::new(crate::test_support::ffmpeg::ffmpeg_path())
             .args(["-hide_banner", "-encoders"])
             .output();
 

@@ -738,7 +738,7 @@ mod tests {
         })];
 
         let probe_json = crate::tools::ffprobe::probe::probe_file_with_ffprobe(
-            "ffprobe",
+            crate::test_support::ffmpeg::ffprobe_path(),
             video.to_string_lossy().as_ref(),
         )
         .await
@@ -767,8 +767,8 @@ mod tests {
             .collect();
 
         merge_tracks_with_bins(
-            "ffprobe",
-            "ffmpeg",
+            crate::test_support::ffmpeg::ffprobe_path(),
+            crate::test_support::ffmpeg::ffmpeg_path(),
             video.to_string_lossy().as_ref(),
             &tracks,
             Some(&source_track_configs),
@@ -780,7 +780,7 @@ mod tests {
         assert!(output.exists());
 
         let merged_probe = crate::tools::ffprobe::probe::probe_file_with_ffprobe(
-            "ffprobe",
+            crate::test_support::ffmpeg::ffprobe_path(),
             output.to_string_lossy().as_ref(),
         )
         .await
@@ -833,7 +833,7 @@ mod tests {
         let output = temp.path().join("merged-source-delay.mkv");
 
         let probe_json = crate::tools::ffprobe::probe::probe_file_with_ffprobe(
-            "ffprobe",
+            crate::test_support::ffmpeg::ffprobe_path(),
             video.to_string_lossy().as_ref(),
         )
         .await
@@ -866,8 +866,8 @@ mod tests {
             .collect();
 
         merge_tracks_with_bins(
-            "ffprobe",
-            "ffmpeg",
+            crate::test_support::ffmpeg::ffprobe_path(),
+            crate::test_support::ffmpeg::ffmpeg_path(),
             video.to_string_lossy().as_ref(),
             &[],
             Some(&source_track_configs),
@@ -877,7 +877,7 @@ mod tests {
         .expect("merge should succeed");
 
         let merged_probe = crate::tools::ffprobe::probe::probe_file_with_ffprobe(
-            "ffprobe",
+            crate::test_support::ffmpeg::ffprobe_path(),
             output.to_string_lossy().as_ref(),
         )
         .await

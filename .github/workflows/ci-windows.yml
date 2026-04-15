@@ -34,10 +34,6 @@ jobs:
         with:
           workspaces: src-tauri -> target
 
-      - name: Install FFmpeg
-        shell: pwsh
-        run: choco install ffmpeg -y
-
       - name: Install Visual C++ Runtime
         shell: pwsh
         run: choco install vcredist140 -y
@@ -63,12 +59,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Verify FFmpeg tools
-        shell: pwsh
-        run: |
-          ffmpeg -version
-          ffprobe -version
 
       - name: Run Rust tests
         working-directory: src-tauri
@@ -169,8 +159,6 @@ jobs:
 
           $env:PATH = (($pathEntries -join ';') + ';' + $env:PATH)
 
-          where.exe ffmpeg
-          where.exe ffprobe
           where.exe vulkan-1.dll
           if ($LASTEXITCODE -ne 0) {
             throw "vulkan-1.dll not found on PATH after setup"

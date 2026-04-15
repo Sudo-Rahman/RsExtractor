@@ -119,12 +119,15 @@ mod tests {
 
     #[tokio::test]
     async fn ffmpeg_commands_detect_installed_ffmpeg() {
-        let available = check_ffmpeg_paths("ffprobe", "ffmpeg")
-            .await
-            .expect("check_ffmpeg command should succeed");
+        let available = check_ffmpeg_paths(
+            crate::test_support::ffmpeg::ffprobe_path(),
+            crate::test_support::ffmpeg::ffmpeg_path(),
+        )
+        .await
+        .expect("check_ffmpeg command should succeed");
         assert!(available);
 
-        let version = get_ffmpeg_version_from_path("ffmpeg")
+        let version = get_ffmpeg_version_from_path(crate::test_support::ffmpeg::ffmpeg_path())
             .await
             .expect("get_ffmpeg_version command should succeed");
         assert!(!version.trim().is_empty());
@@ -133,8 +136,8 @@ mod tests {
     #[tokio::test]
     async fn ffmpeg_info_reports_source_and_version() {
         let info = get_ffmpeg_info_from_paths(
-            "ffmpeg",
-            "ffprobe",
+            crate::test_support::ffmpeg::ffmpeg_path(),
+            crate::test_support::ffmpeg::ffprobe_path(),
             BinaryPathSource::System,
             BinaryPathSource::System,
         )
