@@ -128,14 +128,22 @@
       {#each strategies as strategy (strategy.type)}
         {@const isSelected = selectedStrategy === strategy.type}
         {@const Icon = strategy.icon}
-        <button
+        <div
+          role="button"
+          tabindex="0"
           class={cn(
-            "w-full text-left p-3 rounded-lg border transition-colors",
-            isSelected 
-              ? "border-primary bg-primary/5" 
+            "w-full text-left p-3 rounded-lg border transition-colors cursor-pointer",
+            isSelected
+              ? "border-primary bg-primary/5"
               : "border-border hover:bg-muted/50"
           )}
           onclick={() => selectedStrategy = strategy.type}
+          onkeydown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              selectedStrategy = strategy.type;
+            }
+          }}
         >
           <div class="flex items-start gap-3">
             <!-- Selection indicator -->
@@ -160,19 +168,19 @@
               
               <!-- Additional inputs for certain strategies -->
               {#if isSelected && strategy.type === 'language' && availableLanguages.length > 0}
-                <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-                <div class="mt-3" onclick={(e) => e.stopPropagation()}>
-                  <Select.Root type="single" bind:value={selectedLanguage}>
-                    <Select.Trigger class="w-full">
+                <Select.Root type="single" bind:value={selectedLanguage}>
+                  <Select.Trigger
+                    class="mt-3 w-full"
+                    onclick={(e) => e.stopPropagation()}
+                  >
                       {selectedLanguage ? selectedLanguage.toUpperCase() : 'Select language'}
-                    </Select.Trigger>
-                    <Select.Content>
-                      {#each availableLanguages as lang}
-                        <Select.Item value={lang}>{lang.toUpperCase()}</Select.Item>
-                      {/each}
-                    </Select.Content>
-                  </Select.Root>
-                </div>
+                  </Select.Trigger>
+                  <Select.Content>
+                    {#each availableLanguages as lang}
+                      <Select.Item value={lang}>{lang.toUpperCase()}</Select.Item>
+                    {/each}
+                  </Select.Content>
+                </Select.Root>
               {:else if isSelected && strategy.type === 'language' && availableLanguages.length === 0}
                 <p class="mt-2 text-xs text-amber-500">
                   No language tags detected in these files.
@@ -180,8 +188,7 @@
               {/if}
               
               {#if isSelected && strategy.type === 'index'}
-                <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-                <div class="mt-3 flex items-center gap-2" onclick={(e) => e.stopPropagation()}>
+                <div class="mt-3 flex items-center gap-2">
                   <Label for="track-index" class="text-xs whitespace-nowrap">Track number:</Label>
                   <Input 
                     id="track-index"
@@ -189,6 +196,8 @@
                     min="1"
                     class="w-20 h-8"
                     value={trackIndex + 1}
+                    onclick={(e) => e.stopPropagation()}
+                    onpointerdown={(e) => e.stopPropagation()}
                     onchange={(e) => {
                       const val = parseInt((e.target as HTMLInputElement).value) - 1;
                       trackIndex = Math.max(0, isNaN(val) ? 0 : val);
@@ -199,7 +208,7 @@
               {/if}
             </div>
           </div>
-        </button>
+        </div>
       {/each}
     </div>
 

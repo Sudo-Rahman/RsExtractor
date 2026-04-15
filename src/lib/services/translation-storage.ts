@@ -4,7 +4,7 @@
  */
 
 import type { TranslationPersistenceData, TranslationVersion, LLMProvider, LanguageCode, TranslationUsage } from '$lib/types';
-import { loadRsextData, saveRsextData } from './rsext-storage';
+import { deleteRsextData, loadRsextData, saveRsextData } from './rsext-storage';
 import { log } from '$lib/utils/log-toast';
 
 // ============================================================================
@@ -80,7 +80,6 @@ export async function deleteTranslationData(filePath: string): Promise<boolean> 
     }
 
     // No other tool data -- delete the entire file
-    const { deleteRsextData } = await import('./rsext-storage');
     return deleteRsextData(filePath);
   } catch (error) {
     log('error', 'translation', 'Failed to delete translation data', `${error}`);

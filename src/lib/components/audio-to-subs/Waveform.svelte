@@ -440,18 +440,18 @@
       
       <!-- Simple progress bar for large files -->
       {#if totalDuration > 0}
-        <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-        <div 
-          class="w-full mt-2 cursor-pointer"
+        <button
+          type="button"
+          class="w-full mt-2 cursor-pointer bg-transparent border-0 p-0 text-left"
+          aria-label="Seek waveform"
           onclick={handleSeek}
         >
           <Progress value={progressPercent} class="h-2" />
-        </div>
+        </button>
       {/if}
     </div>
   {:else}
     <!-- Normal waveform container -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div 
       bind:this={containerRef}
       class="relative w-full min-h-[120px] bg-muted/30 rounded-lg overflow-hidden"
@@ -479,11 +479,11 @@
 
   <!-- Progress bar (below waveform, always visible when ready) -->
   {#if isReady && !error && !isTooLarge}
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div 
-      class="px-2 cursor-pointer group"
+    <button
+      type="button"
+      class="px-2 cursor-pointer group w-full bg-transparent border-0 p-0 text-left"
+      aria-label="Seek waveform"
       onclick={handleSeek}
-      title="Click to seek"
     >
       <div class="relative h-1.5 bg-muted rounded-full overflow-hidden">
         <div 
@@ -491,7 +491,7 @@
           style="width: {progressPercent}%"
         ></div>
       </div>
-    </div>
+    </button>
   {/if}
 
   <!-- Controls -->

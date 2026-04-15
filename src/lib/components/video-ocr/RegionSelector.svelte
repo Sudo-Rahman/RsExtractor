@@ -22,7 +22,7 @@
     onchange,
   }: RegionSelectorProps = $props();
 
-  let containerEl: HTMLDivElement | undefined = $state();
+  let containerEl: HTMLButtonElement | undefined = $state();
   let dragMode = $state<DragMode>('none');
   let startPos = $state({ x: 0, y: 0 });
   let startRegion = $state<OcrRegion>({ x: 0, y: 0, width: 0, height: 0 });
@@ -246,11 +246,11 @@
   }
 </script>
 
-<div
+<button
+  type="button"
   bind:this={containerEl}
-  class="absolute inset-0"
+  class="absolute inset-0 border-0 bg-transparent p-0"
   style="cursor: {getCursor()};"
-  role="application"
   aria-label="Region selector"
   onmousedown={handleMouseDown}
   onmousemove={handleMouseMove}
@@ -258,7 +258,7 @@
   onmouseleave={handleMouseUp}
 >
   <!-- Semi-transparent overlay outside video bounds -->
-  <div class="absolute inset-0 bg-black/30 pointer-events-none" />
+  <div class="absolute inset-0 bg-black/30 pointer-events-none"></div>
   
   <!-- Region highlight -->
   {#if region && region.width > 0 && region.height > 0}
@@ -267,16 +267,16 @@
       style={regionToContainerStyle(region)}
     >
       <!-- Corner handles -->
-      <div class="absolute -top-1.5 -left-1.5 w-3 h-3 bg-primary rounded-sm cursor-nwse-resize" />
-      <div class="absolute -top-1.5 -right-1.5 w-3 h-3 bg-primary rounded-sm cursor-nesw-resize" />
-      <div class="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-primary rounded-sm cursor-nesw-resize" />
-      <div class="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-primary rounded-sm cursor-nwse-resize" />
+      <div class="absolute -top-1.5 -left-1.5 w-3 h-3 bg-primary rounded-sm cursor-nwse-resize"></div>
+      <div class="absolute -top-1.5 -right-1.5 w-3 h-3 bg-primary rounded-sm cursor-nesw-resize"></div>
+      <div class="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-primary rounded-sm cursor-nesw-resize"></div>
+      <div class="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-primary rounded-sm cursor-nwse-resize"></div>
       
       <!-- Edge handles -->
-      <div class="absolute -top-1 left-1/2 -translate-x-1/2 w-6 h-2 bg-primary rounded-sm cursor-ns-resize" />
-      <div class="absolute -bottom-1 left-1/2 -translate-x-1/2 w-6 h-2 bg-primary rounded-sm cursor-ns-resize" />
-      <div class="absolute -left-1 top-1/2 -translate-y-1/2 w-2 h-6 bg-primary rounded-sm cursor-ew-resize" />
-      <div class="absolute -right-1 top-1/2 -translate-y-1/2 w-2 h-6 bg-primary rounded-sm cursor-ew-resize" />
+      <div class="absolute -top-1 left-1/2 -translate-x-1/2 w-6 h-2 bg-primary rounded-sm cursor-ns-resize"></div>
+      <div class="absolute -bottom-1 left-1/2 -translate-x-1/2 w-6 h-2 bg-primary rounded-sm cursor-ns-resize"></div>
+      <div class="absolute -left-1 top-1/2 -translate-y-1/2 w-2 h-6 bg-primary rounded-sm cursor-ew-resize"></div>
+      <div class="absolute -right-1 top-1/2 -translate-y-1/2 w-2 h-6 bg-primary rounded-sm cursor-ew-resize"></div>
       
       <!-- Move indicator in center -->
       <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -295,4 +295,4 @@
       Click and drag to select OCR region
     {/if}
   </div>
-</div>
+</button>

@@ -67,7 +67,7 @@
 </script>
 
 <Dialog.Root bind:open onOpenChange={onOpenChange}>
-  <Dialog.Content class="max-w-md">
+    <Dialog.Content class="max-w-4xl max-h-[85vh] flex flex-col overflow-hidden">
     <Dialog.Header>
       <Dialog.Title class="flex items-center gap-2">
         <AudioLines class="size-5" />
@@ -78,7 +78,7 @@
       </Dialog.Description>
     </Dialog.Header>
 
-    <div class="py-4 space-y-2">
+    <div class="py-4 space-y-2 overflow-scroll">
       {#each tracks as track (track.index)}
         {@const isSelected = selectedTrackIndex === track.index}
         <button

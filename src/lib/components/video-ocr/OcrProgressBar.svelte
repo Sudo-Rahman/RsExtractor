@@ -58,7 +58,7 @@
           <div class={cn(
             "w-0.5 h-8 mt-1",
             isCompleted ? "bg-green-500" : "bg-muted"
-          )} />
+          )}></div>
         {/if}
       </div>
       
