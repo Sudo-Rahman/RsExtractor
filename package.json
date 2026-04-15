@@ -14,7 +14,8 @@
   "license": "SEE LICENSE IN LICENSE",
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild"
+      "esbuild",
+      "@esbuild/*"
     ]
   },
   "dependencies": {
