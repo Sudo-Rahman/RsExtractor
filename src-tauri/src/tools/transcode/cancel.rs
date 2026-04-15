@@ -1,4 +1,4 @@
-use crate::shared::process::terminate_process;
+use crate::shared::process::force_terminate_process;
 
 fn remove_output_file(path: &str) {
     let _ = std::fs::remove_file(path);
@@ -22,7 +22,7 @@ pub(crate) async fn cancel_transcode_file(input_path: String) -> Result<(), Stri
     };
 
     if let Some(pid) = pid {
-        terminate_process(pid);
+        force_terminate_process(pid);
     }
 
     if let Some(path) = output_path {
@@ -58,7 +58,7 @@ pub(crate) async fn cancel_transcode() -> Result<(), String> {
     };
 
     for pid in pids {
-        terminate_process(pid);
+        force_terminate_process(pid);
     }
 
     for path in output_paths {
