@@ -101,11 +101,45 @@ const LIBAOM_AV1_PRESET_OPTIONS: TranscodePresetOption[] = [
   { value: '8', label: '8 · Fastest' },
 ];
 
+const LIBVPX_VP9_PRESET_OPTIONS: TranscodePresetOption[] = [
+  { value: '0', label: '0 · Finest Quality' },
+  { value: '1', label: '1 · Very High Quality' },
+  { value: '2', label: '2 · High Quality' },
+  { value: '3', label: '3 · Quality' },
+  { value: '4', label: '4 · Balanced' },
+  { value: '5', label: '5 · Faster Balanced' },
+  { value: '6', label: '6 · Fast' },
+  { value: '7', label: '7 · Faster' },
+  { value: '8', label: '8 · Fastest' },
+];
+
+const LIBVPX_VP8_PRESET_OPTIONS: TranscodePresetOption[] = [
+  { value: '0', label: '0 · Finest Quality' },
+  { value: '1', label: '1 · Very High Quality' },
+  { value: '2', label: '2 · High Quality' },
+  { value: '3', label: '3 · Quality' },
+  { value: '4', label: '4 · Balanced' },
+  { value: '5', label: '5 · Faster Balanced' },
+  { value: '6', label: '6 · Fast' },
+  { value: '7', label: '7 · Faster' },
+  { value: '8', label: '8 · Very Fast' },
+  { value: '9', label: '9 · Faster Still' },
+  { value: '10', label: '10 · Very Fast' },
+  { value: '11', label: '11 · Super Fast' },
+  { value: '12', label: '12 · Ultra Fast' },
+  { value: '13', label: '13 · Extreme Speed' },
+  { value: '14', label: '14 · Maximum Speed' },
+  { value: '15', label: '15 · Near Fastest' },
+  { value: '16', label: '16 · Fastest' },
+];
+
 const VIDEO_PRESET_OPTIONS_BY_ENCODER: Record<string, TranscodePresetOption[]> = {
   libx264: X26X_PRESET_OPTIONS,
   libx265: X26X_PRESET_OPTIONS,
   libsvtav1: SVT_AV1_PRESET_OPTIONS,
   'libaom-av1': LIBAOM_AV1_PRESET_OPTIONS,
+  libvpx: LIBVPX_VP8_PRESET_OPTIONS,
+  'libvpx-vp9': LIBVPX_VP9_PRESET_OPTIONS,
 };
 
 const TEXT_SUBTITLE_CODECS = new Set([
@@ -807,6 +841,10 @@ export function getDefaultVideoPresetValue(encoderId?: string): string | undefin
   }
 
   if (encoderId === 'libaom-av1') {
+    return '4';
+  }
+
+  if (encoderId === 'libvpx' || encoderId === 'libvpx-vp9') {
     return '4';
   }
 

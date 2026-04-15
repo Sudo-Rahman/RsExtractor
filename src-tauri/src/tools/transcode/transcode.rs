@@ -442,13 +442,25 @@ fn apply_safe_additional_args(
     Ok(())
 }
 
-fn validate_libaom_cpu_used(preset: &str) -> Result<(), String> {
-    let parsed = preset
-        .parse::<u8>()
-        .map_err(|_| "libaom-av1 preset must be an integer from 0 to 8".to_string())?;
+fn cpu_used_preset_max(encoder_id: &str) -> Option<u8> {
+    match encoder_id {
+        "libaom-av1" | "libvpx-vp9" => Some(8),
+        "libvpx" => Some(16),
+        _ => None,
+    }
+}
 
-    if parsed > 8 {
-        return Err("libaom-av1 preset must be an integer from 0 to 8".to_string());
+fn validate_cpu_used_preset(encoder_id: &str, preset: &str, max_value: u8) -> Result<(), String> {
+    let error_message = || {
+        format!(
+            "{} preset must be an integer from 0 to {}",
+            encoder_id, max_value
+        )
+    };
+    let parsed = preset.parse::<u8>().map_err(|_| error_message())?;
+
+    if parsed > max_value {
+        return Err(error_message());
     }
 
     Ok(())
@@ -459,8 +471,8 @@ fn apply_video_preset_arg(
     encoder_id: &str,
     preset: &str,
 ) -> Result<(), String> {
-    if encoder_id == "libaom-av1" {
-        validate_libaom_cpu_used(preset)?;
+    if let Some(max_value) = cpu_used_preset_max(encoder_id) {
+        validate_cpu_used_preset(encoder_id, preset, max_value)?;
         args.push("-cpu-used".to_string());
         args.push(preset.to_string());
         return Ok(());
@@ -994,7 +1006,7 @@ mod tests {
     use super::{
         TranscodeAdditionalArg, TranscodeAudioSettings, TranscodeAudioTrackOverride,
         TranscodeRequest, TranscodeSubtitleSettings, TranscodeVideoSettings, build_transcode_args,
-        transcode_media_with_bins,
+        cpu_used_preset_max, transcode_media_with_bins,
     };
 
     const AUDIO_LAYOUT_CASES: &[(&str, u64)] = &[
@@ -1487,7 +1499,7 @@ mod tests {
             .as_deref()
             .filter(|value| !value.trim().is_empty())
         {
-            let preset_flag = if encoder.id == "libaom-av1" {
+            let preset_flag = if cpu_used_preset_max(&encoder.id).is_some() {
                 "-cpu-used"
             } else {
                 "-preset"
@@ -2184,6 +2196,64 @@ mod tests {
             .expect_err("invalid libaom preset should fail");
 
         assert!(error.contains("libaom-av1 preset must be an integer from 0 to 8"));
+    }
+
+    #[test]
+    fn build_transcode_args_maps_libvpx_preset_to_cpu_used() {
+        let mut request = build_request("/tmp/output.webm");
+        request.container_id = "webm".to_string();
+        request.video.encoder_id = Some("libvpx".to_string());
+        request.video.preset = Some("16".to_string());
+        let streams = vec![json!({ "codec_type": "video", "codec_name": "h264" })];
+
+        let args =
+            build_transcode_args(&request, &streams, None).expect("libvpx args should build");
+
+        assert!(args.windows(2).any(|window| window == ["-cpu-used", "16"]));
+        assert!(!args.iter().any(|arg| arg == "-preset"));
+    }
+
+    #[test]
+    fn build_transcode_args_maps_libvpx_vp9_preset_to_cpu_used() {
+        let mut request = build_request("/tmp/output.webm");
+        request.container_id = "webm".to_string();
+        request.video.encoder_id = Some("libvpx-vp9".to_string());
+        request.video.preset = Some("8".to_string());
+        let streams = vec![json!({ "codec_type": "video", "codec_name": "h264" })];
+
+        let args =
+            build_transcode_args(&request, &streams, None).expect("libvpx-vp9 args should build");
+
+        assert!(args.windows(2).any(|window| window == ["-cpu-used", "8"]));
+        assert!(!args.iter().any(|arg| arg == "-preset"));
+    }
+
+    #[test]
+    fn build_transcode_args_rejects_invalid_libvpx_preset() {
+        let mut request = build_request("/tmp/output.webm");
+        request.container_id = "webm".to_string();
+        request.video.encoder_id = Some("libvpx".to_string());
+        request.video.preset = Some("17".to_string());
+        let streams = vec![json!({ "codec_type": "video", "codec_name": "h264" })];
+
+        let error = build_transcode_args(&request, &streams, None)
+            .expect_err("invalid libvpx preset should fail");
+
+        assert!(error.contains("libvpx preset must be an integer from 0 to 16"));
+    }
+
+    #[test]
+    fn build_transcode_args_rejects_invalid_libvpx_vp9_preset() {
+        let mut request = build_request("/tmp/output.webm");
+        request.container_id = "webm".to_string();
+        request.video.encoder_id = Some("libvpx-vp9".to_string());
+        request.video.preset = Some("9".to_string());
+        let streams = vec![json!({ "codec_type": "video", "codec_name": "h264" })];
+
+        let error = build_transcode_args(&request, &streams, None)
+            .expect_err("invalid libvpx-vp9 preset should fail");
+
+        assert!(error.contains("libvpx-vp9 preset must be an integer from 0 to 8"));
     }
 
     #[test]
