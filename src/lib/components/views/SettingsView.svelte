@@ -16,6 +16,7 @@
   import * as RadioGroup from '$lib/components/ui/radio-group';
   import { Separator } from '$lib/components/ui/separator';
   import { Badge } from '$lib/components/ui/badge';
+  import { loadAppVersion } from '$lib/services/app-metadata';
 
   import { Sun, Moon, Monitor, Palette, Terminal, FolderOpen, Download, CheckCircle, XCircle, RefreshCw, Info, Key, Eye, EyeOff, Languages, AudioLines, ExternalLink } from '@lucide/svelte';
 
@@ -50,6 +51,7 @@
   let isDownloading = $state(false);
   let downloadProgress = $state<number | null>(null);
   let downloadStage = $state<string | null>(null);
+  let appVersion = $state('Loading...');
   let unlistenProgress: (() => void) | null = null;
 
   const isDebugBuild = import.meta.env.DEV;
@@ -86,6 +88,11 @@
   onMount(() => {
     const setup = async () => {
       await settingsStore.load();
+      try {
+        appVersion = await loadAppVersion();
+      } catch {
+        appVersion = 'Unavailable';
+      }
       await checkFFmpeg();
 
       unlistenProgress = await listen<DownloadProgressEvent>('ffmpeg-download-progress', (event) => {
@@ -599,7 +606,7 @@
         <Separator />
         <div class="flex items-center justify-between">
           <span class="text-muted-foreground">Version</span>
-          <span class="font-mono text-sm">1.0.0</span>
+          <span class="font-mono text-sm">{appVersion}</span>
         </div>
         <Separator />
         <div class="text-sm text-muted-foreground">

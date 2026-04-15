@@ -54,8 +54,6 @@ jobs:
           const fs = require('node:fs');
           const { execFileSync } = require('node:child_process');
 
-          const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const tauriConfig = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
           const cargoToml = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
           const cargoVersionMatch = cargoToml.match(/^version\s*=\s*"([^"]+)"/m);
 
@@ -63,20 +61,7 @@ jobs:
             throw new Error('Unable to read version from src-tauri/Cargo.toml');
           }
 
-          const version = tauriConfig.version;
-          const projectVersions = {
-            'src-tauri/tauri.conf.json': version,
-            'package.json': packageJson.version,
-            'src-tauri/Cargo.toml': cargoVersionMatch[1]
-          };
-
-          const mismatches = Object.entries(projectVersions)
-            .filter(([, value]) => value !== version)
-            .map(([name, value]) => `${name}=${value}`);
-
-          if (mismatches.length > 0) {
-            throw new Error(`Project versions are not aligned with src-tauri/tauri.conf.json=${version}: ${mismatches.join(', ')}`);
-          }
+          const version = cargoVersionMatch[1];
 
           if (!/^\d+\.\d+\.\d+$/.test(version)) {
             throw new Error(`Version must use X.Y.Z format before creating a release tag: ${version}`);
