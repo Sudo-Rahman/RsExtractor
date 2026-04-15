@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MediaFlow",
-  "version": "1.0.0",
   "identifier": "com.sudo-rahman.mediaflow",
   "build": {
     "beforeDevCommand": "pnpm dev",

@@ -1,9 +1,12 @@
 <script lang="ts">
-  import * as Sidebar from '$lib/components/ui/sidebar';
-  import { Badge } from '$lib/components/ui/badge';
   import { FileOutput, FileVideo, GitMerge, Info, Settings, Languages, PenLine, AudioLines, ScanText } from '@lucide/svelte';
+  import { onMount } from 'svelte';
   import type { ComponentProps } from 'svelte';
-  import {OS} from "$lib/utils";
+
+  import { Badge } from '$lib/components/ui/badge';
+  import * as Sidebar from '$lib/components/ui/sidebar';
+  import { formatAppVersion, loadAppVersion } from '$lib/services/app-metadata';
+  import { OS } from '$lib/utils';
 
   interface NavItem {
     id: string;
@@ -67,6 +70,17 @@
   }: AppSidebarProps = $props();
 
   const isMacOS = OS() === 'MacOS';
+  let appVersionLabel = $state('Loading version...');
+
+  onMount(() => {
+    void loadAppVersion()
+      .then((version) => {
+        appVersionLabel = formatAppVersion(version);
+      })
+      .catch(() => {
+        appVersionLabel = 'Version unavailable';
+      });
+  });
 </script>
 
 <Sidebar.Root variant="floating" {...restProps}>
@@ -84,7 +98,7 @@
               />
               <div class="flex flex-col gap-0.5 leading-none">
                 <span class="font-semibold">MediaFlow</span>
-                <span class="text-xs text-muted-foreground">v1.0.0</span>
+                <span class="text-xs text-muted-foreground">{appVersionLabel}</span>
               </div>
             </div>
           {/snippet}

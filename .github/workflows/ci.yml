@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - codex/ffmpeg-in-bundle
 
 permissions:
   contents: read
