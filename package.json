@@ -12,6 +12,11 @@
     "tauri": "tauri"
   },
   "license": "SEE LICENSE IN LICENSE",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/svelte-virtual": "^3.13.19",
