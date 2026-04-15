@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - codex/ffmpeg-in-bundle
+      - codex/test-bundle-release
 
 permissions:
   contents: read
