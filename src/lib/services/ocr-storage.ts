@@ -8,7 +8,7 @@ import type {
   OcrVersion,
   VideoOcrPersistenceData,
 } from '$lib/types';
-import { loadRsextData, saveRsextData } from './rsext-storage';
+import { loadMediaflowData, saveMediaflowData } from './mediaflow-storage';
 
 function toFiniteNonNegativeNumber(value: unknown): number | null {
   const numericValue =
@@ -160,14 +160,14 @@ function createEmptyOcrData(
 }
 
 export async function loadOcrData(videoPath: string): Promise<VideoOcrPersistenceData | null> {
-  const rsextData = await loadRsextData(videoPath);
-  if (!rsextData?.videoOcr) {
+  const mediaflowData = await loadMediaflowData(videoPath);
+  if (!mediaflowData?.videoOcr) {
     return null;
   }
 
   return {
-    ...rsextData.videoOcr,
-    ocrVersions: rsextData.videoOcr.ocrVersions.map(normalizeOcrVersion),
+    ...mediaflowData.videoOcr,
+    ocrVersions: mediaflowData.videoOcr.ocrVersions.map(normalizeOcrVersion),
   };
 }
 
@@ -175,10 +175,10 @@ export async function saveOcrData(
   videoPath: string,
   data: VideoOcrPersistenceData,
 ): Promise<boolean> {
-  const existing = await loadRsextData(videoPath);
+  const existing = await loadMediaflowData(videoPath);
   const now = new Date().toISOString();
 
-  return saveRsextData(videoPath, {
+  return saveMediaflowData(videoPath, {
     version: 1,
     audioToSubs: existing?.audioToSubs,
     translation: existing?.translation,

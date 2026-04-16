@@ -6,7 +6,7 @@ export * from './rename';
 export * from './deepgram';
 export * from './audio-to-subs';
 export * from './video-ocr';
-export * from './rsext';
+export * from './mediaflow';
 export * from './tool-import';
 export * from './progress';
 export * from './transcode';

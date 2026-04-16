@@ -1,6 +1,6 @@
 # MediaFlow
 
-[![CI Build](https://github.com/Sudo-Rahman/RsExtractor/actions/workflows/ci.yml/badge.svg)](https://github.com/Sudo-Rahman/RsExtractor/actions/workflows/ci.yml)
+[![CI Build](https://github.com/Sudo-Rahman/Mediaflow/actions/workflows/ci.yml/badge.svg)](https://github.com/Sudo-Rahman/Mediaflow/actions/workflows/ci.yml)
 
 <p align="center">
   <img src="src-tauri/icons/icon.png" alt="MediaFlow Logo" width="120" height="120">

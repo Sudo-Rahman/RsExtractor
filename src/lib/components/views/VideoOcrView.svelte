@@ -460,7 +460,7 @@
       videoOcrStore.addOcrVersion(file.id, version);
       const saved = await persistFileData(file.id);
       if (!saved) {
-        videoOcrStore.addLog('warning', 'Failed to persist OCR version to rsext file', file.id);
+        videoOcrStore.addLog('warning', 'Failed to persist OCR version to .mediaflow.json file', file.id);
       } else {
         markPersistedOcrVersions(file.path, [version]);
       }
@@ -587,7 +587,7 @@
 
             const saved = await persistFileData(file.id);
             if (!saved) {
-              videoOcrStore.addLog('warning', 'Failed to persist preview source path to rsext file', file.id);
+              videoOcrStore.addLog('warning', 'Failed to persist preview source path to .mediaflow.json file', file.id);
             }
           } else {
             videoOcrStore.addLog(
@@ -985,7 +985,7 @@
         versionName: version.name,
         versionCreatedAt: version.createdAt,
         persisted: persistedOcrVersionKeys.has(buildOcrVersionKey(file.path, version.id))
-          ? 'rsext' as const
+          ? 'mediaflow' as const
           : 'memory' as const,
         subtitleFile: ocrVersionToSubtitleFile(file.path, file.name, version),
       })),

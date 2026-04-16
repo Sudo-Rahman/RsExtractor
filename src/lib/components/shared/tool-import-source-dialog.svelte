@@ -60,6 +60,10 @@
 
   const canConfirm = $derived(mode !== 'custom' || selectedKeys.size > 0);
 
+  function formatPersistenceSource(source: VersionedImportItem['persisted']): string {
+    return source === 'mediaflow' ? '.mediaflow.json' : 'memory';
+  }
+
   function setMode(value: ImportSelectionMode) {
     mode = value;
   }
@@ -134,11 +138,11 @@
 
           <div>
             <div class="space-y-4 p-3">
-              {#each groupedItems as group}
+              {#each groupedItems as group (group.mediaPath)}
                 <section class="space-y-2">
                   <p class="text-sm font-medium truncate">{group.mediaName}</p>
                   <div class="space-y-1.5">
-                    {#each group.versions as version}
+                    {#each group.versions as version (version.key)}
                       <label class="flex items-center justify-between gap-2 rounded-md border p-2">
                         <div class="flex items-center gap-2 min-w-0">
                           <Checkbox
@@ -150,7 +154,7 @@
                             <p class="text-xs text-muted-foreground truncate">{new Date(version.versionCreatedAt).toLocaleString('en-US')}</p>
                           </div>
                         </div>
-                        <Badge variant="outline" class="shrink-0">{version.persisted}</Badge>
+                        <Badge variant="outline" class="shrink-0">{formatPersistenceSource(version.persisted)}</Badge>
                       </label>
                     {/each}
                   </div>
