@@ -1,10 +1,10 @@
 /**
  * Transcription Storage Service
- * Handles persistence of transcription versions to .rsext.json files
+ * Handles persistence of transcription versions to .mediaflow.json files
  */
 
 import type { TranscriptionData, TranscriptionVersion, DeepgramConfig, DeepgramResult } from '$lib/types';
-import { deleteRsextData, loadRsextData, saveRsextData } from './rsext-storage';
+import { deleteMediaflowData, loadMediaflowData, saveMediaflowData } from './mediaflow-storage';
 
 // ============================================================================
 // DATA OPERATIONS
@@ -15,8 +15,8 @@ import { deleteRsextData, loadRsextData, saveRsextData } from './rsext-storage';
  */
 export async function loadTranscriptionData(audioPath: string): Promise<TranscriptionData | null> {
   try {
-    const rsextData = await loadRsextData(audioPath);
-    return rsextData?.audioToSubs ?? null;
+    const mediaflowData = await loadMediaflowData(audioPath);
+    return mediaflowData?.audioToSubs ?? null;
   } catch (error) {
     console.error('Failed to load transcription data:', error);
     return null;
@@ -28,8 +28,8 @@ export async function loadTranscriptionData(audioPath: string): Promise<Transcri
  */
 export async function saveTranscriptionData(audioPath: string, data: TranscriptionData): Promise<boolean> {
   try {
-    const existing = await loadRsextData(audioPath);
-    return saveRsextData(audioPath, {
+    const existing = await loadMediaflowData(audioPath);
+    return saveMediaflowData(audioPath, {
       version: 1,
       audioToSubs: data,
       videoOcr: existing?.videoOcr,
@@ -46,20 +46,20 @@ export async function saveTranscriptionData(audioPath: string, data: Transcripti
  */
 export async function deleteTranscriptionData(audioPath: string): Promise<boolean> {
   try {
-    const existing = await loadRsextData(audioPath);
+    const existing = await loadMediaflowData(audioPath);
     if (!existing?.audioToSubs) {
       return true;
     }
 
     if (existing.videoOcr || existing.translation) {
-      return saveRsextData(audioPath, {
+      return saveMediaflowData(audioPath, {
         version: 1,
         videoOcr: existing.videoOcr,
         translation: existing.translation,
       });
     }
 
-    return deleteRsextData(audioPath);
+    return deleteMediaflowData(audioPath);
   } catch (error) {
     console.error('Failed to delete transcription data:', error);
     return false;

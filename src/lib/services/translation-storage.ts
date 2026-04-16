@@ -1,11 +1,11 @@
 /**
  * Translation Storage Service
- * Handles persistence of translation versions to .rsext.json files
+ * Handles persistence of translation versions to .mediaflow.json files
  */
 
 import type { TranslationPersistenceData, TranslationVersion, LLMProvider, LanguageCode, TranslationUsage } from '$lib/types';
-import { deleteRsextData, loadRsextData, saveRsextData } from './rsext-storage';
 import { log } from '$lib/utils/log-toast';
+import { deleteMediaflowData, loadMediaflowData, saveMediaflowData } from './mediaflow-storage';
 
 // ============================================================================
 // VERSION ID GENERATION
@@ -24,8 +24,8 @@ function generateVersionId(): string {
  */
 export async function loadTranslationData(filePath: string): Promise<TranslationPersistenceData | null> {
   try {
-    const rsextData = await loadRsextData(filePath);
-    return rsextData?.translation ?? null;
+    const mediaflowData = await loadMediaflowData(filePath);
+    return mediaflowData?.translation ?? null;
   } catch (error) {
     log('warning', 'translation', 'Failed to load translation data', `${error}`);
     return null;
@@ -33,17 +33,17 @@ export async function loadTranslationData(filePath: string): Promise<Translation
 }
 
 /**
- * Save translation data, preserving other tool data in .rsext.json
+ * Save translation data, preserving other tool data in .mediaflow.json
  */
 export async function saveTranslationData(
   filePath: string,
   data: TranslationPersistenceData,
 ): Promise<boolean> {
   try {
-    const existing = await loadRsextData(filePath);
+    const existing = await loadMediaflowData(filePath);
     const now = new Date().toISOString();
 
-    return saveRsextData(filePath, {
+    return saveMediaflowData(filePath, {
       version: 1,
       audioToSubs: existing?.audioToSubs,
       videoOcr: existing?.videoOcr,
@@ -66,13 +66,13 @@ export async function saveTranslationData(
  */
 export async function deleteTranslationData(filePath: string): Promise<boolean> {
   try {
-    const existing = await loadRsextData(filePath);
+    const existing = await loadMediaflowData(filePath);
     if (!existing?.translation) {
       return true;
     }
 
     if (existing.audioToSubs || existing.videoOcr) {
-      return saveRsextData(filePath, {
+      return saveMediaflowData(filePath, {
         version: 1,
         audioToSubs: existing.audioToSubs,
         videoOcr: existing.videoOcr,
@@ -80,7 +80,7 @@ export async function deleteTranslationData(filePath: string): Promise<boolean> 
     }
 
     // No other tool data -- delete the entire file
-    return deleteRsextData(filePath);
+    return deleteMediaflowData(filePath);
   } catch (error) {
     log('error', 'translation', 'Failed to delete translation data', `${error}`);
     return false;

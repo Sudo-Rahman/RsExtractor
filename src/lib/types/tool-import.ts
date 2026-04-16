@@ -50,7 +50,7 @@ export interface VersionedImportItem extends ImportItemBase {
   versionId: string;
   versionName: string;
   versionCreatedAt: string;
-  persisted: 'memory' | 'rsext';
+  persisted: 'memory' | 'mediaflow';
   subtitleFile: SubtitleFile;
 }
 

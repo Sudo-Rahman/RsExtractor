@@ -179,7 +179,7 @@ mod tests {
     #[ignore = "network integration test; run explicitly when internet is available"]
     async fn btbn_latest_page_contains_download_url_for_supported_variant() {
         let client = reqwest::Client::builder()
-            .user_agent("RsExtractor-Tests/1.0")
+            .user_agent("Mediaflow-Tests/1.0")
             .no_proxy()
             .build()
             .expect("failed to create client");

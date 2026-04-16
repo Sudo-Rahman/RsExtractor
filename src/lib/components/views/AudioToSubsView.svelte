@@ -1196,7 +1196,7 @@
         versionName: version.name,
         versionCreatedAt: version.createdAt,
         persisted: persistedTranscriptionVersionKeys.has(buildTranscriptionVersionKey(file.path, version.id))
-          ? 'rsext' as const
+          ? 'mediaflow' as const
           : 'memory' as const,
         subtitleFile: transcriptionVersionToSubtitleFile(file.path, file.name, version),
       })),

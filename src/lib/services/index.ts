@@ -6,7 +6,7 @@ export * from './ocr-preview-compatibility';
 export * from './translation';
 export * from './translation-versioned-export';
 export * from './presets';
-export * from './rsext-storage';
+export * from './mediaflow-storage';
 export * from './transcription-storage';
 export * from './ocr-storage';
 export * from './subtitle-interop';
