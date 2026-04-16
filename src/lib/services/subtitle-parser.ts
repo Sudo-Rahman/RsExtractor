@@ -4,6 +4,7 @@
  */
 
 import type {
+  AssEventType,
   Cue,
   ParsedSubtitle,
   SubtitleFormat,
@@ -16,12 +17,65 @@ import type {
 
 const PLACEHOLDER_PREFIX = '⟦';
 const PLACEHOLDER_SUFFIX = '⟧';
+const ASS_KARAOKE_TAG_PATTERN = /\\(?:k|K|kf|ko)\d+/;
 
 /**
  * Generate a placeholder token
  */
 function makePlaceholder(type: string, index: number): string {
   return `${PLACEHOLDER_PREFIX}${type}_${index}${PLACEHOLDER_SUFFIX}`;
+}
+
+function getAssDrawingMode(tag: string): number | null {
+  let mode: number | null = null;
+  const pattern = /\\p(-?\d+)/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(tag)) !== null) {
+    mode = parseInt(match[1], 10);
+  }
+
+  return mode;
+}
+
+function protectAssDrawingSpans(
+  text: string,
+  makeProtectedPlaceholder: (type: string, original: string) => string
+): string {
+  let result = '';
+  let cursor = 0;
+  let drawingSpanStart: number | null = null;
+  const tagPattern = /\{[^}]*\}/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = tagPattern.exec(text)) !== null) {
+    const tag = match[0];
+    const tagStart = match.index;
+    const tagEnd = tagStart + tag.length;
+    const drawingMode = getAssDrawingMode(tag);
+
+    if (drawingSpanStart === null) {
+      if (drawingMode !== null && drawingMode > 0) {
+        result += text.slice(cursor, tagStart);
+        drawingSpanStart = tagStart;
+      }
+      continue;
+    }
+
+    if (drawingMode === 0) {
+      result += makeProtectedPlaceholder('DRAW', text.slice(drawingSpanStart, tagEnd));
+      cursor = tagEnd;
+      drawingSpanStart = null;
+    }
+  }
+
+  if (drawingSpanStart !== null) {
+    result += makeProtectedPlaceholder('DRAW', text.slice(drawingSpanStart));
+    cursor = text.length;
+  }
+
+  result += text.slice(cursor);
+  return result;
 }
 
 /**
@@ -31,43 +85,42 @@ function tokenizeASSText(text: string): { skeleton: string; placeholders: Placeh
   const placeholders: Placeholder[] = [];
   let placeholderIndex = 0;
 
-  // Replace override tags {...}
-  let skeleton = text.replace(/\{[^}]*\}/g, (match) => {
-    const token = makePlaceholder('TAG', placeholderIndex);
+  const protect = (type: string, original: string): string => {
+    const token = makePlaceholder(type, placeholderIndex);
     placeholders.push({
       index: placeholderIndex,
       token,
-      original: match
+      original
     });
     placeholderIndex++;
     return token;
-  });
+  };
+
+  let skeleton = protectAssDrawingSpans(text, protect);
+
+  // Replace override tags {...}
+  skeleton = skeleton.replace(/\{[^}]*\}/g, (match) => protect('TAG', match));
 
   // Replace \N (hard line break in ASS) with placeholder
-  skeleton = skeleton.replace(/\\N/g, (match) => {
-    const token = makePlaceholder('BR', placeholderIndex);
-    placeholders.push({
-      index: placeholderIndex,
-      token,
-      original: match
-    });
-    placeholderIndex++;
-    return token;
-  });
+  skeleton = skeleton.replace(/\\N/g, (match) => protect('BR', match));
 
   // Replace \n (soft line break) with placeholder
-  skeleton = skeleton.replace(/\\n/g, (match) => {
-    const token = makePlaceholder('SBR', placeholderIndex);
-    placeholders.push({
-      index: placeholderIndex,
-      token,
-      original: match
-    });
-    placeholderIndex++;
-    return token;
-  });
+  skeleton = skeleton.replace(/\\n/g, (match) => protect('SBR', match));
+
+  // Replace \h (non-breaking space in ASS) with placeholder
+  skeleton = skeleton.replace(/\\h/g, (match) => protect('HSP', match));
 
   return { skeleton, placeholders };
+}
+
+function extractReadableAssText(text: string): string {
+  return text
+    .replace(/\{[^}]*\}/g, '')
+    .replace(/\\N/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\h/g, ' ')
+    .replace(/[^\S\r\n]+/g, ' ')
+    .trim();
 }
 
 /**
@@ -374,11 +427,95 @@ export function parseVTT(content: string): ParsedSubtitle {
 // ASS/SSA PARSER
 // ============================================================================
 
+interface ParsedAssEventLine {
+  eventType: AssEventType;
+  fields: string[];
+  rawPrefix: string;
+  textOriginal: string;
+}
+
+function getAssEventType(line: string): AssEventType | null {
+  const match = line.match(/^\s*(Dialogue|Comment)\s*:/i);
+  if (!match) {
+    return null;
+  }
+
+  return match[1].toLowerCase() === 'comment' ? 'Comment' : 'Dialogue';
+}
+
+function findAssTextStart(line: string, eventBodyStart: number, textFieldIndex: number): number | null {
+  if (textFieldIndex === 0) {
+    return eventBodyStart;
+  }
+
+  let commaCount = 0;
+  for (let i = eventBodyStart; i < line.length; i++) {
+    if (line[i] === ',') {
+      commaCount++;
+      if (commaCount === textFieldIndex) {
+        return i + 1;
+      }
+    }
+  }
+
+  return null;
+}
+
+function parseAssEventLine(
+  line: string,
+  textFieldIndex: number
+): ParsedAssEventLine | null {
+  const eventType = getAssEventType(line);
+  if (!eventType) {
+    return null;
+  }
+
+  const prefixMatch = line.match(/^\s*(Dialogue|Comment)\s*:\s*/i);
+  if (!prefixMatch) {
+    return null;
+  }
+
+  const eventBodyStart = prefixMatch[0].length;
+  const textStart = findAssTextStart(line, eventBodyStart, textFieldIndex);
+  if (textStart === null) {
+    return null;
+  }
+
+  const fieldsBeforeText = line.slice(eventBodyStart, Math.max(eventBodyStart, textStart - 1));
+  const fields = textFieldIndex > 0 ? fieldsBeforeText.split(',') : [];
+
+  if (fields.length !== textFieldIndex) {
+    return null;
+  }
+
+  return {
+    eventType,
+    fields,
+    rawPrefix: line.slice(0, textStart),
+    textOriginal: line.slice(textStart)
+  };
+}
+
+function getAssField(fields: string[], fieldIndex: number): string {
+  return fieldIndex >= 0 && fieldIndex < fields.length ? fields[fieldIndex] : '';
+}
+
+function isUsefulAssComment(eventType: AssEventType, effect: string, textOriginal: string): boolean {
+  const normalizedEffect = effect.trim().toLowerCase();
+  const isTimedKaraoke = normalizedEffect === 'karaoke'
+    || (normalizedEffect === '' && ASS_KARAOKE_TAG_PATTERN.test(textOriginal));
+
+  return eventType === 'Comment'
+    && isTimedKaraoke
+    && extractReadableAssText(textOriginal).length > 0;
+}
+
 /**
  * Parse ASS/SSA file content
  */
 export function parseASS(content: string): ParsedSubtitle {
   const cues: Cue[] = [];
+  const parseWarnings: string[] = [];
   const format: SubtitleFormat = content.includes('[V4+ Styles]') ? 'ass' : 'ssa';
 
   // Normalize line endings
@@ -433,66 +570,66 @@ export function parseASS(content: string): ParsedSubtitle {
   const nameFieldIndex = formatFields.indexOf('name');
   const startFieldIndex = formatFields.indexOf('start');
   const endFieldIndex = formatFields.indexOf('end');
+  const effectFieldIndex = formatFields.indexOf('effect');
+
+  if (textFieldIndex === -1) {
+    parseWarnings.push('ASS/SSA Events Format has no Text field. Event lines were preserved but not parsed for translation.');
+  } else if (textFieldIndex !== formatFields.length - 1) {
+    parseWarnings.push('ASS/SSA Events Format has Text before later fields. Event lines were preserved but not parsed to avoid corrupting comma-containing text.');
+  }
 
   // Parse dialogue lines
   let cueIndex = 0;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const trimmed = line.trim();
+    const eventType = getAssEventType(line);
 
-    // Only process Dialogue lines (skip Comment, etc.)
-    if (!trimmed.startsWith('Dialogue:')) continue;
+    // Process Dialogue lines and useful hidden karaoke Comment lines.
+    if (!eventType || textFieldIndex === -1 || textFieldIndex !== formatFields.length - 1) continue;
 
-    // Remove "Dialogue: " prefix
-    const afterDialogue = trimmed.substring('Dialogue:'.length).trim();
-
-    // Split by comma, but maxsplit = (numFields - 1) because Text can contain commas
-    const parts: string[] = [];
-    let current = '';
-    let fieldCount = 0;
-
-    for (let j = 0; j < afterDialogue.length; j++) {
-      const char = afterDialogue[j];
-
-      if (char === ',' && fieldCount < formatFields.length - 1) {
-        parts.push(current);
-        current = '';
-        fieldCount++;
-      } else {
-        current += char;
-      }
+    const event = parseAssEventLine(line, textFieldIndex);
+    if (!event) {
+      parseWarnings.push(`Could not parse ASS/SSA ${eventType} event at line ${i + 1}. The line was preserved unchanged.`);
+      continue;
     }
-    parts.push(current); // Last field (Text)
 
     // Extract fields
-    const start = parts[startFieldIndex] || '0:00:00.00';
-    const end = parts[endFieldIndex] || '0:00:00.00';
-    const style = parts[styleFieldIndex] || '';
-    const speaker = parts[nameFieldIndex] || '';
-    const textOriginal = parts[textFieldIndex] || '';
+    const start = getAssField(event.fields, startFieldIndex) || '0:00:00.00';
+    const end = getAssField(event.fields, endFieldIndex) || '0:00:00.00';
+    const style = getAssField(event.fields, styleFieldIndex);
+    const speaker = getAssField(event.fields, nameFieldIndex);
+    const effect = getAssField(event.fields, effectFieldIndex);
+    const shouldParseComment = isUsefulAssComment(event.eventType, effect, event.textOriginal);
+
+    if (event.eventType === 'Comment' && !shouldParseComment) {
+      continue;
+    }
 
     const startMs = parseASSTime(start);
     const endMs = parseASSTime(end);
 
-    // Build raw prefix (everything before Text field)
-    const prefixParts = parts.slice(0, textFieldIndex);
-    const rawPrefix = `Dialogue: ${prefixParts.join(',')},`;
-
     // Tokenize text
-    const { skeleton, placeholders } = tokenizeASSText(textOriginal);
+    const { skeleton, placeholders } = shouldParseComment
+      ? { skeleton: extractReadableAssText(event.textOriginal), placeholders: [] }
+      : tokenizeASSText(event.textOriginal);
 
     cues.push({
       id: `ASS_${cueIndex}_L${i}`,
       index: cueIndex,
       startMs,
       endMs,
-      rawPrefix,
-      textOriginal,
+      rawPrefix: event.rawPrefix,
+      rawLine: line,
+      sourceLineIndex: i,
+      textOriginal: event.textOriginal,
       textSkeleton: skeleton,
       placeholders,
       speaker: speaker || undefined,
       style: style || undefined,
+      effect: effect || undefined,
+      assEventType: event.eventType,
+      assTextMode: shouldParseComment ? 'plain' : 'ass',
       format
     });
 
@@ -504,7 +641,8 @@ export function parseASS(content: string): ParsedSubtitle {
     header: headerLines.join('\n'),
     stylesSection: stylesLines.join('\n'),
     eventsFormat: eventsFormatLine,
-    cues
+    cues,
+    parseWarnings
   };
 }
 

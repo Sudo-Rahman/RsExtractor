@@ -98,6 +98,19 @@ export function validateTranslation(
         });
       }
     }
+
+    if (
+      requiresExactPlaceholderOrder(original)
+      && translatedPlaceholders.some((token, index) => token !== originalPlaceholders[index])
+    ) {
+      errors.push({
+        cueId: translated.id,
+        type: 'placeholder_order',
+        message: 'ASS/SSA placeholder order changed',
+        expected: originalPlaceholders.join(', '),
+        received: translatedPlaceholders.join(', ')
+      });
+    }
   }
 
   return {
@@ -114,6 +127,10 @@ function extractPlaceholders(text: string): string[] {
   return text.match(regex) || [];
 }
 
+function requiresExactPlaceholderOrder(cue: Cue): boolean {
+  return cue.format === 'ass' || cue.format === 'ssa';
+}
+
 /**
  * Restore placeholders in translated text with original content
  */
@@ -125,6 +142,10 @@ function restorePlaceholders(translatedText: string, originalCue: Cue): string {
   }
 
   return result;
+}
+
+function formatAssPlainText(text: string): string {
+  return text.replace(/\r\n?|\n/g, '\\N');
 }
 
 // ============================================================================
@@ -244,6 +265,37 @@ export function reconstructVTT(
 // ASS/SSA RECONSTRUCTION
 // ============================================================================
 
+interface SourceLineSegment {
+  line: string;
+  lineEnding: string;
+}
+
+function splitLinesPreservingEndings(content: string): SourceLineSegment[] {
+  const segments: SourceLineSegment[] = [];
+  let start = 0;
+
+  for (let i = 0; i < content.length; i++) {
+    const char = content[i];
+    if (char !== '\r' && char !== '\n') {
+      continue;
+    }
+
+    const line = content.slice(start, i);
+    let lineEnding = char;
+
+    if (char === '\r' && content[i + 1] === '\n') {
+      lineEnding = '\r\n';
+      i++;
+    }
+
+    segments.push({ line, lineEnding });
+    start = i + 1;
+  }
+
+  segments.push({ line: content.slice(start), lineEnding: '' });
+  return segments;
+}
+
 /**
  * Reconstruct ASS/SSA file from translated cues
  */
@@ -253,44 +305,37 @@ export function reconstructASS(
   originalContent: string
 ): string {
   const translatedMap = new Map(translatedCues.map(c => [c.id, c]));
+  const cueByLineIndex = new Map<number, Cue>();
 
-  // We'll rebuild the file by replacing only the Text field in Dialogue lines
-  const lines = originalContent.replace(/\r\n/g, '\n').split('\n');
-  const result: string[] = [];
-
-  let cueIndex = 0;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // If this is a Dialogue line, replace the text
-    if (trimmed.startsWith('Dialogue:')) {
-      const cue = parsed.cues[cueIndex];
-
-      if (cue) {
-        const translated = translatedMap.get(cue.id);
-
-        let finalText: string;
-        if (translated) {
-          finalText = restorePlaceholders(translated.translatedText, cue);
-        } else {
-          finalText = cue.textOriginal;
-        }
-
-        // Reconstruct the line using rawPrefix + translated text
-        result.push(cue.rawPrefix + finalText);
-        cueIndex++;
-      } else {
-        // No matching cue, keep original
-        result.push(line);
-      }
-    } else {
-      // Keep all other lines unchanged
-      result.push(line);
+  for (const cue of parsed.cues) {
+    if (cue.sourceLineIndex !== undefined) {
+      cueByLineIndex.set(cue.sourceLineIndex, cue);
     }
   }
 
-  return result.join('\n');
+  return splitLinesPreservingEndings(originalContent)
+    .map((segment, lineIndex) => {
+      const cue = cueByLineIndex.get(lineIndex);
+      if (!cue) {
+        return segment.line + segment.lineEnding;
+      }
+
+      const translated = translatedMap.get(cue.id);
+      const finalText = translated
+        ? formatCueTextForReconstruction(restorePlaceholders(translated.translatedText, cue), cue)
+        : cue.textOriginal;
+
+      return `${cue.rawPrefix ?? ''}${finalText}${segment.lineEnding}`;
+    })
+    .join('');
+}
+
+function formatCueTextForReconstruction(text: string, cue: Cue): string {
+  if ((cue.format === 'ass' || cue.format === 'ssa') && cue.assTextMode === 'plain') {
+    return formatAssPlainText(text);
+  }
+
+  return text;
 }
 
 // ============================================================================

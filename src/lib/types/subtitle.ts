@@ -5,6 +5,9 @@
  */
 export type SubtitleFormat = 'srt' | 'vtt' | 'ass' | 'ssa';
 
+export type AssEventType = 'Dialogue' | 'Comment';
+export type AssTextMode = 'ass' | 'plain';
+
 /**
  * Placeholder token for protected content
  */
@@ -24,11 +27,17 @@ export interface Cue {
   endMs: number;                 // End time in milliseconds
   rawPrefix?: string;            // Everything before the text (for ASS: "Dialogue: 0,0:00:01.81,0:00:06.26,italics,Yumiella,0000,0000,0000,,")
   rawSuffix?: string;            // Anything after the text (for VTT: cue settings)
+  rawLine?: string;              // Original source line for line-preserving formats
+  sourceLineIndex?: number;      // 0-based line index in the original source
   textOriginal: string;          // Original payload text
   textSkeleton: string;          // Text with placeholders
   placeholders: Placeholder[];   // Ordered list of placeholders
   speaker?: string;              // Speaker name if available
   style?: string;                // Style name if available
+  effect?: string;               // ASS/SSA Effect field if available
+  assEventType?: AssEventType;   // ASS/SSA event type if available
+  assTextMode?: AssTextMode;     // Whether ASS text is formatted source or prompt-only plain text
+  parseWarnings?: string[];      // Non-fatal parsing warnings for this cue
   format: SubtitleFormat;
 }
 
@@ -41,6 +50,7 @@ export interface ParsedSubtitle {
   stylesSection?: string;        // Styles section (for ASS)
   eventsFormat?: string;         // Events format line (for ASS)
   cues: Cue[];
+  parseWarnings?: string[];
   footer?: string;               // Any trailing content
 }
 
