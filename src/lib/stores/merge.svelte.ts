@@ -459,6 +459,9 @@ export const mergeStore = {
   applySelectedAiSuggestions(): number {
     const availableTrackIds = new Set(importedTracks.map(track => track.id));
     const availableVideoIds = new Set(videoFiles.map(video => video.id));
+    const assignedTrackIds = new Set(
+      videoFiles.flatMap(video => video.attachedTracks.map(attachedTrack => attachedTrack.trackId))
+    );
     const suggestionsToApply: Array<{ trackId: string; videoId: string }> = [];
 
     for (const suggestion of aiSuggestions) {
@@ -467,6 +470,7 @@ export const mergeStore = {
         suggestion.selected
         && videoId !== null
         && availableTrackIds.has(suggestion.trackId)
+        && !assignedTrackIds.has(suggestion.trackId)
         && availableVideoIds.has(videoId)
       ) {
         suggestionsToApply.push({ trackId: suggestion.trackId, videoId });
