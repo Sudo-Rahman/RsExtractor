@@ -742,6 +742,7 @@
       <div class="absolute inset-0" style="display: {currentView === 'merge' ? 'block' : 'none'}">
         <MergeView
           bind:this={mergeViewRef}
+          onNavigateToSettings={() => handleNavigate('settings')}
         />
       </div>
 

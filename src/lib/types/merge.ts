@@ -1,4 +1,5 @@
 import type { TrackType } from './media';
+import type { LLMProvider } from './translation';
 
 // Types for Batch Merge
 
@@ -87,6 +88,22 @@ export interface MergeRuntimeProgress {
   currentFileName: string;
   currentFileProgress: number;
   currentSpeedBytesPerSec?: number;
+}
+
+export type MergeAiStatus = 'idle' | 'analyzing' | 'preview' | 'error';
+export type MergeAiConfidence = 'high' | 'medium' | 'low';
+
+export interface MergeAiSuggestion {
+  trackId: string;
+  videoId: string | null;
+  confidence: MergeAiConfidence;
+  reason: string;
+  selected: boolean;
+}
+
+export interface MergeAiConfig {
+  provider: LLMProvider;
+  model: string;
 }
 
 // Track group for bulk editing (by language + type)
