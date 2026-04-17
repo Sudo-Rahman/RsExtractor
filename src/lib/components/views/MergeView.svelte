@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { FileVideo, FileAudio, Subtitles, Video, Volume2, Trash2, Plus, Wand2, Link, Unlink, Settings2, GripVertical, Clock, Layers } from '@lucide/svelte';
+  import { ChevronDown, FileVideo, FileAudio, Sparkles, Subtitles, Video, Volume2, Trash2, Plus, Wand2, Link, Unlink, Settings2, GripVertical, Clock, Layers } from '@lucide/svelte';
 
   export interface MergeViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
@@ -15,8 +15,9 @@
   import { toast } from 'svelte-sonner';
   import { flip } from 'svelte/animate';
 
-  import { createRenameWorkspaceStore, mergeStore, toolImportStore } from '$lib/stores';
+  import { createRenameWorkspaceStore, mergeStore, settingsStore, toolImportStore } from '$lib/stores';
   import { fetchFileMetadata } from '$lib/services/file-metadata';
+  import { analyzeMergeAiMatches } from '$lib/services/merge-ai';
   import {
     getBaseName,
     getDirectoryFromPath,
@@ -46,10 +47,25 @@
   import * as Card from '$lib/components/ui/card';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import * as Tabs from '$lib/components/ui/tabs';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+  import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
   import { ProcessingRemoveDialog, ToolImportButton } from '$lib/components/shared';
-  import { MergeTrackSettings, MergeOutputPanel, MergeTrackGroups, MergeTrackTable, MergeFileList } from '$lib/components/merge';
+  import {
+    MergeAiMatchView,
+    MergeTrackSettings,
+    MergeOutputPanel,
+    MergeTrackGroups,
+    MergeTrackTable,
+    MergeFileList,
+  } from '$lib/components/merge';
   import { RenameWorkspace } from '$lib/components/rename';
+
+  interface Props {
+    onNavigateToSettings?: () => void;
+  }
+
+  let { onNavigateToSettings }: Props = $props();
 
   // Constants
   const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
@@ -80,8 +96,9 @@
   let settingsOpen = $state(false);
   let editingTrackId = $state<string | null>(null);
   let editingTrackType = $state<'imported' | 'source'>('imported');
-  let mergeInternalView = $state<'main' | 'output-naming'>('main');
+  let mergeInternalView = $state<'main' | 'output-naming' | 'ai-match'>('main');
   let viewMode = $state<'home' | 'groups' | 'table'>('home');
+  let autoMatchMode = $state<'classic' | 'ai'>('classic');
   const outputNamingWorkspace = createRenameWorkspaceStore({
     mode: 'rename',
     includeOutputDirInTargetPath: true,
@@ -130,6 +147,16 @@
   );
   const selectedTracksToMergeCount = $derived(() =>
     selectedVideosToMerge().reduce((sum, video) => sum + video.attachedTracks.length, 0),
+  );
+  const readyVideos = $derived(() => mergeStore.videoFiles.filter(video => video.status === 'ready'));
+  const aiCandidateTracks = $derived(() => mergeStore.unassignedTracks);
+  const aiApiKey = $derived(() => settingsStore.getLLMApiKey(mergeStore.aiProvider));
+  const canRunAiAutoMatch = $derived(() =>
+    readyVideos().length > 0
+      && aiCandidateTracks().length > 0
+      && aiApiKey().trim().length > 0
+      && mergeStore.aiModel.trim().length > 0
+      && mergeStore.aiStatus !== 'analyzing'
   );
 
   onMount(async () => {
@@ -478,6 +505,60 @@
     } else {
       toast.info('No matches found. Check episode numbers in filenames.');
     }
+  }
+
+  function handleAutoMatchAction() {
+    if (autoMatchMode === 'classic') {
+      handleAutoMatch();
+      return;
+    }
+
+    mergeInternalView = 'ai-match';
+  }
+
+  async function handleRunAiAutoMatch() {
+    if (!canRunAiAutoMatch()) {
+      if (readyVideos().length === 0) {
+        toast.info('Add ready video files before running Auto-match AI');
+      } else if (aiCandidateTracks().length === 0) {
+        toast.info('There are no unassigned tracks to analyze');
+      } else if (!aiApiKey().trim()) {
+        toast.error('Configure an API key before running Auto-match AI');
+      } else if (!mergeStore.aiModel.trim()) {
+        toast.error('Select an AI model before running Auto-match AI');
+      }
+      return;
+    }
+
+    mergeStore.startAiAnalysis();
+
+    try {
+      const suggestions = await analyzeMergeAiMatches({
+        videos: readyVideos(),
+        tracks: aiCandidateTracks(),
+        provider: mergeStore.aiProvider,
+        model: mergeStore.aiModel,
+      });
+
+      mergeStore.setAiPreview(suggestions);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      mergeStore.setAiError(message);
+    }
+  }
+
+  function handleApplyAiSuggestions() {
+    const applied = mergeStore.applySelectedAiSuggestions();
+
+    if (applied > 0) {
+      toast.success(`Applied ${applied} AI match(es)`);
+    } else {
+      toast.info('No AI matches were selected');
+    }
+  }
+
+  function handleClearAiSuggestions() {
+    mergeStore.clearAiState();
   }
 
   // DnD callbacks
@@ -888,10 +969,15 @@
   });
 
   const groupedSourceTracks = $derived(() => groupTracksByType(selectedVideoTracks()));
+  const mergeHeaderTitle = $derived(() => {
+    if (mergeInternalView === 'output-naming') return 'Output Naming';
+    if (mergeInternalView === 'ai-match') return 'AI Auto-match';
+    return undefined;
+  });
 
   $effect(() => {
     toolHeader.setHeader('merge', {
-      title: mergeInternalView === 'output-naming' ? 'Output Naming' : undefined,
+      title: mergeHeaderTitle(),
       actions: mergeHeaderActions,
     });
   });
@@ -902,7 +988,7 @@
 </script>
 
 {#snippet mergeHeaderActions()}
-  {#if mergeInternalView === 'output-naming'}
+  {#if mergeInternalView !== 'main'}
     <Button
       variant="outline"
       size="sm"
@@ -1004,6 +1090,25 @@
       {/snippet}
     </RenameWorkspace>
   </div>
+{:else if mergeInternalView === 'ai-match'}
+  <MergeAiMatchView
+    videos={readyVideos()}
+    importedTracks={mergeStore.importedTracks}
+    unassignedTracks={aiCandidateTracks()}
+    provider={mergeStore.aiProvider}
+    model={mergeStore.aiModel}
+    status={mergeStore.aiStatus}
+    error={mergeStore.aiError}
+    suggestions={mergeStore.aiSuggestions}
+    canAnalyze={canRunAiAutoMatch()}
+    onProviderChange={(provider) => mergeStore.setAiProvider(provider)}
+    onModelChange={(model) => mergeStore.setAiModel(model)}
+    onAnalyze={() => void handleRunAiAutoMatch()}
+    onApply={handleApplyAiSuggestions}
+    onClear={handleClearAiSuggestions}
+    onToggleSuggestion={(trackId, selected) => mergeStore.setAiSuggestionSelected(trackId, selected)}
+    onNavigateToSettings={onNavigateToSettings}
+  />
 {:else if viewMode === 'groups'}
   <!-- Groups View: Full width -->
   <div class="h-full">
@@ -1066,37 +1171,92 @@
     </div>
 
     <!-- Center panel: Track management with tabs -->
-    <div class="flex-1 min-w-sm flex flex-col overflow-hidden">
+    <div class="flex-1 flex flex-col overflow-hidden">
       <Tabs.Root value="source" class="flex-1 flex flex-col overflow-hidden">
-        <div class="p-2.5 border-b w-full flex items-center justify-between gap-4">
-          <Tabs.List>
-            <Tabs.Trigger value="source" class="flex items-center gap-1.5">
-              <Layers class="size-4" />
-              Source
-            </Tabs.Trigger>
-            <Tabs.Trigger value="import" class="flex items-center gap-1.5">
-              <Plus class="size-4" />
-              Import
-              {#if mergeStore.unassignedTracks.length > 0}
-                <Badge variant="secondary" class="text-xs ml-1">{mergeStore.unassignedTracks.length}</Badge>
-              {/if}
-            </Tabs.Trigger>
-          </Tabs.List>
+        <ScrollArea orientation="horizontal" class="border-b bg-background">
+          <div class="flex w-max min-w-full items-center justify-between gap-4 p-2.5">
+            <Tabs.List class="shrink-0">
+              <Tabs.Trigger value="source" class="flex items-center gap-1.5">
+                <Layers class="size-4" />
+                Source
+              </Tabs.Trigger>
+              <Tabs.Trigger value="import" class="flex items-center gap-1.5">
+                <Plus class="size-4" />
+                Import
+                {#if mergeStore.unassignedTracks.length > 0}
+                  <Badge variant="secondary" class="text-xs ml-1">{mergeStore.unassignedTracks.length}</Badge>
+                {/if}
+              </Tabs.Trigger>
+            </Tabs.List>
 
-          <div class="flex gap-2">
+            <div class="flex shrink-0 gap-2">
             {#if mergeStore.importedTracks.length > 0 && mergeStore.videoFiles.length > 0}
               <Tooltip.Root>
                 <Tooltip.Trigger>
-                  <Button variant="outline" size="sm" onclick={handleAutoMatch}>
-                    <Wand2 class="size-4 mr-1" />
-                    Auto-match
-                  </Button>
+                  <div class="flex h-8 shrink-0 overflow-hidden rounded-md border bg-background shadow-xs">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      class="h-8 min-w-0 rounded-none border-0 px-2.5"
+                      onclick={handleAutoMatchAction}
+                    >
+                      {#if autoMatchMode === 'classic'}
+                        <Wand2 class="size-4 shrink-0 min-[1120px]:mr-1.5" />
+                        <span class="hidden min-[1120px]:inline">Auto-match</span>
+                        <span class="min-[1120px]:hidden">Auto</span>
+                      {:else}
+                        <Sparkles class="size-4 shrink-0 min-[1120px]:mr-1.5" />
+                        <span class="hidden min-[1120px]:inline">AI match</span>
+                        <span class="min-[1120px]:hidden">AI</span>
+                      {/if}
+                    </Button>
+                    <div class="my-1 w-px bg-border"></div>
+                    <DropdownMenu.Root>
+                      <DropdownMenu.Trigger>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          class="h-8 w-8 rounded-none border-0"
+                          title="Choose auto-match mode"
+                        >
+                          <ChevronDown class="size-4" />
+                        </Button>
+                      </DropdownMenu.Trigger>
+                      <DropdownMenu.Content align="end" class="w-44">
+                        <DropdownMenu.Label>Auto-match mode</DropdownMenu.Label>
+                        <DropdownMenu.Separator />
+                        <DropdownMenu.Item onclick={() => autoMatchMode = 'classic'}>
+                          <div class="flex items-center gap-2">
+                            <Wand2 class="size-4" />
+                            Classic
+                          </div>
+                          {#if autoMatchMode === 'classic'}
+                            <Badge variant="secondary" class="ml-auto text-[10px]">Active</Badge>
+                          {/if}
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Item onclick={() => autoMatchMode = 'ai'}>
+                          <div class="flex items-center gap-2">
+                            <Sparkles class="size-4" />
+                            AI
+                          </div>
+                          {#if autoMatchMode === 'ai'}
+                            <Badge variant="secondary" class="ml-auto text-[10px]">Active</Badge>
+                          {/if}
+                        </DropdownMenu.Item>
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Root>
+                  </div>
                 </Tooltip.Trigger>
-                <Tooltip.Content>Match tracks to videos by episode number</Tooltip.Content>
+                <Tooltip.Content>
+                  {autoMatchMode === 'classic'
+                    ? 'Match tracks to videos by episode number'
+                    : 'Open the AI match workspace'}
+                </Tooltip.Content>
               </Tooltip.Root>
             {/if}
+            </div>
           </div>
-        </div>
+        </ScrollArea>
 
         <!-- Source Tracks Tab -->
         <Tabs.Content value="source" class="flex-1 min-h-0 overflow-auto p-4 mt-0">
@@ -1353,6 +1513,7 @@
       onClose={handleCloseSettings}
       onSave={handleSaveTrackSettings}
     />
+
   </div>
 
   <ProcessingRemoveDialog

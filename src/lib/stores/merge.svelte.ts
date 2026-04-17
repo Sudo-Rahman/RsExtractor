@@ -3,16 +3,22 @@ import type {
   ImportedTrack,
   MergeTrack,
   MergeTrackConfig,
+  MergeAiStatus,
+  MergeAiSuggestion,
   MergeOutputConfig,
   FileRunState,
   MergeRuntimeProgress,
   AttachedTrack,
   TrackGroup,
   TrackPreset,
-  TrackType
+  TrackType,
+  LLMProvider,
 } from '$lib/types';
-import { extractSeriesInfo } from '$lib/types/merge';
+import { LLM_PROVIDERS, extractSeriesInfo } from '$lib/types';
 import { LazyStore } from '@tauri-apps/plugin-store';
+
+const DEFAULT_AI_PROVIDER: LLMProvider = 'google';
+const DEFAULT_AI_MODEL = LLM_PROVIDERS[DEFAULT_AI_PROVIDER].models[0]?.id ?? '';
 
 // State
 let videoFiles = $state<MergeVideoFile[]>([]);
@@ -35,6 +41,11 @@ let runtimeProgress = $state<MergeRuntimeProgress>({
   currentSpeedBytesPerSec: undefined,
 });
 let error = $state<string | null>(null);
+let aiProvider = $state<LLMProvider>(DEFAULT_AI_PROVIDER);
+let aiModel = $state<string>(DEFAULT_AI_MODEL);
+let aiStatus = $state<MergeAiStatus>('idle');
+let aiSuggestions = $state<MergeAiSuggestion[]>([]);
+let aiError = $state<string | null>(null);
 
 // Track groups for bulk editing
 let trackGroups = $state<Map<string, TrackGroup>>(new Map());
@@ -115,6 +126,12 @@ function resetRuntimeProgressState(): MergeRuntimeProgress {
   };
 }
 
+function resetAiState(): void {
+  aiStatus = 'idle';
+  aiSuggestions = [];
+  aiError = null;
+}
+
 export const mergeStore = {
   // Getters
   get videoFiles() { return videoFiles; },
@@ -130,6 +147,11 @@ export const mergeStore = {
   get runtimeProgress() { return runtimeProgress; },
   get error() { return error; },
   get isProcessing() { return status === 'processing'; },
+  get aiProvider() { return aiProvider; },
+  get aiModel() { return aiModel; },
+  get aiStatus() { return aiStatus; },
+  get aiSuggestions() { return aiSuggestions; },
+  get aiError() { return aiError; },
 
   // Get all tracks attached to a specific video
   getAttachedTracks(videoId: string): ImportedTrack[] {
@@ -171,6 +193,7 @@ export const mergeStore = {
       selectedVideoId = newFile.id;
     }
 
+    resetAiState();
     return newFile.id;
   },
 
@@ -189,6 +212,10 @@ export const mergeStore = {
     }
     if (selectedVideoId === fileId) {
       selectedVideoId = videoFiles.length > 0 ? videoFiles[0].id : null;
+    }
+    aiSuggestions = aiSuggestions.filter(suggestion => suggestion.videoId !== fileId);
+    if (aiStatus === 'preview' && aiSuggestions.length === 0) {
+      resetAiState();
     }
   },
 
@@ -217,6 +244,7 @@ export const mergeStore = {
     };
     newTrack.config.trackId = newTrack.id;
     importedTracks = [...importedTracks, newTrack];
+    resetAiState();
     return newTrack.id;
   },
 
@@ -283,6 +311,10 @@ export const mergeStore = {
       attachedTracks: v.attachedTracks.filter(at => at.trackId !== trackId)
     }));
     importedTracks = importedTracks.filter(t => t.id !== trackId);
+    aiSuggestions = aiSuggestions.filter(suggestion => suggestion.trackId !== trackId);
+    if (aiStatus === 'preview' && aiSuggestions.length === 0) {
+      resetAiState();
+    }
     // Reset status if completed so user can re-merge
     if (status === 'completed') status = 'idle';
   },
@@ -380,6 +412,73 @@ export const mergeStore = {
         this.attachTrackToVideo(track.id, bestMatch.id);
       }
     }
+  },
+
+  setAiProvider(provider: LLMProvider) {
+    aiProvider = provider;
+    const providerModels = LLM_PROVIDERS[provider].models;
+    if (provider !== 'openrouter') {
+      aiModel = providerModels[0]?.id ?? '';
+    } else if (!aiModel) {
+      aiModel = '';
+    }
+  },
+
+  setAiModel(model: string) {
+    aiModel = model;
+  },
+
+  startAiAnalysis() {
+    aiStatus = 'analyzing';
+    aiSuggestions = [];
+    aiError = null;
+  },
+
+  setAiPreview(suggestions: MergeAiSuggestion[]) {
+    aiStatus = 'preview';
+    aiSuggestions = suggestions;
+    aiError = null;
+  },
+
+  setAiError(message: string) {
+    aiStatus = 'error';
+    aiSuggestions = [];
+    aiError = message;
+  },
+
+  clearAiState() {
+    resetAiState();
+  },
+
+  setAiSuggestionSelected(trackId: string, selected: boolean) {
+    aiSuggestions = aiSuggestions.map(suggestion =>
+      suggestion.trackId === trackId ? { ...suggestion, selected } : suggestion
+    );
+  },
+
+  applySelectedAiSuggestions(): number {
+    const availableTrackIds = new Set(importedTracks.map(track => track.id));
+    const availableVideoIds = new Set(videoFiles.map(video => video.id));
+    const suggestionsToApply: Array<{ trackId: string; videoId: string }> = [];
+
+    for (const suggestion of aiSuggestions) {
+      const { videoId } = suggestion;
+      if (
+        suggestion.selected
+        && videoId !== null
+        && availableTrackIds.has(suggestion.trackId)
+        && availableVideoIds.has(videoId)
+      ) {
+        suggestionsToApply.push({ trackId: suggestion.trackId, videoId });
+      }
+    }
+
+    for (const suggestion of suggestionsToApply) {
+      this.attachTrackToVideo(suggestion.trackId, suggestion.videoId);
+    }
+
+    resetAiState();
+    return suggestionsToApply.length;
   },
 
   // Output configuration
@@ -546,6 +645,7 @@ export const mergeStore = {
     runtimeProgress = resetRuntimeProgressState();
     progress = 0;
     error = null;
+    resetAiState();
   },
 
   clearAll() {
@@ -559,6 +659,7 @@ export const mergeStore = {
     progress = 0;
     error = null;
     trackGroups = new Map();
+    resetAiState();
   },
 
   // ========== TRACK GROUPS ==========

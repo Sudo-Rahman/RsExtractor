@@ -7,6 +7,7 @@ export * from './translation';
 export * from './translation-versioned-export';
 export * from './presets';
 export * from './mediaflow-storage';
+export * from './merge-ai';
 export * from './transcription-storage';
 export * from './ocr-storage';
 export * from './subtitle-interop';
