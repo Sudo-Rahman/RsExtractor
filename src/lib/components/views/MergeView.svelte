@@ -1190,30 +1190,42 @@
             </Tabs.List>
 
             <div class="flex shrink-0 gap-2">
-            {#if mergeStore.importedTracks.length > 0 && mergeStore.videoFiles.length > 0}
-              <Tooltip.Root>
-                <Tooltip.Trigger>
-                  <div class="flex h-8 shrink-0 overflow-hidden rounded-md border bg-background shadow-xs">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      class="h-8 min-w-0 rounded-none border-0 px-2.5"
-                      onclick={handleAutoMatchAction}
-                    >
-                      {#if autoMatchMode === 'classic'}
-                        <Wand2 class="size-4 shrink-0 min-[1120px]:mr-1.5" />
-                        <span class="hidden min-[1120px]:inline">Auto-match</span>
-                        <span class="min-[1120px]:hidden">Auto</span>
-                      {:else}
-                        <Sparkles class="size-4 shrink-0 min-[1120px]:mr-1.5" />
-                        <span class="hidden min-[1120px]:inline">AI match</span>
-                        <span class="min-[1120px]:hidden">AI</span>
-                      {/if}
-                    </Button>
-                    <div class="my-1 w-px bg-border"></div>
-                    <DropdownMenu.Root>
-                      <DropdownMenu.Trigger>
+              {#if mergeStore.importedTracks.length > 0 && mergeStore.videoFiles.length > 0}
+                <div class="flex h-8 shrink-0 overflow-hidden rounded-md border bg-background shadow-xs">
+                  <Tooltip.Root>
+                    <Tooltip.Trigger>
+                      {#snippet child({ props })}
                         <Button
+                          {...props}
+                          variant="ghost"
+                          size="sm"
+                          class="h-8 min-w-0 rounded-none border-0 px-2.5"
+                          onclick={handleAutoMatchAction}
+                        >
+                          {#if autoMatchMode === 'classic'}
+                            <Wand2 class="size-4 shrink-0 min-[1120px]:mr-1.5" />
+                            <span class="hidden min-[1120px]:inline">Auto-match</span>
+                            <span class="min-[1120px]:hidden">Auto</span>
+                          {:else}
+                            <Sparkles class="size-4 shrink-0 min-[1120px]:mr-1.5" />
+                            <span class="hidden min-[1120px]:inline">AI match</span>
+                            <span class="min-[1120px]:hidden">AI</span>
+                          {/if}
+                        </Button>
+                      {/snippet}
+                    </Tooltip.Trigger>
+                    <Tooltip.Content>
+                      {autoMatchMode === 'classic'
+                        ? 'Match tracks to videos by episode number'
+                        : 'Open the AI match workspace'}
+                    </Tooltip.Content>
+                  </Tooltip.Root>
+                  <div class="my-1 w-px bg-border"></div>
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger>
+                      {#snippet child({ props })}
+                        <Button
+                          {...props}
                           variant="ghost"
                           size="icon-sm"
                           class="h-8 w-8 rounded-none border-0"
@@ -1221,39 +1233,33 @@
                         >
                           <ChevronDown class="size-4" />
                         </Button>
-                      </DropdownMenu.Trigger>
-                      <DropdownMenu.Content align="end" class="w-44">
-                        <DropdownMenu.Label>Auto-match mode</DropdownMenu.Label>
-                        <DropdownMenu.Separator />
-                        <DropdownMenu.Item onclick={() => autoMatchMode = 'classic'}>
-                          <div class="flex items-center gap-2">
-                            <Wand2 class="size-4" />
-                            Classic
-                          </div>
-                          {#if autoMatchMode === 'classic'}
-                            <Badge variant="secondary" class="ml-auto text-[10px]">Active</Badge>
-                          {/if}
-                        </DropdownMenu.Item>
-                        <DropdownMenu.Item onclick={() => autoMatchMode = 'ai'}>
-                          <div class="flex items-center gap-2">
-                            <Sparkles class="size-4" />
-                            AI
-                          </div>
-                          {#if autoMatchMode === 'ai'}
-                            <Badge variant="secondary" class="ml-auto text-[10px]">Active</Badge>
-                          {/if}
-                        </DropdownMenu.Item>
-                      </DropdownMenu.Content>
-                    </DropdownMenu.Root>
-                  </div>
-                </Tooltip.Trigger>
-                <Tooltip.Content>
-                  {autoMatchMode === 'classic'
-                    ? 'Match tracks to videos by episode number'
-                    : 'Open the AI match workspace'}
-                </Tooltip.Content>
-              </Tooltip.Root>
-            {/if}
+                      {/snippet}
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Content align="end" class="w-44">
+                      <DropdownMenu.Label>Auto-match mode</DropdownMenu.Label>
+                      <DropdownMenu.Separator />
+                      <DropdownMenu.Item onclick={() => autoMatchMode = 'classic'}>
+                        <div class="flex items-center gap-2">
+                          <Wand2 class="size-4" />
+                          Classic
+                        </div>
+                        {#if autoMatchMode === 'classic'}
+                          <Badge variant="secondary" class="ml-auto text-[10px]">Active</Badge>
+                        {/if}
+                      </DropdownMenu.Item>
+                      <DropdownMenu.Item onclick={() => autoMatchMode = 'ai'}>
+                        <div class="flex items-center gap-2">
+                          <Sparkles class="size-4" />
+                          AI
+                        </div>
+                        {#if autoMatchMode === 'ai'}
+                          <Badge variant="secondary" class="ml-auto text-[10px]">Active</Badge>
+                        {/if}
+                      </DropdownMenu.Item>
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Root>
+                </div>
+              {/if}
             </div>
           </div>
         </ScrollArea>
