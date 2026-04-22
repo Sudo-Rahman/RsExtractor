@@ -41,7 +41,7 @@
 
 <div
   class={cn(
-    'flex-1 flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors',
+    'flex-1 flex flex-col items-center justify-center rounded-4xl border-2 border-dashed p-8 transition-colors',
     dragActive ? 'border-primary bg-primary/5' : 'border-muted-foreground/25',
     disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:border-muted-foreground/50',
     className

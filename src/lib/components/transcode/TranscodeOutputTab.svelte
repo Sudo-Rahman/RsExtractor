@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { FileVideo, FolderOpen } from '@lucide/svelte';
+  import { FileVideo } from '@lucide/svelte';
 
   import type { RenameWorkspaceStore } from '$lib/stores/rename.svelte';
   import type { TranscodeContainerCapability, TranscodeFile } from '$lib/types';
@@ -8,6 +8,8 @@
   import { Label } from '$lib/components/ui/label';
   import * as Card from '$lib/components/ui/card';
   import * as Select from '$lib/components/ui/select';
+  import { OutputFolderField } from '$lib/components/shared';
+  import { resolveOutputFolderDisplay } from '$lib/utils';
 
   import type { TranscodeContainerUpdater, TranscodeOutputPathBuilder } from './types';
 
@@ -40,6 +42,15 @@
     onClearOutputDir,
     onOpenRenameWorkspace,
   }: Props = $props();
+
+  const outputFolderDisplay = $derived.by(() =>
+    resolveOutputFolderDisplay({
+      explicitPath: workspace.outputDir,
+      sourcePaths: file ? [file.path] : [],
+      allowSourceFallback: true,
+      fallbackLabel: 'Use each source folder',
+    }),
+  );
 </script>
 
 <div class="grid gap-4 lg:grid-cols-2">
@@ -57,43 +68,28 @@
           onValueChange={(value) => {
             updateContainer(value);
           }}
-        >
+          >
           <Select.Trigger class="w-full">{selectedContainer?.label ?? file.profile.containerId.toUpperCase()}</Select.Trigger>
           <Select.Content>
-            {#each availableContainers as container (container.id)}
-              <Select.Item value={container.id}>{container.label}</Select.Item>
-            {/each}
+            <Select.Group>
+              {#each availableContainers as container (container.id)}
+                <Select.Item value={container.id}>{container.label}</Select.Item>
+              {/each}
+            </Select.Group>
           </Select.Content>
         </Select.Root>
       </div>
 
-      <div class="space-y-2">
-        <Label>Output folder</Label>
-        <Button
-          variant="outline"
-          class="w-full justify-start gap-2 h-auto py-2 text-left"
-          onclick={onSelectOutputDir}
-        >
-          <FolderOpen class="size-4 shrink-0" />
-          <span class="truncate flex-1 text-sm">
-            {#if workspace.outputDir}
-              {workspace.outputDir}
-            {:else}
-              <span class="text-muted-foreground">Use each source folder</span>
-            {/if}
-          </span>
-        </Button>
-        {#if workspace.outputDir}
-          <Button
-            variant="ghost"
-            size="sm"
-            class="h-auto px-0 text-xs text-muted-foreground hover:text-foreground"
-            onclick={onClearOutputDir}
-          >
-            Use source folders
-          </Button>
-        {/if}
-      </div>
+      <OutputFolderField
+        label="Output folder"
+        displayText={outputFolderDisplay.displayText}
+        state={outputFolderDisplay.state}
+        description="Optional. Leave empty to save transcoded files next to each source file."
+        showReset={outputFolderDisplay.showReset}
+        resetLabel="Use source folders"
+        onBrowse={onSelectOutputDir}
+        onReset={onClearOutputDir}
+      />
 
       <div class="space-y-2">
         <Label>Output preview</Label>

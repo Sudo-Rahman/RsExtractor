@@ -16,3 +16,4 @@ vite.config.ts.timestamp-*
 /AGENTS.md
 /.specify
 /src-tauri/binaries
+.codex

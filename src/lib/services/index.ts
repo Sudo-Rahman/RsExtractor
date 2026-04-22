@@ -13,3 +13,4 @@ export * from './ocr-storage';
 export * from './subtitle-interop';
 export * from './transcode';
 export * from './transcode-ai';
+export * from './output-folder';

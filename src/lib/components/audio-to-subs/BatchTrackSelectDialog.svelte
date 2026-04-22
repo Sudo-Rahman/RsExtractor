@@ -176,9 +176,11 @@
                       {selectedLanguage ? selectedLanguage.toUpperCase() : 'Select language'}
                   </Select.Trigger>
                   <Select.Content>
-                    {#each availableLanguages as lang}
-                      <Select.Item value={lang}>{lang.toUpperCase()}</Select.Item>
-                    {/each}
+                    <Select.Group>
+                      {#each availableLanguages as lang}
+                        <Select.Item value={lang}>{lang.toUpperCase()}</Select.Item>
+                      {/each}
+                    </Select.Group>
                   </Select.Content>
                 </Select.Root>
               {:else if isSelected && strategy.type === 'language' && availableLanguages.length === 0}

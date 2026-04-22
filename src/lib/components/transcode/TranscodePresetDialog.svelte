@@ -122,9 +122,11 @@
                 : 'Select a saved preset'}
             </Select.Trigger>
             <Select.Content>
-              {#each presets as preset (preset.id)}
-                <Select.Item value={preset.id}>{preset.name}</Select.Item>
-              {/each}
+              <Select.Group>
+                {#each presets as preset (preset.id)}
+                  <Select.Item value={preset.id}>{preset.name}</Select.Item>
+                {/each}
+              </Select.Group>
             </Select.Content>
           </Select.Root>
           <Button variant="outline" onclick={handleApply} disabled={!getSelectedPresetId()}>Apply</Button>

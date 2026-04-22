@@ -102,16 +102,18 @@
           value={mode}
           onValueChange={(value) => value && (mode = value as OcrRetryMode)}
         >
-          <Select.Trigger class="w-full">
-            {getModeLabel(mode)}
-          </Select.Trigger>
-          <Select.Content>
+        <Select.Trigger class="w-full">
+          {getModeLabel(mode)}
+        </Select.Trigger>
+        <Select.Content>
+          <Select.Group>
             <Select.Item value="full_pipeline">Full pipeline</Select.Item>
             <Select.Item value="cleanup_only">Cleanup only</Select.Item>
             <Select.Item value="cleanup_and_ai">Cleanup + AI</Select.Item>
             <Select.Item value="ai_only">AI only</Select.Item>
-          </Select.Content>
-        </Select.Root>
+          </Select.Group>
+        </Select.Content>
+      </Select.Root>
       </div>
 
       {#if partialModeSelected && missingRawCount > 0}
@@ -137,15 +139,17 @@
             value={config.language}
             onValueChange={(value) => value && (config = { ...config, language: value as OcrConfig['language'] })}
           >
-            <Select.Trigger class="w-full">
-              {OCR_LANGUAGES.find((lang) => lang.value === config.language)?.label ?? 'Select language'}
-            </Select.Trigger>
-            <Select.Content>
+          <Select.Trigger class="w-full">
+            {OCR_LANGUAGES.find((lang) => lang.value === config.language)?.label ?? 'Select language'}
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Group>
               {#each OCR_LANGUAGES as lang}
                 <Select.Item value={lang.value}>{lang.label}</Select.Item>
               {/each}
-            </Select.Content>
-          </Select.Root>
+            </Select.Group>
+          </Select.Content>
+        </Select.Root>
         </div>
 
         <div class="space-y-2">

@@ -53,9 +53,11 @@
         {modeOptions.find(o => o.value === config.mode)?.label || 'Select mode...'}
       </Select.Trigger>
       <Select.Content>
-        {#each modeOptions as option}
-          <Select.Item value={option.value}>{option.label}</Select.Item>
-        {/each}
+        <Select.Group>
+          {#each modeOptions as option}
+            <Select.Item value={option.value}>{option.label}</Select.Item>
+          {/each}
+        </Select.Group>
       </Select.Content>
     </Select.Root>
   </div>

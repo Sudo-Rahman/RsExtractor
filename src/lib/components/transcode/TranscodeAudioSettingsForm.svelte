@@ -76,12 +76,14 @@
         type="single"
         value={settings.mode}
         onValueChange={(value) => onModeChange(value as TranscodeAudioMode)}
-      >
+        >
         <Select.Trigger class="w-full">{settings.mode}</Select.Trigger>
         <Select.Content>
-          {#each modeOptions as option (option.value)}
-            <Select.Item value={option.value}>{option.label}</Select.Item>
-          {/each}
+          <Select.Group>
+            {#each modeOptions as option (option.value)}
+              <Select.Item value={option.value}>{option.label}</Select.Item>
+            {/each}
+          </Select.Group>
         </Select.Content>
       </Select.Root>
     </div>
@@ -96,9 +98,11 @@
         >
           <Select.Trigger class="w-full">{selectedEncoder?.label ?? 'Select encoder'}</Select.Trigger>
           <Select.Content>
-            {#each availableAudioEncoders as encoder (encoder.id)}
-              <Select.Item value={encoder.id}>{encoder.label}</Select.Item>
-            {/each}
+            <Select.Group>
+              {#each availableAudioEncoders as encoder (encoder.id)}
+                <Select.Item value={encoder.id}>{encoder.label}</Select.Item>
+              {/each}
+            </Select.Group>
           </Select.Content>
         </Select.Root>
       </div>

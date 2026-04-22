@@ -8,7 +8,7 @@
 
 <script lang="ts">
   import { onDestroy, onMount, untrack } from 'svelte';
-  import { ArrowLeft, FolderOpen, Home, LayoutGrid, Table } from '@lucide/svelte';
+  import { ArrowLeft, Home, LayoutGrid, Table } from '@lucide/svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
@@ -25,8 +25,10 @@
     type ResolveRenameTargetPathContext,
   } from '$lib/services/rename';
   import { scanFiles } from '$lib/services/ffprobe';
+  import { pickOutputDirectory } from '$lib/services/output-folder';
   import { dndzone } from '$lib/utils/dnd';
   import { logAndToast } from '$lib/utils/log-toast';
+  import { resolveOutputFolderDisplay } from '$lib/utils';
   import { useToolHeader } from '$lib/components/layout/tool-header-context.svelte';
 
   import {
@@ -41,16 +43,16 @@
   import type { ImportItem, ImportSourceId, ImportableKind } from '$lib/types/tool-import';
 
   import { Button } from '$lib/components/ui/button';
+  import * as ButtonGroup from '$lib/components/ui/button-group';
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
-  import { Label } from '$lib/components/ui/label';
   import * as Card from '$lib/components/ui/card';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import * as Tabs from '$lib/components/ui/tabs';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
-  import { ProcessingRemoveDialog, ToolImportButton } from '$lib/components/shared';
+  import { OutputFolderField, ProcessingRemoveDialog, ToolImportButton } from '$lib/components/shared';
   import {
     MergeAiMatchView,
     MergeTrackSettings,
@@ -98,7 +100,7 @@
   let editingTrackType = $state<'imported' | 'source'>('imported');
   let mergeInternalView = $state<'main' | 'output-naming' | 'ai-match'>('main');
   let viewMode = $state<'home' | 'groups' | 'table'>('home');
-  let autoMatchMode = $state<'classic' | 'ai'>('classic');
+  const autoMatchMode = $derived(() => mergeStore.autoMatchMode);
   const outputNamingWorkspace = createRenameWorkspaceStore({
     mode: 'rename',
     includeOutputDirInTargetPath: true,
@@ -148,6 +150,14 @@
   const selectedTracksToMergeCount = $derived(() =>
     selectedVideosToMerge().reduce((sum, video) => sum + video.attachedTracks.length, 0),
   );
+  const outputNamingFolderDisplay = $derived.by(() =>
+    resolveOutputFolderDisplay({
+      explicitPath: outputNamingWorkspace.outputDir,
+      sourcePaths: selectedVideosToMerge().map((video) => video.path),
+      allowSourceFallback: true,
+      fallbackLabel: 'Use each source folder',
+    }),
+  );
   const readyVideos = $derived(() => mergeStore.videoFiles.filter(video => video.status === 'ready'));
   const aiCandidateTracks = $derived(() => mergeStore.unassignedTracks);
   const aiApiKey = $derived(() => settingsStore.getLLMApiKey(mergeStore.aiProvider));
@@ -160,6 +170,7 @@
   );
 
   onMount(async () => {
+    await mergeStore.loadUiPreferences();
     unlistenMergeProgress = await listen<MergeProgressEvent>('merge-progress', (event) => {
       if (!mergeStore.isProcessing) {
         return;
@@ -508,7 +519,7 @@
   }
 
   function handleAutoMatchAction() {
-    if (autoMatchMode === 'classic') {
+    if (autoMatchMode() === 'classic') {
       handleAutoMatch();
       return;
     }
@@ -604,11 +615,8 @@
   }
 
   async function handleSelectOutputDir() {
-    const selected = await open({
-      directory: true, multiple: false,
-      title: 'Select output directory'
-    });
-    if (selected && typeof selected === 'string') {
+    const selected = await pickOutputDirectory();
+    if (selected) {
       mergeStore.setOutputDir(selected);
       outputNamingWorkspace.setOutputDir(selected);
     }
@@ -1043,34 +1051,16 @@
     >
       {#snippet actionPanel()}
         <div class="space-y-2">
-          <Label class="text-xs uppercase tracking-wide text-muted-foreground">Output Folder</Label>
-          <Button
-            variant="outline"
-            class="w-full justify-start gap-2 h-auto py-2 text-left"
-            onclick={handleSelectOutputDir}
-          >
-            <FolderOpen class="size-4 shrink-0" />
-            <span class="truncate flex-1 text-sm">
-              {#if outputNamingWorkspace.outputDir}
-                {outputNamingWorkspace.outputDir}
-              {:else}
-                <span class="text-muted-foreground">Use each source folder</span>
-              {/if}
-            </span>
-          </Button>
-          <p class="text-xs text-muted-foreground">
-            Optional. Leave empty to save merged files next to each source video.
-          </p>
-          {#if outputNamingWorkspace.outputDir}
-            <Button
-              variant="ghost"
-              size="sm"
-              class="h-auto px-0 text-xs text-muted-foreground hover:text-foreground"
-              onclick={handleClearOutputDir}
-            >
-              Use source folders
-            </Button>
-          {/if}
+          <OutputFolderField
+            label="Output folder"
+            displayText={outputNamingFolderDisplay.displayText}
+            state={outputNamingFolderDisplay.state}
+            description="Optional. Leave empty to save merged files next to each source video."
+            showReset={outputNamingFolderDisplay.showReset}
+            resetLabel="Use source folders"
+            onBrowse={handleSelectOutputDir}
+            onReset={handleClearOutputDir}
+          />
         </div>
 
         <div class="rounded-md bg-muted/50 p-3 space-y-2">
@@ -1191,18 +1181,18 @@
 
             <div class="flex shrink-0 gap-2">
               {#if mergeStore.importedTracks.length > 0 && mergeStore.videoFiles.length > 0}
-                <div class="flex h-8 shrink-0 overflow-hidden rounded-md border bg-background shadow-xs">
+                <ButtonGroup.Root class="shrink-0 gap-0 overflow-hidden rounded-4xl shadow-xs">
                   <Tooltip.Root>
                     <Tooltip.Trigger>
                       {#snippet child({ props })}
                         <Button
                           {...props}
-                          variant="ghost"
+                          variant="outline"
                           size="sm"
-                          class="h-8 min-w-0 rounded-none border-0 px-2.5"
+                          class="h-8 min-w-0 rounded-r-none border-r-0 px-2.5"
                           onclick={handleAutoMatchAction}
                         >
-                          {#if autoMatchMode === 'classic'}
+                          {#if autoMatchMode() === 'classic'}
                             <Wand2 class="size-4 shrink-0 min-[1120px]:mr-1.5" />
                             <span class="hidden min-[1120px]:inline">Auto-match</span>
                             <span class="min-[1120px]:hidden">Auto</span>
@@ -1215,20 +1205,20 @@
                       {/snippet}
                     </Tooltip.Trigger>
                     <Tooltip.Content>
-                      {autoMatchMode === 'classic'
+                      {autoMatchMode() === 'classic'
                         ? 'Match tracks to videos by episode number'
                         : 'Open the AI match workspace'}
                     </Tooltip.Content>
                   </Tooltip.Root>
-                  <div class="my-1 w-px bg-border"></div>
+                  <div class="self-stretch w-px bg-border"></div>
                   <DropdownMenu.Root>
                     <DropdownMenu.Trigger>
                       {#snippet child({ props })}
                         <Button
                           {...props}
-                          variant="ghost"
+                          variant="outline"
                           size="icon-sm"
-                          class="h-8 w-8 rounded-none border-0"
+                          class="h-8 w-8 rounded-l-none border-l-0"
                           title="Choose auto-match mode"
                         >
                           <ChevronDown class="size-4" />
@@ -1238,27 +1228,27 @@
                     <DropdownMenu.Content align="end" class="w-44">
                       <DropdownMenu.Label>Auto-match mode</DropdownMenu.Label>
                       <DropdownMenu.Separator />
-                      <DropdownMenu.Item onclick={() => autoMatchMode = 'classic'}>
+                      <DropdownMenu.Item onclick={() => mergeStore.setAutoMatchMode('classic')}>
                         <div class="flex items-center gap-2">
                           <Wand2 class="size-4" />
                           Classic
                         </div>
-                        {#if autoMatchMode === 'classic'}
+                        {#if autoMatchMode() === 'classic'}
                           <Badge variant="secondary" class="ml-auto text-[10px]">Active</Badge>
                         {/if}
                       </DropdownMenu.Item>
-                      <DropdownMenu.Item onclick={() => autoMatchMode = 'ai'}>
+                      <DropdownMenu.Item onclick={() => mergeStore.setAutoMatchMode('ai')}>
                         <div class="flex items-center gap-2">
                           <Sparkles class="size-4" />
                           AI
                         </div>
-                        {#if autoMatchMode === 'ai'}
+                        {#if autoMatchMode() === 'ai'}
                           <Badge variant="secondary" class="ml-auto text-[10px]">Active</Badge>
                         {/if}
                       </DropdownMenu.Item>
                     </DropdownMenu.Content>
                   </DropdownMenu.Root>
-                </div>
+                </ButtonGroup.Root>
               {/if}
             </div>
           </div>
@@ -1480,6 +1470,7 @@
     <div class="w-80 border-l p-4 overflow-auto">
       <MergeOutputPanel
         outputConfig={mergeStore.outputConfig}
+        sourcePaths={selectedVideosToMerge().map((video) => video.path)}
         enabledTracksCount={selectedTracksToMergeCount()}
         videosCount={selectedVideosToMerge().length}
         completedFiles={mergeStore.runtimeProgress.completedFiles}

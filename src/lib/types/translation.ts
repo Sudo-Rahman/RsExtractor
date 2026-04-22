@@ -25,9 +25,9 @@ export const LLM_PROVIDERS: Record<LLMProvider, { name: string; models: Provider
   openai: {
     name: 'OpenAI',
     models: [
-      { id: 'gpt-5', name: 'GPT-5' },
-      { id: 'gpt-5.2', name: 'GPT-5.2' },
-      { id: 'gpt-5-pro', name: 'GPT-5 Pro' },
+      { id: 'gpt-5.4-nano', name: 'GPT-5.4 nano' },
+      { id: 'gpt-5.4-mini', name: 'GPT-5.4 mini' },
+      { id: 'gpt-5.4-2026-03-05', name: 'GPT-5.4' },
     ],
   },
   openrouter: {

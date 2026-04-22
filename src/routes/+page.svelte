@@ -636,17 +636,17 @@
     >
       {#snippet leading()}
         <Sidebar.Trigger class="{!useSidebar().open && isMacOS ? 'ml-20' : '-ml-1'} transition-all duration-300" />
-        <Separator orientation="vertical" class="mr-2 data-[orientation=vertical]:h-4" />
+        <Separator orientation="vertical" class="data-[orientation=vertical]:h-4" />
       {/snippet}
 
       {#snippet status()}
         {#if globalToolProgress.active}
           <HoverCard.Root openDelay={150} closeDelay={100}>
             <HoverCard.Trigger
-              class="block w-38 rounded-md border bg-muted/40 px-2 py-1.5 transition-colors hover:bg-muted/60"
+              class="flex w-38 h-8 items-center rounded-full border bg-muted/40 px-2 py-1.5 transition-colors hover:bg-muted/60"
               title={`Global progress: ${Math.round(globalToolProgress.percentage)}%`}
             >
-              <div class="flex items-center gap-2">
+              <div class="flex h-full w-full items-center gap-2">
                 <Progress value={globalToolProgress.percentage} class="h-2 flex-1" />
                 <span class="text-[11px] font-medium tabular-nums">{Math.round(globalToolProgress.percentage)}%</span>
               </div>
@@ -663,7 +663,7 @@
               <div class="space-y-2">
                 {#each globalToolProgress.tools as metric (metric.toolId)}
                   {@const ToolIcon = metric.icon}
-                  <div class="rounded-md border bg-muted/30 px-2 py-1.5">
+                  <div class="rounded-2xl border bg-muted/30 px-2.5 py-2">
                     <div class="mb-1 flex items-center gap-2">
                       <ToolIcon class="size-4 text-muted-foreground" />
                       <p class="truncate text-xs font-medium flex-1">{metric.label}</p>

@@ -60,9 +60,11 @@
         {positionOptions.find(o => o.value === config.position)?.label || 'Select position...'}
       </Select.Trigger>
       <Select.Content>
-        {#each positionOptions as option}
-          <Select.Item value={option.value}>{option.label}</Select.Item>
-        {/each}
+        <Select.Group>
+          {#each positionOptions as option}
+            <Select.Item value={option.value}>{option.label}</Select.Item>
+          {/each}
+        </Select.Group>
       </Select.Content>
     </Select.Root>
   </div>

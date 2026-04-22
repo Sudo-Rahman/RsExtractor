@@ -80,6 +80,8 @@ export interface MergeOutputConfig {
   title?: string;
 }
 
+export type MergeAutoMatchMode = 'classic' | 'ai';
+
 export interface MergeRuntimeProgress {
   totalFiles: number;
   completedFiles: number;

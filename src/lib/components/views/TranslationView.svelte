@@ -1220,113 +1220,117 @@
   <!-- Top Section: Config and File List -->
   <div class="flex min-h-0 flex-1">
     <!-- Left Panel: File Import & Config -->
-    <div class="flex-1 max-w-108 border-r flex flex-col min-h-0 p-4 gap-4 overflow-auto">
-      <!-- File Section -->
-      <Card.Root>
-        <Card.Header>
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <FileText class="size-5 text-primary" />
-              <Card.Title>Subtitle Files</Card.Title>
-              {#if translationStore.jobs.length > 0}
-                <Badge variant="secondary">{translationStore.jobs.length}</Badge>
+    <div class="flex-1 max-w-100 border-r flex flex-col min-h-0">
+      <div class="flex-1 min-h-0 overflow-y-auto p-4">
+        <div class="space-y-4 pb-4">
+          <!-- File Section -->
+          <Card.Root
+              class={hasFiles ? "" : "pb-0"}>
+            <Card.Header>
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <FileText class="size-5 text-primary" />
+                  <Card.Title>Subtitle Files</Card.Title>
+                  {#if translationStore.jobs.length > 0}
+                    <Badge variant="secondary">{translationStore.jobs.length}</Badge>
+                  {/if}
+                </div>
+
+                <div class="flex items-center gap-2">
+                  {#if translationStore.jobs.length > 0}
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onclick={handleRequestRemoveAll}
+                      class="text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 class="size-4" />
+                      <span class="sr-only">Clear all</span>
+                    </Button>
+                  {/if}
+                  <ToolImportButton
+                    targetTool="translate"
+                    label="Import"
+                    variant="outline"
+                    onBrowse={handleImportClick}
+                    onSelectSource={handleImportFromSource}
+                    disabled={isTranslating}
+                  />
+                </div>
+              </div>
+            </Card.Header>
+            <Card.Content class="p-2">
+              {#if hasFiles}
+                <div class="px-3">
+                  <TranslationFileList
+                    jobs={translationStore.jobs}
+                    selectedId={selectedJob?.id ?? null}
+                    onSelect={(id) => translationStore.selectJob(id)}
+                    onRemove={handleRequestRemoveJob}
+                    onCancel={handleCancelJob}
+                    onViewResult={(job) => openResultDialog(job.id)}
+                    onRetry={handleRetryRequest}
+                    disabled={isTranslating}
+                  />
+                </div>
+              {:else}
+                <ImportDropZone
+                  icon={Languages}
+                  title="Drop subtitle files here"
+                  formats={SUBTITLE_FORMATS}
+                  onBrowse={handleImportClick}
+                  disabled={isTranslating}
+                />
               {/if}
-            </div>
+            </Card.Content>
+          </Card.Root>
 
-            <div class="flex items-center gap-2">
-              {#if translationStore.jobs.length > 0}
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onclick={handleRequestRemoveAll}
-                  class="text-muted-foreground hover:text-destructive"
-                >
-                  <Trash2 class="size-4" />
-                  <span class="sr-only">Clear all</span>
-                </Button>
-              {/if}
-              <ToolImportButton
-                targetTool="translate"
-                label="Import"
-                variant="outline"
-                onBrowse={handleImportClick}
-                onSelectSource={handleImportFromSource}
-                disabled={isTranslating}
-              />
-            </div>
+          <!-- Config Panel -->
+          <TranslationConfigPanel onNavigateToSettings={onNavigateToSettings} />
+
+          <!-- Batch Settings -->
+          <Card.Root>
+            <Card.Header class="pb-3">
+              <Card.Title class="text-sm">Batch Settings</Card.Title>
+            </Card.Header>
+            <Card.Content class="space-y-3">
+              <div class="space-y-2">
+                <Label for="batch-count" class="text-xs">Number of batches</Label>
+                <Input
+                  id="batch-count"
+                  type="number"
+                  min="1"
+                  max="20"
+                  value={translationStore.config.batchCount}
+                  oninput={(e) => translationStore.setBatchCount(parseInt(e.currentTarget.value) || 1)}
+                  class="h-8"
+                />
+                <p class="text-xs text-muted-foreground">
+                  Split file into N parts to avoid token limits (1 = no split)
+                </p>
+              </div>
+            </Card.Content>
+          </Card.Root>
+          <!-- Action Buttons -->
+          <div class="flex gap-2 pt-2">
+            {#if isTranslating}
+              <Button variant="destructive" class="flex-1" onclick={handleCancelAll}>
+                <Square class="size-4 mr-2" />
+                Cancel All
+              </Button>
+            {:else}
+              <Button
+                size="lg"
+                class="flex-1"
+                onclick={handleTranslateAll}
+                disabled={!canTranslate}
+              >
+                <Play class="size-4 mr-2" />
+                Translate ({translateAllTargetCount})
+              </Button>
+            {/if}
           </div>
-        </Card.Header>
-        <Card.Content class="p-2">
-          {#if hasFiles}
-            <div class="px-3">
-              <TranslationFileList
-                jobs={translationStore.jobs}
-                selectedId={selectedJob?.id ?? null}
-                onSelect={(id) => translationStore.selectJob(id)}
-                onRemove={handleRequestRemoveJob}
-                onCancel={handleCancelJob}
-                onViewResult={(job) => openResultDialog(job.id)}
-                onRetry={handleRetryRequest}
-                disabled={isTranslating}
-              />
-            </div>
-          {:else}
-            <ImportDropZone
-              icon={Languages}
-              title="Drop subtitle files here"
-              formats={SUBTITLE_FORMATS}
-              onBrowse={handleImportClick}
-              disabled={isTranslating}
-            />
-          {/if}
-        </Card.Content>
-      </Card.Root>
-
-      <!-- Config Panel -->
-      <TranslationConfigPanel onNavigateToSettings={onNavigateToSettings} />
-
-      <!-- Batch Settings -->
-      <Card.Root>
-        <Card.Header class="pb-3">
-          <Card.Title class="text-sm">Batch Settings</Card.Title>
-        </Card.Header>
-        <Card.Content class="space-y-3">
-          <div class="space-y-2">
-            <Label for="batch-count" class="text-xs">Number of batches</Label>
-            <Input
-              id="batch-count"
-              type="number"
-              min="1"
-              max="20"
-              value={translationStore.config.batchCount}
-              oninput={(e) => translationStore.setBatchCount(parseInt(e.currentTarget.value) || 1)}
-              class="h-8"
-            />
-            <p class="text-xs text-muted-foreground">
-              Split file into N parts to avoid token limits (1 = no split)
-            </p>
-          </div>
-        </Card.Content>
-      </Card.Root>
-
-      <!-- Action Buttons -->
-      <div class="flex gap-2 mt-auto">
-        {#if isTranslating}
-          <Button variant="destructive" class="flex-1" onclick={handleCancelAll}>
-            <Square class="size-4 mr-2" />
-            Cancel All
-          </Button>
-        {:else}
-          <Button
-            size="lg"
-            class="flex-1"
-            onclick={handleTranslateAll}
-            disabled={!canTranslate}
-          >
-            <Play class="size-4 mr-2" />
-            Translate ({translateAllTargetCount})
-          </Button>
-        {/if}
+        </div>
       </div>
     </div>
 
@@ -1354,9 +1358,11 @@
                   {activeVersion?.name ?? 'Select version'}
                 </Select.Trigger>
                 <Select.Content>
-                  {#each selectedJobVersions as version (version.id)}
-                    <Select.Item value={version.id}>{version.name}</Select.Item>
-                  {/each}
+                  <Select.Group>
+                    {#each selectedJobVersions as version (version.id)}
+                      <Select.Item value={version.id}>{version.name}</Select.Item>
+                    {/each}
+                  </Select.Group>
                 </Select.Content>
               </Select.Root>
             {/if}

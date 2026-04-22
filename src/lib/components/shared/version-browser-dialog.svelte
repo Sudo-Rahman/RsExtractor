@@ -184,9 +184,11 @@
               <span>{selectedFormat?.toUpperCase()}</span>
             </Select.Trigger>
             <Select.Content>
-              {#each formats ?? [] as fmt (fmt)}
-                <Select.Item value={fmt} label={fmt.toUpperCase()}>{fmt.toUpperCase()}</Select.Item>
-              {/each}
+              <Select.Group>
+                {#each formats ?? [] as fmt (fmt)}
+                  <Select.Item value={fmt} label={fmt.toUpperCase()}>{fmt.toUpperCase()}</Select.Item>
+                {/each}
+              </Select.Group>
             </Select.Content>
           </Select.Root>
         </div>

@@ -39,14 +39,14 @@
           <Languages class="size-4 text-muted-foreground" />
         {/if}
         <span>
-          {#if selectedLanguage?.flag}
+          {#if selectedLanguage?.flag && value !== 'multi'}
             {selectedLanguage.flag}
           {/if}
           {selectedLanguage?.name ?? value}
         </span>
       </div>
     </Select.Trigger>
-    <Select.Content class="max-h-[300px]">
+    <Select.Content class="max-h-[max(30vh,300px)]">
       {#each DEEPGRAM_LANGUAGES as lang (lang.code)}
         <Select.Item value={lang.code} label={lang.name}>
           <div class="flex items-center gap-2">

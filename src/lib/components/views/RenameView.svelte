@@ -16,7 +16,9 @@
   import { renameStore } from '$lib/stores/rename.svelte';
   import { toolImportStore } from '$lib/stores/tool-import.svelte';
   import { fetchFileMetadata } from '$lib/services/file-metadata';
+  import { pickOutputDirectory } from '$lib/services/output-folder';
   import { buildNewPath, createRenameFile } from '$lib/services/rename';
+  import { resolveOutputFolderDisplay } from '$lib/utils';
   import { logAndToast, log } from '$lib/utils/log-toast';
   import { formatFileSize, formatTransferRate } from '$lib/utils/format';
   import type { RenameCopyProgressEvent } from '$lib/types/progress';
@@ -29,6 +31,7 @@
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
   import { Label } from '$lib/components/ui/label';
   import { RenameWorkspace } from '$lib/components/rename';
+  import { OutputFolderField } from '$lib/components/shared';
 
   interface RenameExecutionPlanItem {
     file: RenameFile;
@@ -146,13 +149,9 @@
 
   async function handleSelectOutputDir() {
     try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: 'Select output folder',
-      });
+      const selected = await pickOutputDirectory();
 
-      if (selected && typeof selected === 'string') {
+      if (selected) {
         renameStore.setOutputDir(selected);
       }
     } catch (error) {
@@ -399,6 +398,12 @@
   const isProcessing = $derived(renameStore.isProcessing);
   const mode = $derived(renameStore.mode);
   const outputDir = $derived(renameStore.outputDir);
+  const outputFolderDisplay = $derived.by(() =>
+    resolveOutputFolderDisplay({
+      explicitPath: outputDir,
+      allowSourceFallback: false,
+    }),
+  );
   const canExecute = $derived(
     selectedCount > 0
     && !renameStore.hasConflicts
@@ -438,23 +443,12 @@
     </div>
 
     {#if mode === 'copy'}
-      <div class="space-y-2">
-        <Label class="text-xs uppercase tracking-wide text-muted-foreground">Output Folder</Label>
-        <Button
-          variant="outline"
-          class="w-full justify-start gap-2 h-auto py-2 text-left"
-          onclick={handleSelectOutputDir}
-        >
-          <FolderOpen class="size-4 shrink-0" />
-          <span class="truncate flex-1 text-sm">
-            {#if outputDir}
-              {outputDir}
-            {:else}
-              <span class="text-muted-foreground">Select folder...</span>
-            {/if}
-          </span>
-        </Button>
-      </div>
+      <OutputFolderField
+        label="Output folder"
+        displayText={outputFolderDisplay.displayText}
+        state={outputFolderDisplay.state}
+        onBrowse={handleSelectOutputDir}
+      />
     {/if}
 
     {#if isProcessing && mode === 'copy'}

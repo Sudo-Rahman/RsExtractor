@@ -7,3 +7,4 @@ export * from './ocr-subtitle-adapter';
 export * from './media-tracks';
 export * from './file-run-state';
 export * from './file-item-card-visuals';
+export * from './output-folder';

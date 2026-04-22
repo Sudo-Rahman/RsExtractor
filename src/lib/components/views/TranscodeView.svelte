@@ -16,6 +16,7 @@
   import { fetchFileMetadata } from '$lib/services/file-metadata';
   import { scanFiles } from '$lib/services/ffprobe';
   import { analyzeTranscodeProfile } from '$lib/services/transcode-ai';
+  import { pickOutputDirectory } from '$lib/services/output-folder';
   import {
     buildDefaultTranscodeMetadata,
     buildDefaultTranscodeProfile,
@@ -52,12 +53,14 @@
     TranscodePresetTab,
     TranscodeProgressEvent,
     TranscodeProfile,
+    TranscodeMode,
     TranscodeTab,
   } from '$lib/types';
   import { logAndToast } from '$lib/utils/log-toast';
 
   import { useToolHeader } from '$lib/components/layout/tool-header-context.svelte';
   import { Button } from '$lib/components/ui/button';
+  import * as ToggleGroup from '$lib/components/ui/toggle-group';
   import * as Tabs from '$lib/components/ui/tabs';
   import {
     TranscodeAiPanel,
@@ -372,12 +375,9 @@
   }
 
   async function handleSelectOutputDir(): Promise<void> {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-    });
+    const selected = await pickOutputDirectory();
 
-    if (selected && !Array.isArray(selected)) {
+    if (selected) {
       outputNamingWorkspace.setOutputDir(selected);
     }
   }
@@ -475,6 +475,14 @@
 
     transcodeStore.applyProfileToAll(selectedFile.profile);
     toast.success('Applied the selected profile to all files');
+  }
+
+  function handleModeChange(value: string): void {
+    if (value !== 'ai' && value !== 'advanced') {
+      return;
+    }
+
+    transcodeStore.setMode(value as TranscodeMode);
   }
 
   async function handleSavePreset(tab: TranscodePresetTab, name: string): Promise<void> {
@@ -894,26 +902,30 @@
       Back to Transcode
     </Button>
   {:else if selectedFile}
-    <div class="inline-flex h-9 items-center gap-1 rounded-md border bg-muted/30 p-1">
-      <Button
-        variant={transcodeStore.mode === 'ai' ? 'default' : 'ghost'}
-        size="sm"
-        class="h-7 rounded-sm px-3"
-        onclick={() => transcodeStore.setMode('ai')}
+    <ToggleGroup.Root
+      type="single"
+      value={transcodeStore.mode}
+      variant="outline"
+      size="sm"
+      spacing={0}
+      class="border border-border/50 bg-muted/20 p-0.5 shadow-none"
+      onValueChange={handleModeChange}
+    >
+      <ToggleGroup.Item
+        value="ai"
+        class="border-transparent gap-2 data-[state=on]:border-transparent data-[state=on]:bg-primary/90 data-[state=on]:text-primary-foreground"
       >
-        <Wand2 class="size-4 mr-2" />
+        <Wand2 class="size-4" />
         AI
-      </Button>
-      <Button
-        variant={transcodeStore.mode === 'advanced' ? 'default' : 'ghost'}
-        size="sm"
-        class="h-7 rounded-sm px-3"
-        onclick={() => transcodeStore.setMode('advanced')}
+      </ToggleGroup.Item>
+      <ToggleGroup.Item
+        value="advanced"
+        class="border-transparent gap-2 data-[state=on]:border-transparent data-[state=on]:bg-primary/90 data-[state=on]:text-primary-foreground"
       >
-        <Sparkles class="size-4 mr-2" />
+        <Sparkles class="size-4" />
         Advanced
-      </Button>
-    </div>
+      </ToggleGroup.Item>
+    </ToggleGroup.Root>
 
     <Button variant="outline" size="sm" onclick={handleApplyCurrentToAll}>
       <Copy class="size-4 mr-2" />
@@ -978,7 +990,7 @@
             onValueChange={(value) => transcodeStore.setActiveTab(value as TranscodeTab)}
             class="gap-4"
           >
-            <Tabs.List class={`grid w-full ${metadataTabAvailable ? 'grid-cols-5' : 'grid-cols-4'}`}>
+            <Tabs.List class="w-full">
               <Tabs.Trigger value="video">Video</Tabs.Trigger>
               <Tabs.Trigger value="audio">Audio</Tabs.Trigger>
               <Tabs.Trigger value="subtitles">Subtitles</Tabs.Trigger>

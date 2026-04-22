@@ -118,17 +118,19 @@
         </div>
       </Select.Trigger>
       <Select.Content>
-        {#each providerKeys as providerKey (providerKey)}
-          {@const providerItem = LLM_PROVIDERS[providerKey]}
-          <Select.Item value={providerKey}>
-            <div class="flex items-center gap-2">
-              <span>{providerItem.name}</span>
-              {#if !getProviderApiKey(providerKey)}
-                <Badge variant="outline" class="text-xs">No key</Badge>
-              {/if}
-            </div>
-          </Select.Item>
-        {/each}
+          <Select.Group>
+            {#each providerKeys as providerKey (providerKey)}
+            {@const providerItem = LLM_PROVIDERS[providerKey]}
+            <Select.Item value={providerKey}>
+                <div class="flex items-center gap-2">
+                <span>{providerItem.name}</span>
+                {#if !getProviderApiKey(providerKey)}
+                    <Badge variant="outline" class="text-xs">No key</Badge>
+                {/if}
+                </div>
+            </Select.Item>
+            {/each}
+          </Select.Group>
       </Select.Content>
     </Select.Root>
   </div>
@@ -145,9 +147,11 @@
           {getSelectedModelName()}
         </Select.Trigger>
         <Select.Content>
-          {#each currentProvider.models as providerModel (providerModel.id)}
-            <Select.Item value={providerModel.id}>{providerModel.name}</Select.Item>
-          {/each}
+          <Select.Group>
+            {#each currentProvider.models as providerModel (providerModel.id)}
+              <Select.Item value={providerModel.id}>{providerModel.name}</Select.Item>
+            {/each}
+          </Select.Group>
         </Select.Content>
       </Select.Root>
     {:else}
@@ -169,12 +173,12 @@
           {/snippet}
         </Popover.Trigger>
         <Popover.Content class="w-[var(--bits-popover-anchor-width)] p-0" align="start">
-          <Command.Root shouldFilter={false}>
+          <Command.Root shouldFilter={false} class="[&_.cn-command-item-indicator]:hidden">
             <Command.Input
               placeholder="Search or enter model ID..."
               bind:value={openRouterSearch}
             />
-            <Command.List>
+            <Command.List class="max-h-[calc(50dvh-5rem)]">
               <Command.Empty>
                 {#if openRouterSearch.trim()}
                   <button
@@ -194,7 +198,7 @@
                   <Command.Item
                     value={savedModel}
                     onSelect={() => handleOpenRouterModelSelect(savedModel)}
-                    class="flex items-center justify-between"
+                    class="w-full items-center justify-between rounded-full"
                   >
                     <div class="flex items-center gap-2 min-w-0 flex-1">
                       {#if model === savedModel}
@@ -206,7 +210,7 @@
                     </div>
                     <button
                       type="button"
-                      class="size-6 flex items-center justify-center rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive shrink-0"
+                      class="size-6 flex items-center justify-center hover:bg-destructive/20 text-muted-foreground hover:text-destructive shrink-0"
                       onclick={(event) => handleRemoveModel(event, savedModel)}
                       title="Remove model"
                     >
@@ -220,7 +224,7 @@
                   <Command.Item
                     value={`add-${openRouterSearch}`}
                     onSelect={handleAddNewModel}
-                    class="flex items-center gap-2"
+                    class="w-full items-center gap-2 rounded-full"
                   >
                     <Plus class="size-4" />
                     <span>Add "{openRouterSearch.trim()}"</span>

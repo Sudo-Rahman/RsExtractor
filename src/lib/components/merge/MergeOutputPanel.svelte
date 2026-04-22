@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Folder, FolderOpen, PenLine, Play, Loader2, CheckCircle, RotateCcw, X } from '@lucide/svelte';
+  import { FolderOpen, PenLine, Play, Loader2, CheckCircle, X } from '@lucide/svelte';
   import type { MergeOutputConfig } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
   import { Progress } from '$lib/components/ui/progress';
@@ -7,10 +7,13 @@
   import { Badge } from '$lib/components/ui/badge';
   import * as Card from '$lib/components/ui/card';
   import * as Alert from '$lib/components/ui/alert';
+  import { OutputFolderField } from '$lib/components/shared';
+  import { resolveOutputFolderDisplay } from '$lib/utils';
   import { formatTransferRate } from '$lib/utils';
 
   interface MergeOutputPanelProps {
     outputConfig: MergeOutputConfig;
+    sourcePaths?: string[];
     enabledTracksCount: number;
     videosCount?: number;
     completedFiles?: number;
@@ -30,6 +33,7 @@
 
   let {
     outputConfig,
+    sourcePaths = [],
     enabledTracksCount,
     videosCount = 0,
     completedFiles = 0,
@@ -54,6 +58,14 @@
     videosCount > 0 &&
     !isProcessing
   );
+  const outputFolderDisplay = $derived.by(() =>
+    resolveOutputFolderDisplay({
+      explicitPath: outputConfig.outputDir,
+      sourcePaths,
+      allowSourceFallback: true,
+      fallbackLabel: 'Use each source folder',
+    }),
+  );
 </script>
 
 <Card.Root class={className}>
@@ -63,36 +75,16 @@
   </Card.Header>
   <Card.Content class="space-y-4">
     <!-- Output directory -->
-    <div class="space-y-2">
-      <Label>Output folder</Label>
-      <div class="flex gap-2">
-        <div class="flex-1 flex items-center gap-2 rounded-md border bg-muted/50 px-3 py-2 text-sm min-w-0">
-          <Folder class="size-4 text-muted-foreground shrink-0" />
-          <span class="truncate text-muted-foreground">
-            {outputConfig.outputDir || 'Use each source folder'}
-          </span>
-        </div>
-        <Button variant="outline" size="icon" onclick={onSelectOutputDir}>
-          <FolderOpen class="size-4" />
-          <span class="sr-only">Browse</span>
-        </Button>
-      </div>
-      <p class="text-xs text-muted-foreground">
-        Optional. Leave empty to save merged files next to each source video.
-      </p>
-      {#if outputConfig.outputDir}
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-auto px-0 text-xs text-muted-foreground hover:text-foreground"
-          onclick={onClearOutputDir}
-          disabled={!onClearOutputDir}
-        >
-          <RotateCcw class="size-3.5 mr-1.5" />
-          Use source folders
-        </Button>
-      {/if}
-    </div>
+    <OutputFolderField
+      label="Output folder"
+      displayText={outputFolderDisplay.displayText}
+      state={outputFolderDisplay.state}
+      description="Optional. Leave empty to save merged files next to each source video."
+      showReset={outputFolderDisplay.showReset}
+      resetLabel="Use source folders"
+      onBrowse={onSelectOutputDir}
+      onReset={onClearOutputDir}
+    />
 
     <div class="space-y-2">
       <Label>Output names</Label>

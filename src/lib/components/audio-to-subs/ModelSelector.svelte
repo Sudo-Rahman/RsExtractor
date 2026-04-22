@@ -57,22 +57,24 @@
       </div>
     </Select.Trigger>
     <Select.Content>
-      {#each DEEPGRAM_MODELS as model (model.id)}
-        {@const tierBadge = getTierBadge(model.tier)}
-        <Select.Item value={model.id} label={model.name}>
-          <div class="flex items-center justify-between w-full gap-4">
-            <div class="flex items-center gap-2">
-              {#if model.tier === 'latest'}
-                <Sparkles class="size-4 text-primary" />
-              {:else}
-                <Zap class="size-4 text-muted-foreground" />
-              {/if}
-              <span>{model.name}</span>
-              <Badge variant={tierBadge.variant} class="text-[10px]">{tierBadge.text}</Badge>
+      <Select.Group>
+        {#each DEEPGRAM_MODELS as model (model.id)}
+          {@const tierBadge = getTierBadge(model.tier)}
+          <Select.Item value={model.id} label={model.name}>
+            <div class="flex items-center justify-between w-full gap-4">
+              <div class="flex items-center gap-2">
+                {#if model.tier === 'latest'}
+                  <Sparkles class="size-4 text-primary" />
+                {:else}
+                  <Zap class="size-4 text-muted-foreground" />
+                {/if}
+                <span>{model.name}</span>
+                <Badge variant={tierBadge.variant} class="text-[10px]">{tierBadge.text}</Badge>
+              </div>
             </div>
-          </div>
-        </Select.Item>
-      {/each}
+          </Select.Item>
+        {/each}
+      </Select.Group>
     </Select.Content>
   </Select.Root>
 

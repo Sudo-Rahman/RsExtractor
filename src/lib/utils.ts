@@ -38,3 +38,9 @@ export {
   toRustOcrSubtitles,
 } from "./utils/ocr-subtitle-adapter";
 export type { OcrRawFrameLike, OcrSubtitleLike, RustOcrRawFrame, RustOcrSubtitle } from "./utils/ocr-subtitle-adapter";
+export { resolveOutputFolderDisplay } from "./utils/output-folder";
+export type {
+  OutputFolderFieldState,
+  ResolveOutputFolderDisplayOptions,
+  ResolvedOutputFolderDisplay,
+} from "./utils/output-folder";

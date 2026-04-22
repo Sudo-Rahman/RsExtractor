@@ -103,10 +103,12 @@
           {getModeLabel(mode)}
         </Select.Trigger>
         <Select.Content>
-          <Select.Item value="full_pipeline">Full pipeline</Select.Item>
-          <Select.Item value="cleanup_only">Cleanup only</Select.Item>
-          <Select.Item value="cleanup_and_ai">Cleanup + AI</Select.Item>
-          <Select.Item value="ai_only">AI only</Select.Item>
+          <Select.Group>
+            <Select.Item value="full_pipeline">Full pipeline</Select.Item>
+            <Select.Item value="cleanup_only">Cleanup only</Select.Item>
+            <Select.Item value="cleanup_and_ai">Cleanup + AI</Select.Item>
+            <Select.Item value="ai_only">AI only</Select.Item>
+          </Select.Group>
         </Select.Content>
       </Select.Root>
     </div>
@@ -138,9 +140,11 @@
             {OCR_LANGUAGES.find((lang) => lang.value === config.language)?.label ?? 'Select language'}
           </Select.Trigger>
           <Select.Content>
-            {#each OCR_LANGUAGES as lang}
-              <Select.Item value={lang.value}>{lang.label}</Select.Item>
-            {/each}
+            <Select.Group>
+              {#each OCR_LANGUAGES as lang}
+                <Select.Item value={lang.value}>{lang.label}</Select.Item>
+              {/each}
+            </Select.Group>
           </Select.Content>
         </Select.Root>
       </div>

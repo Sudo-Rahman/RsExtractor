@@ -3,6 +3,7 @@ import type {
   ImportedTrack,
   MergeTrack,
   MergeTrackConfig,
+  MergeAutoMatchMode,
   MergeAiStatus,
   MergeAiSuggestion,
   MergeOutputConfig,
@@ -19,6 +20,7 @@ import { LazyStore } from '@tauri-apps/plugin-store';
 
 const DEFAULT_AI_PROVIDER: LLMProvider = 'google';
 const DEFAULT_AI_MODEL = LLM_PROVIDERS[DEFAULT_AI_PROVIDER].models[0]?.id ?? '';
+const DEFAULT_AUTO_MATCH_MODE: MergeAutoMatchMode = 'classic';
 
 // State
 let videoFiles = $state<MergeVideoFile[]>([]);
@@ -29,6 +31,7 @@ let fileRunStates = $state<Map<string, FileRunState>>(new Map());
 let outputConfig = $state<MergeOutputConfig>({
   outputDir: '',
 });
+let autoMatchMode = $state<MergeAutoMatchMode>(DEFAULT_AUTO_MATCH_MODE);
 let status = $state<'idle' | 'processing' | 'completed' | 'error'>('idle');
 let progress = $state(0);
 let runtimeProgress = $state<MergeRuntimeProgress>({
@@ -53,9 +56,12 @@ let trackGroups = $state<Map<string, TrackGroup>>(new Map());
 // Presets storage
 let trackPresets = $state<TrackPreset[]>([]);
 let presetsLoaded = $state(false);
+let preferencesLoaded = $state(false);
+let preferencesLoadPromise: Promise<void> | null = null;
 
 // Create lazy store instance
 const presetsStore = new LazyStore('merge-presets.json');
+const preferencesStore = new LazyStore('merge-settings.json');
 
 // Load presets from Tauri Store on init
 async function loadPresetsFromStore() {
@@ -83,6 +89,39 @@ async function savePresetsToStore() {
     await presetsStore.save();
   } catch (err) {
     console.error('Failed to save presets to store:', err);
+  }
+}
+
+async function loadPreferencesFromStore() {
+  if (preferencesLoaded) return;
+
+  if (!preferencesLoadPromise) {
+    preferencesLoadPromise = (async () => {
+      try {
+        const saved = await preferencesStore.get<string>('autoMatchMode');
+        if (saved === 'classic' || saved === 'ai') {
+          autoMatchMode = saved;
+        }
+      } catch (err) {
+        console.error('Failed to load merge preferences from store:', err);
+      } finally {
+        preferencesLoaded = true;
+      }
+    })();
+  }
+
+  await preferencesLoadPromise;
+  preferencesLoadPromise = null;
+}
+
+async function savePreferencesToStore() {
+  if (!preferencesLoaded) return;
+
+  try {
+    await preferencesStore.set('autoMatchMode', autoMatchMode);
+    await preferencesStore.save();
+  } catch (err) {
+    console.error('Failed to save merge preferences to store:', err);
   }
 }
 
@@ -142,6 +181,7 @@ export const mergeStore = {
   },
   get fileRunStates() { return fileRunStates; },
   get outputConfig() { return outputConfig; },
+  get autoMatchMode() { return autoMatchMode; },
   get status() { return status; },
   get progress() { return progress; },
   get runtimeProgress() { return runtimeProgress; },
@@ -152,6 +192,18 @@ export const mergeStore = {
   get aiStatus() { return aiStatus; },
   get aiSuggestions() { return aiSuggestions; },
   get aiError() { return aiError; },
+
+  async loadUiPreferences() {
+    await loadPreferencesFromStore();
+  },
+
+  async setAutoMatchMode(mode: MergeAutoMatchMode) {
+    await loadPreferencesFromStore();
+    if (autoMatchMode === mode) return;
+
+    autoMatchMode = mode;
+    await savePreferencesToStore();
+  },
 
   // Get all tracks attached to a specific video
   getAttachedTracks(videoId: string): ImportedTrack[] {

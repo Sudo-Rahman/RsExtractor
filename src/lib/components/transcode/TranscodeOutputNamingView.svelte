@@ -1,11 +1,9 @@
 <script lang="ts">
-  import { FolderOpen } from '@lucide/svelte';
-
   import type { RenameWorkspaceStore } from '$lib/stores/rename.svelte';
   import { RenameWorkspace } from '$lib/components/rename';
   import { Badge } from '$lib/components/ui/badge';
-  import { Button } from '$lib/components/ui/button';
-  import { Label } from '$lib/components/ui/label';
+  import { OutputFolderField } from '$lib/components/shared';
+  import { resolveOutputFolderDisplay } from '$lib/utils';
 
   interface Props {
     workspace: RenameWorkspaceStore;
@@ -24,6 +22,15 @@
     onSelectOutputDir,
     onClearOutputDir,
   }: Props = $props();
+
+  const outputFolderDisplay = $derived.by(() =>
+    resolveOutputFolderDisplay({
+      explicitPath: workspace.outputDir,
+      sourcePaths: workspace.selectedFiles.map((file) => file.originalPath),
+      allowSourceFallback: true,
+      fallbackLabel: 'Use each source folder',
+    }),
+  );
 </script>
 
 <div class="h-full overflow-hidden">
@@ -37,33 +44,16 @@
   >
     {#snippet actionPanel()}
       <div class="space-y-3">
-        <div class="space-y-2">
-          <Label class="text-xs uppercase tracking-wide text-muted-foreground">Output Folder</Label>
-          <Button
-            variant="outline"
-            class="w-full justify-start gap-2 h-auto py-2 text-left"
-            onclick={onSelectOutputDir}
-          >
-            <FolderOpen class="size-4 shrink-0" />
-            <span class="truncate flex-1 text-sm">
-              {#if workspace.outputDir}
-                {workspace.outputDir}
-              {:else}
-                <span class="text-muted-foreground">Use each source folder</span>
-              {/if}
-            </span>
-          </Button>
-          {#if workspace.outputDir}
-            <Button
-              variant="ghost"
-              size="sm"
-              class="h-auto px-0 text-xs text-muted-foreground hover:text-foreground"
-              onclick={onClearOutputDir}
-            >
-              Use source folders
-            </Button>
-          {/if}
-        </div>
+        <OutputFolderField
+          label="Output folder"
+          displayText={outputFolderDisplay.displayText}
+          state={outputFolderDisplay.state}
+          description="Optional. Leave empty to save transcoded files next to each source file."
+          showReset={outputFolderDisplay.showReset}
+          resetLabel="Use source folders"
+          onBrowse={onSelectOutputDir}
+          onReset={onClearOutputDir}
+        />
 
         <div class="rounded-md border bg-muted/30 p-3 space-y-2">
           <div class="flex items-center justify-between text-sm">
