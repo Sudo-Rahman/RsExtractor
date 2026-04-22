@@ -636,7 +636,7 @@
     >
       {#snippet leading()}
         <Sidebar.Trigger class="{!useSidebar().open && isMacOS ? 'ml-20' : '-ml-1'} transition-all duration-300" />
-        <Separator orientation="vertical" class="mr-2 data-[orientation=vertical]:h-4" />
+        <Separator orientation="vertical" class="data-[orientation=vertical]:h-4" />
       {/snippet}
 
       {#snippet status()}

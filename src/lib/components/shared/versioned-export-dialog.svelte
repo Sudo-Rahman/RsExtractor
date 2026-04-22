@@ -1,7 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { open as openDialog } from '@tauri-apps/plugin-dialog';
-  import { Download, FolderOpen, Loader2 } from '@lucide/svelte';
+  import { Download, Loader2 } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
 
   import type {
@@ -13,15 +12,17 @@
     VersionedExportRequest,
     VersionedExportTarget,
   } from '$lib/services/versioned-export';
+  import { pickOutputDirectory } from '$lib/services/output-folder';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import * as Dialog from '$lib/components/ui/dialog';
-  import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import * as RadioGroup from '$lib/components/ui/radio-group';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import * as Select from '$lib/components/ui/select';
+  import { resolveOutputFolderDisplay } from '$lib/utils';
+  import OutputFolderField from './output-folder-field.svelte';
 
   interface VersionedExportDialogProps {
     open: boolean;
@@ -172,6 +173,12 @@
   const canExport = $derived(outputDir.trim().length > 0 && selectedVersionCount > 0 && !isExporting);
   const displayedFailures = $derived(exportFailures.slice(0, 5));
   const hiddenFailureCount = $derived(Math.max(0, exportFailures.length - displayedFailures.length));
+  const outputFolderDisplay = $derived.by(() =>
+    resolveOutputFolderDisplay({
+      explicitPath: outputDir,
+      allowSourceFallback: false,
+    }),
+  );
 
   function setMode(nextMode: VersionedExportMode): void {
     mode = nextMode;
@@ -214,13 +221,9 @@
   }
 
   async function handleBrowseOutput(): Promise<void> {
-    const selected = await openDialog({
-      directory: true,
-      multiple: false,
-      title: 'Select output folder',
-    });
+    const selected = await pickOutputDirectory();
 
-    if (selected && typeof selected === 'string') {
+    if (selected) {
       outputDir = selected;
     }
   }
@@ -397,15 +400,13 @@
           </div>
         {/if}
 
-        <div class="space-y-2">
-          <Label>{outputFolderLabel}</Label>
-          <div class="flex gap-2">
-            <Input value={outputDir} readonly placeholder="Select output folder..." class="text-xs" />
-            <Button variant="outline" size="icon" onclick={handleBrowseOutput} disabled={isExporting}>
-              <FolderOpen class="size-4" />
-            </Button>
-          </div>
-        </div>
+        <OutputFolderField
+          label={outputFolderLabel}
+          displayText={outputFolderDisplay.displayText}
+          state={outputFolderDisplay.state}
+          disabled={isExporting}
+          onBrowse={handleBrowseOutput}
+        />
 
         <div class="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
           {selectedFileCount} file(s) selected · {selectedVersionCount} version(s) to export

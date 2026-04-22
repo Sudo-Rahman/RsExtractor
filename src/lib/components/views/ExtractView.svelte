@@ -16,6 +16,7 @@
   import { extractionStore, fileListStore, toolImportStore } from '$lib/stores';
   import { scanFiles } from '$lib/services/ffprobe';
   import { extractTrack, buildOutputPath } from '$lib/services/ffmpeg';
+  import { pickOutputDirectory } from '$lib/services/output-folder';
   import { logAndToast } from '$lib/utils/log-toast';
   import type { VideoFile, Track, ExtractProgressEvent } from '$lib/types';
 
@@ -208,13 +209,9 @@
 
   async function handleSelectOutputDir() {
     try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: 'Select output folder'
-      });
+      const selected = await pickOutputDirectory();
 
-      if (selected && typeof selected === 'string') {
+      if (selected) {
         extractionStore.setOutputDir(selected);
       }
     } catch (error) {

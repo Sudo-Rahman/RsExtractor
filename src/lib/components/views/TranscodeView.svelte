@@ -16,6 +16,7 @@
   import { fetchFileMetadata } from '$lib/services/file-metadata';
   import { scanFiles } from '$lib/services/ffprobe';
   import { analyzeTranscodeProfile } from '$lib/services/transcode-ai';
+  import { pickOutputDirectory } from '$lib/services/output-folder';
   import {
     buildDefaultTranscodeMetadata,
     buildDefaultTranscodeProfile,
@@ -372,12 +373,9 @@
   }
 
   async function handleSelectOutputDir(): Promise<void> {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-    });
+    const selected = await pickOutputDirectory();
 
-    if (selected && !Array.isArray(selected)) {
+    if (selected) {
       outputNamingWorkspace.setOutputDir(selected);
     }
   }
@@ -978,7 +976,7 @@
             onValueChange={(value) => transcodeStore.setActiveTab(value as TranscodeTab)}
             class="gap-4"
           >
-            <Tabs.List class={`grid w-full ${metadataTabAvailable ? 'grid-cols-5' : 'grid-cols-4'}`}>
+            <Tabs.List class="w-full">
               <Tabs.Trigger value="video">Video</Tabs.Trigger>
               <Tabs.Trigger value="audio">Audio</Tabs.Trigger>
               <Tabs.Trigger value="subtitles">Subtitles</Tabs.Trigger>

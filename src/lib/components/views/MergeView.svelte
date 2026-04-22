@@ -8,7 +8,7 @@
 
 <script lang="ts">
   import { onDestroy, onMount, untrack } from 'svelte';
-  import { ArrowLeft, FolderOpen, Home, LayoutGrid, Table } from '@lucide/svelte';
+  import { ArrowLeft, Home, LayoutGrid, Table } from '@lucide/svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
@@ -25,8 +25,10 @@
     type ResolveRenameTargetPathContext,
   } from '$lib/services/rename';
   import { scanFiles } from '$lib/services/ffprobe';
+  import { pickOutputDirectory } from '$lib/services/output-folder';
   import { dndzone } from '$lib/utils/dnd';
   import { logAndToast } from '$lib/utils/log-toast';
+  import { resolveOutputFolderDisplay } from '$lib/utils';
   import { useToolHeader } from '$lib/components/layout/tool-header-context.svelte';
 
   import {
@@ -44,14 +46,13 @@
   import * as ButtonGroup from '$lib/components/ui/button-group';
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
-  import { Label } from '$lib/components/ui/label';
   import * as Card from '$lib/components/ui/card';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import * as Tabs from '$lib/components/ui/tabs';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
-  import { ProcessingRemoveDialog, ToolImportButton } from '$lib/components/shared';
+  import { OutputFolderField, ProcessingRemoveDialog, ToolImportButton } from '$lib/components/shared';
   import {
     MergeAiMatchView,
     MergeTrackSettings,
@@ -148,6 +149,14 @@
   );
   const selectedTracksToMergeCount = $derived(() =>
     selectedVideosToMerge().reduce((sum, video) => sum + video.attachedTracks.length, 0),
+  );
+  const outputNamingFolderDisplay = $derived.by(() =>
+    resolveOutputFolderDisplay({
+      explicitPath: outputNamingWorkspace.outputDir,
+      sourcePaths: selectedVideosToMerge().map((video) => video.path),
+      allowSourceFallback: true,
+      fallbackLabel: 'Use each source folder',
+    }),
   );
   const readyVideos = $derived(() => mergeStore.videoFiles.filter(video => video.status === 'ready'));
   const aiCandidateTracks = $derived(() => mergeStore.unassignedTracks);
@@ -606,11 +615,8 @@
   }
 
   async function handleSelectOutputDir() {
-    const selected = await open({
-      directory: true, multiple: false,
-      title: 'Select output directory'
-    });
-    if (selected && typeof selected === 'string') {
+    const selected = await pickOutputDirectory();
+    if (selected) {
       mergeStore.setOutputDir(selected);
       outputNamingWorkspace.setOutputDir(selected);
     }
@@ -1045,34 +1051,16 @@
     >
       {#snippet actionPanel()}
         <div class="space-y-2">
-          <Label class="text-xs uppercase tracking-wide text-muted-foreground">Output Folder</Label>
-          <Button
-            variant="outline"
-            class="w-full justify-start gap-2 h-auto py-2 text-left"
-            onclick={handleSelectOutputDir}
-          >
-            <FolderOpen class="size-4 shrink-0" />
-            <span class="truncate flex-1 text-sm">
-              {#if outputNamingWorkspace.outputDir}
-                {outputNamingWorkspace.outputDir}
-              {:else}
-                <span class="text-muted-foreground">Use each source folder</span>
-              {/if}
-            </span>
-          </Button>
-          <p class="text-xs text-muted-foreground">
-            Optional. Leave empty to save merged files next to each source video.
-          </p>
-          {#if outputNamingWorkspace.outputDir}
-            <Button
-              variant="ghost"
-              size="sm"
-              class="h-auto px-0 text-xs text-muted-foreground hover:text-foreground"
-              onclick={handleClearOutputDir}
-            >
-              Use source folders
-            </Button>
-          {/if}
+          <OutputFolderField
+            label="Output folder"
+            displayText={outputNamingFolderDisplay.displayText}
+            state={outputNamingFolderDisplay.state}
+            description="Optional. Leave empty to save merged files next to each source video."
+            showReset={outputNamingFolderDisplay.showReset}
+            resetLabel="Use source folders"
+            onBrowse={handleSelectOutputDir}
+            onReset={handleClearOutputDir}
+          />
         </div>
 
         <div class="rounded-md bg-muted/50 p-3 space-y-2">
@@ -1482,6 +1470,7 @@
     <div class="w-80 border-l p-4 overflow-auto">
       <MergeOutputPanel
         outputConfig={mergeStore.outputConfig}
+        sourcePaths={selectedVideosToMerge().map((video) => video.path)}
         enabledTracksCount={selectedTracksToMergeCount()}
         videosCount={selectedVideosToMerge().length}
         completedFiles={mergeStore.runtimeProgress.completedFiles}
