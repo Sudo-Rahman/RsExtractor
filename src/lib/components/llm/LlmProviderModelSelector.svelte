@@ -118,17 +118,19 @@
         </div>
       </Select.Trigger>
       <Select.Content>
-        {#each providerKeys as providerKey (providerKey)}
-          {@const providerItem = LLM_PROVIDERS[providerKey]}
-          <Select.Item value={providerKey}>
-            <div class="flex items-center gap-2">
-              <span>{providerItem.name}</span>
-              {#if !getProviderApiKey(providerKey)}
-                <Badge variant="outline" class="text-xs">No key</Badge>
-              {/if}
-            </div>
-          </Select.Item>
-        {/each}
+          <Select.Group>
+            {#each providerKeys as providerKey (providerKey)}
+            {@const providerItem = LLM_PROVIDERS[providerKey]}
+            <Select.Item value={providerKey}>
+                <div class="flex items-center gap-2">
+                <span>{providerItem.name}</span>
+                {#if !getProviderApiKey(providerKey)}
+                    <Badge variant="outline" class="text-xs">No key</Badge>
+                {/if}
+                </div>
+            </Select.Item>
+            {/each}
+          </Select.Group>
       </Select.Content>
     </Select.Root>
   </div>
