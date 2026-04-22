@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Play, Loader2, Settings2, Users, Key } from '@lucide/svelte';
+  import { AlertTriangle, Key, Loader2, Play, Settings2, Users } from '@lucide/svelte';
   import type { TranscriptionConfig, DeepgramConfig } from '$lib/types';
   import { cn } from '$lib/utils';
   import { Button } from '$lib/components/ui/button';
@@ -22,6 +22,7 @@
     completedFilesCount: number;
     totalFilesCount: number;
     transcodingCount: number;
+    invalidAutoLanguageFiles: string[];
     onDeepgramConfigChange: (updates: Partial<DeepgramConfig>) => void;
     onMaxConcurrentChange: (value: number) => void;
     onTranscribeAll: () => void;
@@ -38,6 +39,7 @@
     completedFilesCount,
     totalFilesCount,
     transcodingCount,
+    invalidAutoLanguageFiles,
     onDeepgramConfigChange,
     onMaxConcurrentChange,
     onTranscribeAll,
@@ -47,12 +49,16 @@
 
   // Files that can be transcribed (ready or completed for re-transcription)
   const transcribableFilesCount = $derived(readyFilesCount + completedFilesCount);
+  const hasInvalidAutoLanguageFiles = $derived(
+    config.deepgramConfig.language === 'multi' && invalidAutoLanguageFiles.length > 0
+  );
   
   const canTranscribe = $derived(
     transcribableFilesCount > 0 && 
     !isTranscribing && 
     !isTranscoding &&
-    apiKeyConfigured
+    apiKeyConfigured &&
+    !hasInvalidAutoLanguageFiles
   );
   
   // Determine if all files are already completed (for button text)
@@ -60,6 +66,10 @@
     totalFilesCount > 0 && 
     completedFilesCount === totalFilesCount &&
     readyFilesCount === 0
+  );
+
+  const invalidFileCountLabel = $derived(
+    `${invalidAutoLanguageFiles.length} affected file${invalidAutoLanguageFiles.length === 1 ? '' : 's'}`
   );
 </script>
 
@@ -106,6 +116,22 @@
           onValueChange={(language) => onDeepgramConfigChange({ language })}
           disabled={isTranscribing}
         />
+
+        {#if hasInvalidAutoLanguageFiles}
+          <Alert.Root class="mt-3 rounded-xl border-amber-200/70 bg-amber-50/45 px-3 py-2 text-amber-950 shadow-none *:[svg]:text-amber-600 [&>[data-slot=alert-title]]:min-w-0 [&>[data-slot=alert-description]]:min-w-0">
+            <AlertTriangle class="size-3.5" />
+            <Alert.Title class="min-w-0 text-sm leading-snug break-words">Select a source language</Alert.Title>
+            <Alert.Description class="min-w-0 text-xs leading-snug text-amber-900/80">
+              Auto-detection is unavailable.
+
+              <div class="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-amber-900/75">
+                <span class="rounded-full border border-amber-300/70 bg-white/70 px-2 py-0.5 font-medium text-amber-800">
+                  {invalidFileCountLabel}
+                </span>
+              </div>
+            </Alert.Description>
+          </Alert.Root>
+        {/if}
       </Card.Content>
     </Card.Root>
 
@@ -280,6 +306,8 @@
       <p class="text-xs text-muted-foreground text-center">
         {#if !apiKeyConfigured}
           Configure your Deepgram API key
+        {:else if hasInvalidAutoLanguageFiles}
+          Choose a source language manually above before transcribing
         {:else if transcribableFilesCount === 0}
           Add audio files to transcribe
         {/if}

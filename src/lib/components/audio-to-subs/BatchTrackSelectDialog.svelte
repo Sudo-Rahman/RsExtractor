@@ -6,6 +6,7 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
+  import { getAudioTrackLanguageLabel } from '$lib/utils/audio-language';
   import { cn } from '$lib/utils';
 
   interface BatchTrackSelectDialogProps {
@@ -173,12 +174,12 @@
                     class="mt-3 w-full"
                     onclick={(e) => e.stopPropagation()}
                   >
-                      {selectedLanguage ? selectedLanguage.toUpperCase() : 'Select language'}
+                      {selectedLanguage ? (getAudioTrackLanguageLabel(selectedLanguage) ?? selectedLanguage.toUpperCase()) : 'Select language'}
                   </Select.Trigger>
                   <Select.Content>
                     <Select.Group>
                       {#each availableLanguages as lang}
-                        <Select.Item value={lang}>{lang.toUpperCase()}</Select.Item>
+                        <Select.Item value={lang}>{getAudioTrackLanguageLabel(lang) ?? lang.toUpperCase()}</Select.Item>
                       {/each}
                     </Select.Group>
                   </Select.Content>

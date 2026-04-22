@@ -3,6 +3,7 @@
   import type { AudioFile } from '$lib/types';
   import { cn } from '$lib/utils';
   import { formatDuration, formatFileSize, formatChannels, formatBitrate } from '$lib/utils/format';
+  import { getAudioTrackLanguageLabel } from '$lib/utils/audio-language';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
@@ -40,6 +41,7 @@
     (file.audioTrackCount ?? 0) > 1 &&
     ['ready', 'completed', 'error'].includes(file.status)
   );
+  const trackLanguageLabel = $derived(file ? getAudioTrackLanguageLabel(file.audioTrackLanguage) : null);
 </script>
 
 <div class={cn("h-full flex flex-col overflow-auto", className)}>
@@ -164,10 +166,12 @@
                 <span class="text-sm font-medium">
                   Track {(file.selectedTrackIndex ?? 0) + 1} of {file.audioTrackCount}
                 </span>
-                {#if file.audioTrackLanguage}
+                {#if trackLanguageLabel}
                   <Badge variant="secondary" class="text-xs">
-                    {file.audioTrackLanguage.toUpperCase()}
+                    {trackLanguageLabel}
                   </Badge>
+                {:else}
+                  <span class="text-xs text-muted-foreground">No language tag</span>
                 {/if}
               </div>
             </div>

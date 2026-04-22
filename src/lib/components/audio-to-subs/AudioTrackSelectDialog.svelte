@@ -4,6 +4,7 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
+  import { getAudioTrackLanguageLabel } from '$lib/utils/audio-language';
   import { cn } from '$lib/utils';
 
   interface AudioTrackSelectDialogProps {
@@ -127,11 +128,13 @@
                   <span>{formatBitrate(track.bitrate)}</span>
                 {/if}
                 
-                {#if track.language}
+                {#if getAudioTrackLanguageLabel(track.language)}
                   <span class="flex items-center gap-1">
                     <Languages class="size-3" />
-                    {track.language.toUpperCase()}
+                    {getAudioTrackLanguageLabel(track.language)}
                   </span>
+                {:else}
+                  <span class="text-muted-foreground">No language tag</span>
                 {/if}
               </div>
             </div>

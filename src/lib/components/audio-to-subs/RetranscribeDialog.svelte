@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { Settings2, Users } from '@lucide/svelte';
+  import { AlertTriangle, Settings2, Users } from '@lucide/svelte';
 
   import type { AudioFile, DeepgramConfig } from '$lib/types';
   import { DEFAULT_DEEPGRAM_CONFIG } from '$lib/types';
   import { RetryVersionDialogShell } from '$lib/components/shared';
+  import * as Alert from '$lib/components/ui/alert';
 
   import { Label } from '$lib/components/ui/label';
   import { Separator } from '$lib/components/ui/separator';
@@ -18,7 +19,7 @@
     onOpenChange: (open: boolean) => void;
     file: AudioFile | null;
     baseConfig: DeepgramConfig;
-    onConfirm: (fileId: string, versionName: string, config: DeepgramConfig) => void;
+    onConfirm: (fileId: string, versionName: string, config: DeepgramConfig) => Promise<string | null> | string | null;
   }
 
   let {
@@ -31,21 +32,28 @@
 
   let versionName = $state('');
   let config = $state<DeepgramConfig>({ ...DEFAULT_DEEPGRAM_CONFIG });
+  let validationMessage = $state('');
 
   $effect(() => {
     if (open && file) {
       const versionCount = file.transcriptionVersions?.length ?? 0;
       versionName = `Version ${versionCount + 1}`;
       config = { ...baseConfig };
+      validationMessage = '';
     }
   });
 
-  function handleConfirm() {
+  async function handleConfirm() {
     if (!file) {
       return;
     }
 
-    onConfirm(file.id, versionName.trim() || 'New version', config);
+    const errorMessage = await onConfirm(file.id, versionName.trim() || 'New version', config);
+    if (errorMessage) {
+      validationMessage = errorMessage;
+      return;
+    }
+
     onOpenChange(false);
   }
 </script>
@@ -62,6 +70,14 @@
   onConfirm={handleConfirm}
 >
   {#snippet optionsContent()}
+    {#if validationMessage}
+      <Alert.Root class="border-amber-200/80 bg-amber-50/80 text-amber-950 shadow-none *:[svg]:text-amber-600">
+        <AlertTriangle class="size-4" />
+        <Alert.Title>Choose a source language to continue</Alert.Title>
+        <Alert.Description>{validationMessage}</Alert.Description>
+      </Alert.Root>
+    {/if}
+
     <Separator />
 
     <ModelSelector

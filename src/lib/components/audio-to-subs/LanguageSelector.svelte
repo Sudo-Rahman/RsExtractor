@@ -67,7 +67,7 @@
 
   {#if value === 'multi'}
     <p class="text-xs text-muted-foreground">
-      Deepgram will automatically detect the language
+      MediaFlow uses the audio track language tag when available.
     </p>
   {/if}
 </div>

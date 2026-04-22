@@ -24,6 +24,7 @@
     saveTranscriptionData, 
     loadTranscriptionData 
   } from '$lib/services/transcription-storage';
+  import { resolveDeepgramTrackLanguage } from '$lib/utils/audio-language';
   import { logAndToast } from '$lib/utils/log-toast';
   import { scanFile } from '$lib/services/ffprobe';
 
@@ -83,6 +84,18 @@
 
   // Abort controllers for cancelling transcriptions
   const abortControllers = new Map<string, AbortController>();
+
+  interface LanguageResolutionSuccess {
+    ok: true;
+    config: DeepgramConfig;
+  }
+
+  interface LanguageResolutionFailure {
+    ok: false;
+    file: AudioFile;
+  }
+
+  type LanguageResolutionResult = LanguageResolutionSuccess | LanguageResolutionFailure;
 
   // Event listener cleanup
   let unlistenTranscodeProgress: UnlistenFn | null = null;
@@ -157,60 +170,65 @@
     return `${temp}mediaflow_opus/${baseName}_track${trackIndex}_${pathHash}.opus`;
   }
 
-  // Helper: Get effective Deepgram config with language from track metadata
-  // Priority: 1) User explicit choice (not 'multi'), 2) Track metadata, 3) 'multi' (auto)
-  function getEffectiveConfig(file: AudioFile, baseConfig: DeepgramConfig): DeepgramConfig {
-    // If user explicitly chose a language (not 'multi'), respect their choice
+  function resolveTranscriptionConfig(file: AudioFile, baseConfig: DeepgramConfig): LanguageResolutionResult {
     if (baseConfig.language !== 'multi') {
-      return baseConfig;
-    }
-    // If track has language metadata, use it
-    if (file.audioTrackLanguage) {
-      const trackLang = file.audioTrackLanguage.toLowerCase();
-      // Handle common language code variations (e.g., 'jpn' -> 'ja', 'eng' -> 'en')
-      const langMap: Record<string, string> = {
-        'jpn': 'ja', 'jap': 'ja', 'japanese': 'ja',
-        'eng': 'en', 'english': 'en',
-        'fra': 'fr', 'fre': 'fr', 'french': 'fr',
-        'deu': 'de', 'ger': 'de', 'german': 'de',
-        'spa': 'es', 'spanish': 'es',
-        'ita': 'it', 'italian': 'it',
-        'por': 'pt', 'portuguese': 'pt',
-        'rus': 'ru', 'russian': 'ru',
-        'zho': 'zh', 'chi': 'zh', 'chinese': 'zh',
-        'kor': 'ko', 'korean': 'ko',
-        'ara': 'ar', 'arabic': 'ar',
-        'hin': 'hi', 'hindi': 'hi',
-        'tur': 'tr', 'turkish': 'tr',
-        'vie': 'vi', 'vietnamese': 'vi',
-        'tha': 'th', 'thai': 'th',
-        'ind': 'id', 'indonesian': 'id',
-        'msa': 'ms', 'malay': 'ms',
-        'nld': 'nl', 'dut': 'nl', 'dutch': 'nl',
-        'pol': 'pl', 'polish': 'pl',
-        'ukr': 'uk', 'ukrainian': 'uk',
-        'swe': 'sv', 'swedish': 'sv',
-        'dan': 'da', 'danish': 'da',
-        'nor': 'no', 'norwegian': 'no',
-        'fin': 'fi', 'finnish': 'fi',
-        'ces': 'cs', 'cze': 'cs', 'czech': 'cs',
-        'slk': 'sk', 'slo': 'sk', 'slovak': 'sk',
-        'hun': 'hu', 'hungarian': 'hu',
-        'ron': 'ro', 'rum': 'ro', 'romanian': 'ro',
-        'bul': 'bg', 'bulgarian': 'bg',
-        'ell': 'el', 'gre': 'el', 'greek': 'el',
-        'heb': 'he', 'hebrew': 'he',
-        'fas': 'fa', 'per': 'fa', 'persian': 'fa',
-        'tam': 'ta', 'tamil': 'ta',
-        'tel': 'te', 'telugu': 'te',
-        'ben': 'bn', 'bengali': 'bn',
-        'cat': 'ca', 'catalan': 'ca',
+      return {
+        ok: true,
+        config: baseConfig,
       };
-      const normalizedLang = langMap[trackLang] || trackLang;
-      return { ...baseConfig, language: normalizedLang };
     }
-    // Fallback to 'multi' (auto-detection)
-    return baseConfig;
+
+    const resolvedTrackLanguage = resolveDeepgramTrackLanguage(file.audioTrackLanguage);
+    if (!resolvedTrackLanguage) {
+      return {
+        ok: false,
+        file,
+      };
+    }
+
+    return {
+      ok: true,
+      config: { ...baseConfig, language: resolvedTrackLanguage },
+    };
+  }
+
+  function collectFilesMissingLanguage(files: AudioFile[], baseConfig: DeepgramConfig): LanguageResolutionFailure[] {
+    if (baseConfig.language !== 'multi') {
+      return [];
+    }
+
+    const missingLanguageFiles: LanguageResolutionFailure[] = [];
+    for (const file of files) {
+      const result = resolveTranscriptionConfig(file, baseConfig);
+      if (!result.ok) {
+        missingLanguageFiles.push(result);
+      }
+    }
+
+    return missingLanguageFiles;
+  }
+
+  function formatAffectedFileNames(files: AudioFile[]): string {
+    const names = files.map((file) => file.name);
+    if (names.length <= 3) {
+      return names.join(', ');
+    }
+
+    return `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
+  }
+
+  function buildMissingLanguageMessage(files: AudioFile[]): string {
+    const hasMultipleFiles = files.length > 1;
+    return `${formatAffectedFileNames(files)} ${hasMultipleFiles ? 'do' : 'does'} not have a usable audio language tag. Choose a source language manually in the right panel before transcribing.`;
+  }
+
+  function validateTranscriptionTargets(files: AudioFile[], baseConfig: DeepgramConfig): LanguageResolutionFailure[] {
+    const missingLanguageFiles = collectFilesMissingLanguage(files, baseConfig);
+    if (missingLanguageFiles.length > 0) {
+      toast.error(buildMissingLanguageMessage(missingLanguageFiles.map((result) => result.file)));
+    }
+
+    return missingLanguageFiles;
   }
 
   // Helper: Prompt user to select audio track (returns Promise)
@@ -274,8 +292,8 @@
         return defaultTrack?.index ?? 0;
       }
       case 'language': {
-        const langTrack = tracks.find(t => 
-          t.language?.toLowerCase() === strategy.language.toLowerCase()
+        const langTrack = tracks.find((track) =>
+          resolveDeepgramTrackLanguage(track.language) === strategy.language.toLowerCase()
         );
         return langTrack?.index ?? 0;
       }
@@ -436,8 +454,9 @@
     const allLanguages = new Set<string>();
     for (const pf of multiTrackFiles) {
       for (const track of pf.audioTracks) {
-        if (track.language) {
-          allLanguages.add(track.language.toLowerCase());
+        const resolvedLanguage = resolveDeepgramTrackLanguage(track.language);
+        if (resolvedLanguage) {
+          allLanguages.add(resolvedLanguage);
         }
       }
     }
@@ -818,6 +837,10 @@
     );
     if (readyFiles.length === 0) return;
 
+    if (validateTranscriptionTargets(readyFiles, audioToSubsStore.deepgramConfig).length > 0) {
+      return;
+    }
+
     for (const file of readyFiles) {
       audioToSubsStore.updateFile(file.id, {
         status: 'ready',
@@ -868,10 +891,15 @@
         // Create the transcription promise
         const promise = (async () => {
           const versionName = `Version ${(file.transcriptionVersions?.length ?? 0) + 1}`;
-          const effectiveConfig = getEffectiveConfig(file, audioToSubsStore.deepgramConfig);
 
           try {
-            const success = await transcribeFile(file, versionName, effectiveConfig, controller.signal);
+            const resolution = resolveTranscriptionConfig(file, audioToSubsStore.deepgramConfig);
+            if (!resolution.ok) {
+              failCount++;
+              return;
+            }
+
+            const success = await transcribeFile(file, versionName, resolution.config, controller.signal);
 
             if (success) {
               successCount++;
@@ -940,30 +968,40 @@
     }
   }
 
-  async function handleRetranscribe(fileId: string, versionName: string, config: DeepgramConfig) {
+  async function handleRetranscribe(fileId: string, versionName: string, config: DeepgramConfig): Promise<string | null> {
     const file = audioToSubsStore.audioFiles.find(f => f.id === fileId);
-    if (!file) return;
-
-    // Create abort controller for this file
-    const controller = new AbortController();
-    abortControllers.set(fileId, controller);
-
-    audioToSubsStore.updateFile(fileId, {
-      status: 'ready',
-      progress: 0,
-      error: undefined,
-    });
-
-    audioToSubsStore.setTranscriptionScope([fileId]);
-    audioToSubsStore.startTranscription(fileId);
-    try {
-      const effectiveConfig = getEffectiveConfig(file, config);
-      await transcribeFile(file, versionName, effectiveConfig, controller.signal);
-    } finally {
-      // Clean up controller
-      abortControllers.delete(fileId);
-      audioToSubsStore.stopTranscription();
+    if (!file) {
+      return 'File not found.';
     }
+
+    const resolution = resolveTranscriptionConfig(file, config);
+    if (!resolution.ok) {
+      const message = buildMissingLanguageMessage([file]);
+      toast.error(message);
+      return message;
+    }
+
+    void (async () => {
+      const controller = new AbortController();
+      abortControllers.set(fileId, controller);
+
+      audioToSubsStore.updateFile(fileId, {
+        status: 'ready',
+        progress: 0,
+        error: undefined,
+      });
+
+      audioToSubsStore.setTranscriptionScope([fileId]);
+      audioToSubsStore.startTranscription(fileId);
+      try {
+        await transcribeFile(file, versionName, resolution.config, controller.signal);
+      } finally {
+        abortControllers.delete(fileId);
+        audioToSubsStore.stopTranscription();
+      }
+    })();
+
+    return null;
   }
 
   async function cancelTranscodeAndCleanup(file: AudioFile): Promise<void> {
@@ -1212,6 +1250,12 @@
 
   const apiKeyConfigured = $derived(settingsStore.hasDeepgramApiKey());
   const transcodingCount = $derived(audioToSubsStore.transcodingFiles.length);
+  const invalidAutoLanguageFiles = $derived.by(() =>
+    collectFilesMissingLanguage(
+      audioToSubsStore.audioFiles.filter((file) => file.status === 'ready' || file.status === 'completed'),
+      audioToSubsStore.deepgramConfig,
+    ).map((result) => result.file.name)
+  );
 </script>
 
 <div class="h-full flex overflow-hidden">
@@ -1300,6 +1344,7 @@
         completedFilesCount={audioToSubsStore.completedFiles.length}
         totalFilesCount={audioToSubsStore.audioFiles.length}
         {transcodingCount}
+        invalidAutoLanguageFiles={invalidAutoLanguageFiles}
         onDeepgramConfigChange={(updates) => audioToSubsStore.updateDeepgramConfig(updates)}
         onMaxConcurrentChange={(value) => audioToSubsStore.setMaxConcurrentTranscriptions(value)}
         onTranscribeAll={handleTranscribeAll}
