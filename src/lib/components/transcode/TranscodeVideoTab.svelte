@@ -93,9 +93,11 @@
         >
           <Select.Trigger class="w-full">{file.profile.video.mode}</Select.Trigger>
           <Select.Content>
-            {#each availableVideoModeOptions as option (option.value)}
-              <Select.Item value={option.value}>{option.label}</Select.Item>
-            {/each}
+            <Select.Group>
+              {#each availableVideoModeOptions as option (option.value)}
+                <Select.Item value={option.value}>{option.label}</Select.Item>
+              {/each}
+            </Select.Group>
           </Select.Content>
         </Select.Root>
       </div>
@@ -115,9 +117,11 @@
           >
             <Select.Trigger class="w-full">{selectedVideoEncoder?.label ?? 'Select encoder'}</Select.Trigger>
             <Select.Content>
-              {#each availableVideoEncoders as encoder (encoder.id)}
-                <Select.Item value={encoder.id}>{encoder.label}</Select.Item>
-              {/each}
+              <Select.Group>
+                {#each availableVideoEncoders as encoder (encoder.id)}
+                  <Select.Item value={encoder.id}>{encoder.label}</Select.Item>
+                {/each}
+              </Select.Group>
             </Select.Content>
           </Select.Root>
         </div>
@@ -138,9 +142,11 @@
                 >
                   <Select.Trigger class="w-full">{file.profile.video.profile ?? 'Auto'}</Select.Trigger>
                   <Select.Content>
-                    {#each videoProfileOptions as profile (profile)}
-                      <Select.Item value={profile}>{profile}</Select.Item>
-                    {/each}
+                    <Select.Group>
+                      {#each videoProfileOptions as profile (profile)}
+                        <Select.Item value={profile}>{profile}</Select.Item>
+                      {/each}
+                    </Select.Group>
                   </Select.Content>
                 </Select.Root>
               </div>
@@ -160,9 +166,11 @@
                 >
                   <Select.Trigger class="w-full">{file.profile.video.level ?? 'Auto'}</Select.Trigger>
                   <Select.Content>
-                    {#each videoLevelOptions as level (level)}
-                      <Select.Item value={level}>{level}</Select.Item>
-                    {/each}
+                    <Select.Group>
+                      {#each videoLevelOptions as level (level)}
+                        <Select.Item value={level}>{level}</Select.Item>
+                      {/each}
+                    </Select.Group>
                   </Select.Content>
                 </Select.Root>
               </div>
@@ -184,9 +192,11 @@
             >
               <Select.Trigger class="w-full">{file.profile.video.pixelFormat ?? 'Auto'}</Select.Trigger>
               <Select.Content>
-                {#each videoPixelFormatOptions as pixelFormat (pixelFormat)}
-                  <Select.Item value={pixelFormat}>{pixelFormat}</Select.Item>
-                {/each}
+                <Select.Group>
+                  {#each videoPixelFormatOptions as pixelFormat (pixelFormat)}
+                    <Select.Item value={pixelFormat}>{pixelFormat}</Select.Item>
+                  {/each}
+                </Select.Group>
               </Select.Content>
             </Select.Root>
             {#if selectedVideoEncoder?.supportedBitDepths?.length}
@@ -221,15 +231,17 @@
             >
               <Select.Trigger class="w-full">{file.profile.video.qualityMode}</Select.Trigger>
               <Select.Content>
-                {#if selectedVideoEncoder?.supportsCrf}
-                  <Select.Item value="crf">crf</Select.Item>
-                {/if}
-                {#if selectedVideoEncoder?.supportsQp}
-                  <Select.Item value="qp">qp</Select.Item>
-                {/if}
-                {#if selectedVideoEncoder?.supportsBitrate}
-                  <Select.Item value="bitrate">bitrate</Select.Item>
-                {/if}
+                <Select.Group>
+                  {#if selectedVideoEncoder?.supportsCrf}
+                    <Select.Item value="crf">crf</Select.Item>
+                  {/if}
+                  {#if selectedVideoEncoder?.supportsQp}
+                    <Select.Item value="qp">qp</Select.Item>
+                  {/if}
+                  {#if selectedVideoEncoder?.supportsBitrate}
+                    <Select.Item value="bitrate">bitrate</Select.Item>
+                  {/if}
+                </Select.Group>
               </Select.Content>
             </Select.Root>
           </div>
@@ -299,9 +311,11 @@
                 {videoPresetOptions.find((option) => option.value === selectedPresetValue)?.label ?? 'Select preset'}
               </Select.Trigger>
               <Select.Content>
-                {#each videoPresetOptions as option (option.value)}
-                  <Select.Item value={option.value}>{option.label}</Select.Item>
-                {/each}
+                <Select.Group>
+                  {#each videoPresetOptions as option (option.value)}
+                    <Select.Item value={option.value}>{option.label}</Select.Item>
+                  {/each}
+                </Select.Group>
               </Select.Content>
             </Select.Root>
           </div>

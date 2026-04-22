@@ -147,9 +147,11 @@
           {getSelectedModelName()}
         </Select.Trigger>
         <Select.Content>
-          {#each currentProvider.models as providerModel (providerModel.id)}
-            <Select.Item value={providerModel.id}>{providerModel.name}</Select.Item>
-          {/each}
+          <Select.Group>
+            {#each currentProvider.models as providerModel (providerModel.id)}
+              <Select.Item value={providerModel.id}>{providerModel.name}</Select.Item>
+            {/each}
+          </Select.Group>
         </Select.Content>
       </Select.Root>
     {:else}

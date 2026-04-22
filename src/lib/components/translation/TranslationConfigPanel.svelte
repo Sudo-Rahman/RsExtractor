@@ -85,9 +85,11 @@
               {SUPPORTED_LANGUAGES.find((language) => language.code === translationStore.config.sourceLanguage)?.name || 'Select source'}
             </Select.Trigger>
             <Select.Content>
-              {#each SUPPORTED_LANGUAGES as language (language.code)}
-                <Select.Item value={language.code}>{language.name}</Select.Item>
-              {/each}
+              <Select.Group>
+                {#each SUPPORTED_LANGUAGES as language (language.code)}
+                  <Select.Item value={language.code}>{language.name}</Select.Item>
+                {/each}
+              </Select.Group>
             </Select.Content>
           </Select.Root>
         </div>
@@ -104,9 +106,11 @@
               {targetLanguages.find((language) => language.code === translationStore.config.targetLanguage)?.name || 'Select target'}
             </Select.Trigger>
             <Select.Content>
-              {#each targetLanguages as language (language.code)}
-                <Select.Item value={language.code}>{language.name}</Select.Item>
-              {/each}
+              <Select.Group>
+                {#each targetLanguages as language (language.code)}
+                  <Select.Item value={language.code}>{language.name}</Select.Item>
+                {/each}
+              </Select.Group>
             </Select.Content>
           </Select.Root>
         </div>

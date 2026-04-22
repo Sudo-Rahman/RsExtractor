@@ -404,14 +404,16 @@
             >
               <Select.Trigger class="w-full">{arg.value ?? 'Select value'}</Select.Trigger>
               <Select.Content>
-                {#each valueChoices as choice (choice.value)}
-                  <Select.Item value={choice.value}>
-                    <span>{choice.value}</span>
-                    {#if choice.description}
-                      <span class="ml-2 text-xs text-muted-foreground">{choice.description}</span>
-                    {/if}
-                  </Select.Item>
-                {/each}
+                <Select.Group>
+                  {#each valueChoices as choice (choice.value)}
+                    <Select.Item value={choice.value}>
+                      <span>{choice.value}</span>
+                      {#if choice.description}
+                        <span class="ml-2 text-xs text-muted-foreground">{choice.description}</span>
+                      {/if}
+                    </Select.Item>
+                  {/each}
+                </Select.Group>
               </Select.Content>
             </Select.Root>
           {:else if supportsNumericInput(selectedOption)}

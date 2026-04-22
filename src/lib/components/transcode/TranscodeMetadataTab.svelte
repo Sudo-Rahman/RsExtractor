@@ -315,9 +315,11 @@
                       {formatLanguage(batchLanguage)}
                     </Select.Trigger>
                     <Select.Content>
-                      {#each COMMON_LANGUAGES as language (language.code)}
-                        <Select.Item value={language.code}>{language.label}</Select.Item>
-                      {/each}
+                      <Select.Group>
+                        {#each COMMON_LANGUAGES as language (language.code)}
+                          <Select.Item value={language.code}>{language.label}</Select.Item>
+                        {/each}
+                      </Select.Group>
                     </Select.Content>
                   </Select.Root>
                   <Button variant="outline" size="sm" onclick={applyBatchLanguage} disabled={isProcessing}>
@@ -439,9 +441,11 @@
                         {formatLanguage(track.metadata.language ?? 'und')}
                       </Select.Trigger>
                       <Select.Content>
-                        {#each COMMON_LANGUAGES as language (language.code)}
-                          <Select.Item value={language.code}>{language.label}</Select.Item>
-                        {/each}
+                        <Select.Group>
+                          {#each COMMON_LANGUAGES as language (language.code)}
+                            <Select.Item value={language.code}>{language.label}</Select.Item>
+                          {/each}
+                        </Select.Group>
                       </Select.Content>
                     </Select.Root>
                   </div>

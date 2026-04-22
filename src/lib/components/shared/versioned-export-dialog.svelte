@@ -323,9 +323,11 @@
               {formatOptions.find((option) => option.value === selectedFormat)?.label ?? selectedFormat.toUpperCase()}
             </Select.Trigger>
             <Select.Content>
-              {#each formatOptions as formatOption}
-                <Select.Item value={formatOption.value}>{formatOption.label}</Select.Item>
-              {/each}
+              <Select.Group>
+                {#each formatOptions as formatOption}
+                  <Select.Item value={formatOption.value}>{formatOption.label}</Select.Item>
+                {/each}
+              </Select.Group>
             </Select.Content>
           </Select.Root>
         </div>

@@ -1358,9 +1358,11 @@
                   {activeVersion?.name ?? 'Select version'}
                 </Select.Trigger>
                 <Select.Content>
-                  {#each selectedJobVersions as version (version.id)}
-                    <Select.Item value={version.id}>{version.name}</Select.Item>
-                  {/each}
+                  <Select.Group>
+                    {#each selectedJobVersions as version (version.id)}
+                      <Select.Item value={version.id}>{version.name}</Select.Item>
+                    {/each}
+                  </Select.Group>
                 </Select.Content>
               </Select.Root>
             {/if}

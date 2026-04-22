@@ -70,7 +70,7 @@
 
 <Sheet.Root open={logStore.isOpen} onOpenChange={(isOpen) => { if (isOpen) logStore.open(); else logStore.close(); }}>
   <Sheet.Content side="right" class="w-full sm:max-w-xl flex flex-col">
-    <Sheet.Header class="shrink-0">
+  <Sheet.Header class="shrink-0 pr-14">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
           <ScrollText class="size-5 text-primary" />
@@ -144,9 +144,11 @@
             {sourceOptions.find(o => o.value === (logStore.sourceFilter || 'all'))?.label || 'All Sources'}
           </Select.Trigger>
           <Select.Content>
-            {#each sourceOptions as option}
-              <Select.Item value={option.value}>{option.label}</Select.Item>
-            {/each}
+            <Select.Group>
+              {#each sourceOptions as option}
+                <Select.Item value={option.value}>{option.label}</Select.Item>
+              {/each}
+            </Select.Group>
           </Select.Content>
         </Select.Root>
 
@@ -159,9 +161,11 @@
             {levelOptions.find(o => o.value === (logStore.levelFilter || 'all'))?.label || 'All Levels'}
           </Select.Trigger>
           <Select.Content>
-            {#each levelOptions as option}
-              <Select.Item value={option.value}>{option.label}</Select.Item>
-            {/each}
+            <Select.Group>
+              {#each levelOptions as option}
+                <Select.Item value={option.value}>{option.label}</Select.Item>
+              {/each}
+            </Select.Group>
           </Select.Content>
         </Select.Root>
 

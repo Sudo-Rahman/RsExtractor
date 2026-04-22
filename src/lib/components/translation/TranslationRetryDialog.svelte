@@ -124,9 +124,11 @@
               {SUPPORTED_LANGUAGES.find((lang) => lang.code === sourceLanguage)?.name || 'Source'}
             </Select.Trigger>
             <Select.Content>
-              {#each SUPPORTED_LANGUAGES as lang (lang.code)}
-                <Select.Item value={lang.code}>{lang.name}</Select.Item>
-              {/each}
+              <Select.Group>
+                {#each SUPPORTED_LANGUAGES as lang (lang.code)}
+                  <Select.Item value={lang.code}>{lang.name}</Select.Item>
+                {/each}
+              </Select.Group>
             </Select.Content>
           </Select.Root>
         </div>
@@ -143,9 +145,11 @@
               {targetLanguages.find((lang) => lang.code === targetLanguage)?.name || 'Target'}
             </Select.Trigger>
             <Select.Content>
-              {#each targetLanguages as lang (lang.code)}
-                <Select.Item value={lang.code}>{lang.name}</Select.Item>
-              {/each}
+              <Select.Group>
+                {#each targetLanguages as lang (lang.code)}
+                  <Select.Item value={lang.code}>{lang.name}</Select.Item>
+                {/each}
+              </Select.Group>
             </Select.Content>
           </Select.Root>
         </div>

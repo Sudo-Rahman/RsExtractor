@@ -139,12 +139,14 @@
         {filteredLanguages.find(l => l.value === config.language)?.label ?? 'Select language'}
       </Select.Trigger>
       <Select.Content>
-        {#each filteredLanguages as lang}
-          <Select.Item value={lang.value}>
-            <span>{lang.label}</span>
-            <span class="text-xs text-muted-foreground ml-2">{lang.description}</span>
-          </Select.Item>
-        {/each}
+        <Select.Group>
+          {#each filteredLanguages as lang}
+            <Select.Item value={lang.value}>
+              <span>{lang.label}</span>
+              <span class="text-xs text-muted-foreground ml-2">{lang.description}</span>
+            </Select.Item>
+          {/each}
+        </Select.Group>
       </Select.Content>
     </Select.Root>
     {#if availableLanguages.length > 0 && availableLanguages.length < OCR_LANGUAGES.length}

@@ -51,9 +51,11 @@
         >
           <Select.Trigger class="w-full">{file.profile.subtitles.mode}</Select.Trigger>
           <Select.Content>
-            {#each availableSubtitleModeOptions as option (option.value)}
-              <Select.Item value={option.value}>{option.label}</Select.Item>
-            {/each}
+            <Select.Group>
+              {#each availableSubtitleModeOptions as option (option.value)}
+                <Select.Item value={option.value}>{option.label}</Select.Item>
+              {/each}
+            </Select.Group>
           </Select.Content>
         </Select.Root>
       </div>
@@ -72,9 +74,11 @@
           >
             <Select.Trigger class="w-full">{selectedSubtitleEncoder?.label ?? 'Select encoder'}</Select.Trigger>
             <Select.Content>
-              {#each availableSubtitleEncoders as encoder (encoder.id)}
-                <Select.Item value={encoder.id}>{encoder.label}</Select.Item>
-              {/each}
+              <Select.Group>
+                {#each availableSubtitleEncoders as encoder (encoder.id)}
+                  <Select.Item value={encoder.id}>{encoder.label}</Select.Item>
+                {/each}
+              </Select.Group>
             </Select.Content>
           </Select.Root>
         </div>

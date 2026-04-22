@@ -189,9 +189,11 @@
                 <span>{formatLanguage(localConfig.language || 'und')}</span>
               </Select.Trigger>
               <Select.Content>
-                {#each COMMON_LANGUAGES as lang}
-                  <Select.Item value={lang.code}>{lang.label}</Select.Item>
-                {/each}
+                <Select.Group>
+                  {#each COMMON_LANGUAGES as lang}
+                    <Select.Item value={lang.code}>{lang.label}</Select.Item>
+                  {/each}
+                </Select.Group>
               </Select.Content>
             </Select.Root>
           </div>

@@ -57,12 +57,14 @@
           onValueChange={(value) => {
             updateContainer(value);
           }}
-        >
+          >
           <Select.Trigger class="w-full">{selectedContainer?.label ?? file.profile.containerId.toUpperCase()}</Select.Trigger>
           <Select.Content>
-            {#each availableContainers as container (container.id)}
-              <Select.Item value={container.id}>{container.label}</Select.Item>
-            {/each}
+            <Select.Group>
+              {#each availableContainers as container (container.id)}
+                <Select.Item value={container.id}>{container.label}</Select.Item>
+              {/each}
+            </Select.Group>
           </Select.Content>
         </Select.Root>
       </div>
