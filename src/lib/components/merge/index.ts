@@ -7,3 +7,8 @@ export { default as MergeTrackGroupCard } from './MergeTrackGroupCard.svelte';
 export { default as MergeTrackGroups } from './MergeTrackGroups.svelte';
 export { default as MergeGroupEditor } from './MergeGroupEditor.svelte';
 export { default as MergeTrackTable } from './MergeTrackTable.svelte';
+export { default as MergeViewModeActions } from './MergeViewModeActions.svelte';
+export { default as MergeOutputNamingView } from './MergeOutputNamingView.svelte';
+export { default as MergeSourceTracksPanel } from './MergeSourceTracksPanel.svelte';
+export { default as MergeImportTracksPanel } from './MergeImportTracksPanel.svelte';
+export { default as MergeHomeView } from './MergeHomeView.svelte';

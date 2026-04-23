@@ -8,27 +8,24 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { listen } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
-  import { FileVideo, Trash2 } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
+  import type { UnlistenFn } from '@tauri-apps/api/event';
 
   import { extractionStore, fileListStore, toolImportStore } from '$lib/stores';
   import { scanFiles } from '$lib/services/ffprobe';
   import { extractTrack, buildOutputPath } from '$lib/services/ffmpeg';
   import { pickOutputDirectory } from '$lib/services/output-folder';
   import { logAndToast } from '$lib/utils/log-toast';
-  import type { VideoFile, Track, ExtractProgressEvent } from '$lib/types';
+  import type { ExtractProgressEvent, Track, VideoFile } from '$lib/types';
 
   import {
-    Button,
-    FileList,
-    TrackDetails,
     ExtractionPanel,
-    BatchTrackSelector
+    ExtractionFileSidebar,
+    ExtractionWorkspace,
   } from '$lib/components';
-  import { ProcessingRemoveDialog, ToolImportButton } from '$lib/components/shared';
-  import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
+  import { ProcessingRemoveDialog } from '$lib/components/shared';
 
   const SUPPORTED_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'] as const;
   const SUPPORTED_FORMATS = SUPPORTED_EXTENSIONS.map((ext) => ext.slice(1).toUpperCase());
@@ -49,6 +46,7 @@
   let runFileTrackTotals = new Map<string, number>();
   let runFileCompletedTracks = new Map<string, number>();
   let runFileFailedTracks = new Map<string, number>();
+  let mediaImportCreatedAtByPath = $state.raw(new Map<string, number>());
 
   let cancelAllRequested = $state(false);
   let cancelCurrentFilePath = $state<string | null>(null);
@@ -619,13 +617,49 @@
     extractionStore.reset();
   }
 
-  const selectedFile = $derived(fileListStore.selectedFile);
+  const selectedFile = $derived(fileListStore.selectedFile ?? null);
+  const files = $derived(fileListStore.files);
+  const selectedFilePath = $derived(fileListStore.selectedFilePath);
   const selectedTrackIds = $derived(
-    fileListStore.selectedFilePath
-      ? extractionStore.getSelectedTracksForFile(fileListStore.selectedFilePath)
+    selectedFilePath
+      ? extractionStore.getSelectedTracksForFile(selectedFilePath)
       : []
   );
-  const readyFiles = $derived(fileListStore.files.filter(f => f.status === 'ready'));
+  const readyFiles = $derived(files.filter((file) => file.status === 'ready'));
+  const selectedTrackCount = $derived.by(() => extractionStore.getTotalSelectedTracks());
+  const mediaImportItems = $derived.by(() =>
+    readyFiles.map((file) => ({
+      key: `extract-media:${file.path}`,
+      path: file.path,
+      name: file.name,
+      kind: 'media' as const,
+      createdAt: mediaImportCreatedAtByPath.get(file.path) ?? 0,
+    })),
+  );
+
+  $effect(() => {
+    const activePaths = new Set(files.map((file) => file.path));
+    const nextCreatedAtByPath = new Map(mediaImportCreatedAtByPath);
+    let changed = false;
+
+    for (const file of readyFiles) {
+      if (!nextCreatedAtByPath.has(file.path)) {
+        nextCreatedAtByPath.set(file.path, Date.now());
+        changed = true;
+      }
+    }
+
+    for (const path of nextCreatedAtByPath.keys()) {
+      if (!activePaths.has(path)) {
+        nextCreatedAtByPath.delete(path);
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      mediaImportCreatedAtByPath = nextCreatedAtByPath;
+    }
+  });
 
   $effect(() => {
     toolImportStore.publishPathSource(
@@ -637,108 +671,45 @@
   });
 
   $effect(() => {
-    const mediaItems = fileListStore.files
-      .filter((file) => file.status === 'ready')
-      .map((file) => ({
-        key: `extract-media:${file.path}`,
-        path: file.path,
-        name: file.name,
-        kind: 'media' as const,
-        createdAt: Date.now(),
-      }));
-
     toolImportStore.publishPathSource(
       'extraction_media',
       'extract',
       EXTRACTION_SOURCE_LABEL,
-      mediaItems,
+      mediaImportItems,
     );
   });
 </script>
 
 <div class="h-full flex overflow-hidden">
-  <!-- Left panel: File list -->
-  <div class="w-[max(20rem,25vw)] max-w-lg border-r flex flex-col overflow-hidden">
-    <div class="p-3 border-b shrink-0 flex items-center justify-between">
-      <h2 class="font-semibold">Files ({fileListStore.files.length})</h2>
-      <div class="flex items-center gap-1">
-        {#if fileListStore.files.length > 0}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onclick={handleRequestClearAll}
-            class="text-muted-foreground hover:text-destructive"
-          >
-            <Trash2 class="size-4" />
-            <span class="sr-only">Clear list</span>
-          </Button>
-        {/if}
-        <ToolImportButton
-          targetTool="extract"
-          onBrowse={handleImportClick}
-        />
-      </div>
-    </div>
+  <ExtractionFileSidebar
+    {files}
+    selectedPath={selectedFilePath}
+    fileRunStates={extractionStore.fileRunStates}
+    isProcessing={extractionStore.isExtracting}
+    currentProcessingPath={activeExtractionFilePath}
+    supportedFormats={SUPPORTED_FORMATS}
+    onImport={handleImportClick}
+    onClearAll={handleRequestClearAll}
+    onSelectFile={(path) => fileListStore.selectFile(path)}
+    onCancelFile={(path) => { void handleCancelFile(path); }}
+    onRemoveFile={handleRequestRemoveFile}
+  />
 
-    {#if fileListStore.files.length === 0}
-      <div class="flex-1 p-2 overflow-auto">
-        <ImportDropZone
-          icon={FileVideo}
-          title="Drop media files here"
-          formats={SUPPORTED_FORMATS}
-          onBrowse={handleImportClick}
-        />
-      </div>
-    {:else}
-      <div class="flex-1 min-h-0 overflow-auto p-2">
-        <FileList
-          files={fileListStore.files}
-          selectedPath={fileListStore.selectedFilePath}
-          fileRunStates={extractionStore.fileRunStates}
-          isProcessing={extractionStore.isExtracting}
-          currentProcessingPath={activeExtractionFilePath}
-          onSelect={(path) => fileListStore.selectFile(path)}
-          onCancelFile={(path) => { void handleCancelFile(path); }}
-          onRemove={handleRequestRemoveFile}
-        />
-      </div>
-    {/if}
-  </div>
+  <ExtractionWorkspace
+    {readyFiles}
+    {selectedFile}
+    {selectedTrackIds}
+    selectedTracks={extractionStore.selectedTracks}
+    onBatchSelect={handleBatchSelect}
+    onToggleTrack={handleToggleTrack}
+    onSelectAllOfType={handleSelectAllOfType}
+    onDeselectAllOfType={handleDeselectAllOfType}
+  />
 
-  <!-- Center panel: Track details -->
-  <div class="flex-1 flex flex-col overflow-hidden">
-    {#if readyFiles.length > 0}
-      <div class="p-4 border-b shrink-0">
-        <BatchTrackSelector
-          files={readyFiles}
-          selectedTracks={extractionStore.selectedTracks}
-          onBatchSelect={handleBatchSelect}
-        />
-      </div>
-    {/if}
-
-    <div class="flex-1 min-h-0 overflow-auto p-4">
-      {#if selectedFile}
-        <TrackDetails
-          file={selectedFile}
-          selectedTrackIds={selectedTrackIds}
-          onToggleTrack={handleToggleTrack}
-          onSelectAll={handleSelectAllOfType}
-          onDeselectAll={handleDeselectAllOfType}
-        />
-      {:else}
-        <div class="h-full flex items-center justify-center text-muted-foreground py-20">
-          <p>Select a file to view its tracks</p>
-        </div>
-      {/if}
-    </div>
-  </div>
-
-  <!-- Right panel: Extraction options -->
   <div class="w-80 border-l p-4 overflow-auto">
     <ExtractionPanel
       outputDir={extractionStore.outputDir}
-      selectedCount={extractionStore.getTotalSelectedTracks()}
+      selectedCount={selectedTrackCount}
       progress={extractionStore.progress}
       onSelectOutputDir={handleSelectOutputDir}
       onExtract={handleExtract}

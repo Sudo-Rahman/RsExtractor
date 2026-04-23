@@ -15,6 +15,7 @@
     open: boolean;
     track: MergeTrack | null;
     config: MergeTrackConfig | null;
+    title?: string | null;
     onClose: () => void;
     onSave: (updates: Partial<MergeTrackConfig>) => void;
   }
@@ -23,6 +24,7 @@
     open = $bindable(),
     track,
     config,
+    title = null,
     onClose,
     onSave
   }: MergeTrackSettingsProps = $props();
@@ -67,7 +69,7 @@
           {#if Icon}
             <Icon class="size-5" />
           {/if}
-          Track Settings #{track.originalIndex}
+          {title ?? (track.originalIndex > 0 ? `Track Settings #${track.originalIndex}` : 'Track Settings')}
         {:else}
           Track Settings
         {/if}

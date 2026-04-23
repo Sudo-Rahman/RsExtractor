@@ -6,32 +6,28 @@
 
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { FolderOpen, Play, Square } from '@lucide/svelte';
   import { open } from '@tauri-apps/plugin-dialog';
   import { exists } from '@tauri-apps/plugin-fs';
   import { invoke } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { toast } from 'svelte-sonner';
 
   import { renameStore } from '$lib/stores/rename.svelte';
   import { toolImportStore } from '$lib/stores/tool-import.svelte';
   import { fetchFileMetadata } from '$lib/services/file-metadata';
   import { pickOutputDirectory } from '$lib/services/output-folder';
-  import { buildNewPath, createRenameFile } from '$lib/services/rename';
+  import { buildNewPath, createRenameFile, getDirectoryFromPath } from '$lib/services/rename';
   import { resolveOutputFolderDisplay } from '$lib/utils';
   import { logAndToast, log } from '$lib/utils/log-toast';
-  import { formatFileSize, formatTransferRate } from '$lib/utils/format';
+  import { formatFileSize } from '$lib/utils/format';
   import type { RenameCopyProgressEvent } from '$lib/types/progress';
   import type { ImportSourceId } from '$lib/types/tool-import';
   import type { RenameMode, RenameFile } from '$lib/types/rename';
 
-  import { Button } from '$lib/components/ui/button';
-  import { Progress } from '$lib/components/ui/progress';
-  import * as RadioGroup from '$lib/components/ui/radio-group';
-  import * as AlertDialog from '$lib/components/ui/alert-dialog';
-  import { Label } from '$lib/components/ui/label';
   import { RenameWorkspace } from '$lib/components/rename';
-  import { OutputFolderField } from '$lib/components/shared';
+  import RenameExecutionPanel from '$lib/components/rename/RenameExecutionPanel.svelte';
+  import RenameModePanel from '$lib/components/rename/RenameModePanel.svelte';
+  import RenameOverwriteDialog from '$lib/components/rename/RenameOverwriteDialog.svelte';
 
   interface RenameExecutionPlanItem {
     file: RenameFile;
@@ -49,9 +45,33 @@
     return errorMsg === COPY_CANCELLED_ERROR || errorMsg.includes(COPY_CANCELLED_ERROR);
   }
 
+  async function buildRenameFiles(paths: string[]): Promise<RenameFile[]> {
+    return Promise.all(
+      paths.map(async (path) => {
+        const metadata = await fetchFileMetadata(path);
+        return createRenameFile(path, metadata.size, metadata.modifiedAt, metadata.createdAt);
+      }),
+    );
+  }
+
+  async function addPathsToWorkspace(paths: string[], successMessage: string): Promise<void> {
+    if (paths.length === 0) {
+      toast.warning('No files detected');
+      return;
+    }
+
+    if (renameStore.progress.status !== 'idle' && renameStore.progress.status !== 'processing') {
+      renameStore.resetProgress();
+    }
+
+    const newFiles = await buildRenameFiles(paths);
+    renameStore.addFiles(newFiles);
+    toast.success(successMessage);
+  }
+
   onMount(() => {
     let destroyed = false;
-    let removeListener: (() => void) | null = null;
+    let removeListener: UnlistenFn | null = null;
 
     const registerCopyProgressListener = async () => {
       const unlisten = await listen<RenameCopyProgressEvent>('rename-copy-progress', (event) => {
@@ -84,25 +104,16 @@
       removeListener?.();
     };
   });
+
+  $effect(() => {
+    if (!overwriteDialogOpen && pendingCopyPlan) {
+      pendingCopyPlan = null;
+      existingCopyTargets = [];
+    }
+  });
+
   export async function handleFileDrop(paths: string[]) {
-    if (paths.length === 0) {
-      toast.warning('No files detected');
-      return;
-    }
-
-    if (renameStore.progress.status === 'completed') {
-      renameStore.resetProgress();
-    }
-
-    const newFiles = await Promise.all(
-      paths.map(async (path) => {
-        const metadata = await fetchFileMetadata(path);
-        return createRenameFile(path, metadata.size, metadata.modifiedAt, metadata.createdAt);
-      }),
-    );
-
-    renameStore.addFiles(newFiles);
-    toast.success(`${paths.length} file(s) added`);
+    await addPathsToWorkspace(paths, `${paths.length} file(s) added`);
   }
 
   async function handleImportClick() {
@@ -136,15 +147,7 @@
       return;
     }
 
-    const newFiles = await Promise.all(
-      paths.map(async (path) => {
-        const metadata = await fetchFileMetadata(path);
-        return createRenameFile(path, metadata.size, metadata.modifiedAt, metadata.createdAt);
-      }),
-    );
-
-    renameStore.addFiles(newFiles);
-    toast.success(`${paths.length} file(s) imported`);
+    await addPathsToWorkspace(paths, `${paths.length} file(s) imported`);
   }
 
   async function handleSelectOutputDir() {
@@ -370,10 +373,7 @@
 
   async function handleOpenFolder() {
     try {
-      const dir = renameStore.outputDir || (
-        renameStore.files[0]
-          && renameStore.files[0].originalPath.substring(0, renameStore.files[0].originalPath.lastIndexOf('/'))
-      );
+      const dir = renameStore.outputDir || getDirectoryFromPath(renameStore.files[0]?.originalPath ?? '');
 
       if (dir) {
         await invoke('open_folder', { path: dir });
@@ -409,7 +409,7 @@
     && !renameStore.hasConflicts
     && !isProcessing
     && hasChanges
-    && (mode === 'rename' || outputDir),
+    && (mode === 'rename' || Boolean(outputDir)),
   );
   const overwriteTargetSamples = $derived(existingCopyTargets.slice(0, 5));
   const copiedBytes = $derived(Math.max(0, progress.completedBytes + progress.currentFileBytesCopied));
@@ -428,121 +428,33 @@
   onClearAll={handleClearAll}
 >
   {#snippet actionPanel()}
-    <div class="space-y-2">
-      <Label class="text-xs uppercase tracking-wide text-muted-foreground">Mode</Label>
-      <RadioGroup.Root value={mode} onValueChange={handleModeChange} class="flex gap-4">
-        <label class="flex items-center gap-2 cursor-pointer">
-          <RadioGroup.Item value="rename" />
-          <span class="text-sm">Rename</span>
-        </label>
-        <label class="flex items-center gap-2 cursor-pointer">
-          <RadioGroup.Item value="copy" />
-          <span class="text-sm">Copy</span>
-        </label>
-      </RadioGroup.Root>
-    </div>
+    <RenameModePanel
+      {mode}
+      {outputFolderDisplay}
+      onModeChange={handleModeChange}
+      onSelectOutputDir={handleSelectOutputDir}
+    />
 
-    {#if mode === 'copy'}
-      <OutputFolderField
-        label="Output folder"
-        displayText={outputFolderDisplay.displayText}
-        state={outputFolderDisplay.state}
-        onBrowse={handleSelectOutputDir}
-      />
-    {/if}
-
-    {#if isProcessing && mode === 'copy'}
-      <div class="space-y-2 rounded-md border bg-muted/30 px-3 py-2">
-        <p class="text-sm font-medium">Copying...</p>
-        {#if progress.currentFile}
-          <p class="text-xs text-muted-foreground truncate" title={progress.currentFile}>
-            Current file: {progress.currentFile}
-          </p>
-        {/if}
-        <div class="space-y-1.5">
-          <Progress value={progress.currentFileProgress} class="h-1.5" />
-          <p class="text-[11px] text-muted-foreground">
-            File progress: {Math.round(progress.currentFileProgress)}%
-            {#if progress.currentSpeedBytesPerSec && progress.currentSpeedBytesPerSec > 0}
-              · {formatTransferRate(progress.currentSpeedBytesPerSec)}
-            {/if}
-          </p>
-          <p class="text-[11px] text-muted-foreground">
-            {progress.current}/{progress.total} files completed
-          </p>
-          <p class="text-[11px] text-muted-foreground">
-            Copied: {copiedBytesLabel} / {totalBytesLabel}
-          </p>
-        </div>
-      </div>
-    {/if}
-
-    {#if isProcessing}
-      <Button
-        class="w-full"
-        size="lg"
-        variant="destructive"
-        disabled={isCancelling}
-        onclick={handleCancelProcessing}
-      >
-        <Square class="size-4 mr-2" />
-        Cancel
-      </Button>
-    {:else}
-      <Button
-        class="w-full"
-        size="lg"
-        disabled={!canExecute}
-        onclick={handleExecute}
-      >
-        <Play class="size-4 mr-2" />
-        {mode === 'rename' ? 'Rename' : 'Copy'} {selectedCount} file{selectedCount !== 1 ? 's' : ''}
-      </Button>
-    {/if}
-
-    {#if progress.status === 'completed' || progress.status === 'cancelled'}
-      <Button
-        variant="outline"
-        class="w-full"
-        onclick={handleOpenFolder}
-      >
-        <FolderOpen class="size-4 mr-2" />
-        Open Folder
-      </Button>
-    {/if}
+    <RenameExecutionPanel
+      {mode}
+      {selectedCount}
+      {canExecute}
+      {isProcessing}
+      {isCancelling}
+      {progress}
+      {copiedBytesLabel}
+      {totalBytesLabel}
+      onExecute={handleExecute}
+      onCancel={handleCancelProcessing}
+      onOpenFolder={handleOpenFolder}
+    />
   {/snippet}
 </RenameWorkspace>
 
-<AlertDialog.Root bind:open={overwriteDialogOpen}>
-  <AlertDialog.Content>
-    <AlertDialog.Header>
-      <AlertDialog.Title>Overwrite existing files?</AlertDialog.Title>
-      <AlertDialog.Description>
-        {existingCopyTargets.length} destination file(s) already exist. Continuing will replace them.
-      </AlertDialog.Description>
-    </AlertDialog.Header>
-
-    {#if overwriteTargetSamples.length > 0}
-      <div class="rounded-md border bg-muted/40 p-3 space-y-1 max-h-36 overflow-auto">
-        {#each overwriteTargetSamples as targetPath (targetPath)}
-          <p class="text-xs font-mono truncate">{targetPath}</p>
-        {/each}
-        {#if existingCopyTargets.length > overwriteTargetSamples.length}
-          <p class="text-xs text-muted-foreground">
-            + {existingCopyTargets.length - overwriteTargetSamples.length} more
-          </p>
-        {/if}
-      </div>
-    {/if}
-
-    <AlertDialog.Footer>
-      <AlertDialog.Cancel onclick={cancelCopyOverwritePrompt}>Cancel</AlertDialog.Cancel>
-      <AlertDialog.Action
-        onclick={confirmCopyOverwrite}
-        class="bg-destructive text-white hover:bg-destructive/90"
-      >
-        Overwrite and Continue
-      </AlertDialog.Action>
-    </AlertDialog.Footer>
-  </AlertDialog.Content>
-</AlertDialog.Root>
+<RenameOverwriteDialog
+  bind:open={overwriteDialogOpen}
+  existingTargetCount={existingCopyTargets.length}
+  targetSamples={overwriteTargetSamples}
+  onCancel={cancelCopyOverwritePrompt}
+  onConfirm={confirmCopyOverwrite}
+/>
