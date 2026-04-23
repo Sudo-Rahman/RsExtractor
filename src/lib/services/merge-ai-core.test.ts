@@ -172,7 +172,7 @@ describe('merge-ai-core', () => {
       {
         trackId: 't001',
         videoId: null,
-        confidence: 'high',
+        confidence: 'low',
         reason: 'The AI referenced an unknown video, so this track was left unmatched.',
       },
     ]);

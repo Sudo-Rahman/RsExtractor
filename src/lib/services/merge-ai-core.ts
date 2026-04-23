@@ -179,6 +179,7 @@ export function parseAndValidateMergeAiResponse(
   const seenTrackIds = new Set<string>();
   const matches: MergeAiValidatedMatch[] = [];
   const warnings: string[] = [];
+  const pendingUnmatchedMatches = new Map<string, MergeAiValidatedMatch>();
 
   parsed.matches.forEach((match, index) => {
     if (!isObject(match)) {
@@ -196,20 +197,9 @@ export function parseAndValidateMergeAiResponse(
       return;
     }
 
-    const rawVideoId = match.videoId;
-    let videoId: string | null = null;
     let reason = typeof match.reason === 'string' && match.reason.trim().length > 0
       ? match.reason.trim()
       : 'No reason provided.';
-
-    if (rawVideoId === null) {
-      videoId = null;
-    } else if (typeof rawVideoId === 'string' && validVideoIds.has(rawVideoId)) {
-      videoId = rawVideoId;
-    } else {
-      warnings.push(`Match ${index + 1} referenced an unknown videoId and was left unmatched.`);
-      reason = 'The AI referenced an unknown video, so this track was left unmatched.';
-    }
 
     const confidence = normalizeConfidence(match.confidence);
     if (!confidence) {
@@ -217,7 +207,25 @@ export function parseAndValidateMergeAiResponse(
       return;
     }
 
+    const rawVideoId = match.videoId;
+    let videoId: string | null = null;
+    if (rawVideoId === null) {
+      videoId = null;
+    } else if (typeof rawVideoId === 'string' && validVideoIds.has(rawVideoId)) {
+      videoId = rawVideoId;
+    } else {
+      warnings.push(`Match ${index + 1} referenced an unknown videoId and was left unmatched.`);
+      pendingUnmatchedMatches.set(match.trackId, {
+        trackId: match.trackId,
+        videoId: null,
+        confidence: 'low',
+        reason: 'The AI referenced an unknown video, so this track was left unmatched.',
+      });
+      return;
+    }
+
     seenTrackIds.add(match.trackId);
+    pendingUnmatchedMatches.delete(match.trackId);
     matches.push({
       trackId: match.trackId,
       videoId,
@@ -225,6 +233,12 @@ export function parseAndValidateMergeAiResponse(
       reason,
     });
   });
+
+  for (const unmatchedMatch of pendingUnmatchedMatches.values()) {
+    if (!seenTrackIds.has(unmatchedMatch.trackId)) {
+      matches.push(unmatchedMatch);
+    }
+  }
 
   return { matches, warnings };
 }
