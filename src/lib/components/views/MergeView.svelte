@@ -36,6 +36,7 @@
   const AUDIO_EXTENSIONS = ['.aac', '.ac3', '.dts', '.flac', '.mp3', '.ogg', '.wav', '.eac3', '.opus'];
   const ALL_EXTENSIONS = [...VIDEO_EXTENSIONS, ...SUBTITLE_EXTENSIONS, ...AUDIO_EXTENSIONS];
   const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((extension) => extension.slice(1).toUpperCase());
+  const STALE_AI_MATCH_MESSAGE = 'Files changed while AI Match was running. Run AI Match again.';
 
   type ForcedImportType = 'video' | 'subtitle' | 'audio';
 
@@ -502,18 +503,29 @@
       return;
     }
 
+    const analysisContextKey = aiPreviewContextKey;
     mergeStore.startAiAnalysis();
 
     try {
-      const suggestions = await analyzeMergeAiMatches({
+      const result = await analyzeMergeAiMatches({
         videos: readyVideos,
         tracks: aiCandidateTracks,
         provider: mergeStore.aiProvider,
         model: mergeStore.aiModel,
       });
 
-      mergeStore.setAiPreview(suggestions);
+      if (analysisContextKey !== aiPreviewContextKey) {
+        mergeStore.setAiError(STALE_AI_MATCH_MESSAGE);
+        return;
+      }
+
+      mergeStore.setAiPreview(result.suggestions, result.warnings);
     } catch (error) {
+      if (analysisContextKey !== aiPreviewContextKey) {
+        mergeStore.setAiError(STALE_AI_MATCH_MESSAGE);
+        return;
+      }
+
       const message = error instanceof Error ? error.message : String(error);
       mergeStore.setAiError(message);
     }
@@ -992,6 +1004,7 @@
     status={mergeStore.aiStatus}
     error={mergeStore.aiError}
     suggestions={mergeStore.aiSuggestions}
+    warnings={mergeStore.aiWarnings}
     canAnalyze={canRunAiAutoMatch}
     onProviderChange={(provider) => mergeStore.setAiProvider(provider)}
     onModelChange={(model) => mergeStore.setAiModel(model)}

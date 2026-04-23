@@ -48,7 +48,7 @@ describe('merge AI payload and response validation', () => {
   });
 
   it('allows ambiguous tracks to remain unmatched', () => {
-    const matches = parseAndValidateMergeAiResponse(
+    const result = parseAndValidateMergeAiResponse(
       JSON.stringify({
         matches: [
           {
@@ -63,7 +63,7 @@ describe('merge AI payload and response validation', () => {
       ['video-1'],
     );
 
-    expect(matches).toEqual([
+    expect(result.matches).toEqual([
       {
         trackId: 'track-1',
         videoId: null,
@@ -71,6 +71,7 @@ describe('merge AI payload and response validation', () => {
         reason: 'No exact episode marker was found.',
       },
     ]);
+    expect(result.warnings).toEqual([]);
   });
 
   it('rejects malformed JSON', () => {
@@ -78,8 +79,8 @@ describe('merge AI payload and response validation', () => {
       .toThrow(/not valid JSON/i);
   });
 
-  it('rejects unknown ids and duplicate track entries', () => {
-    expect(() => parseAndValidateMergeAiResponse(
+  it('warns about unknown ids and duplicate track entries without failing the full response', () => {
+    const duplicateResult = parseAndValidateMergeAiResponse(
       JSON.stringify({
         matches: [
           { trackId: 'track-1', videoId: 'video-1', confidence: 'high', reason: 'Exact match' },
@@ -88,9 +89,14 @@ describe('merge AI payload and response validation', () => {
       }),
       ['track-1'],
       ['video-1'],
-    )).toThrow(/duplicate/i);
+    );
 
-    expect(() => parseAndValidateMergeAiResponse(
+    expect(duplicateResult.matches).toEqual([
+      { trackId: 'track-1', videoId: 'video-1', confidence: 'high', reason: 'Exact match' },
+    ]);
+    expect(duplicateResult.warnings).toEqual(['Duplicate AI match for track-1 was ignored.']);
+
+    const unknownTrackResult = parseAndValidateMergeAiResponse(
       JSON.stringify({
         matches: [
           { trackId: 'track-2', videoId: 'video-1', confidence: 'high', reason: 'Unknown track' },
@@ -98,9 +104,14 @@ describe('merge AI payload and response validation', () => {
       }),
       ['track-1'],
       ['video-1'],
-    )).toThrow(/unknown trackId/i);
+    );
 
-    expect(() => parseAndValidateMergeAiResponse(
+    expect(unknownTrackResult.matches).toEqual([]);
+    expect(unknownTrackResult.warnings).toEqual([
+      'Match 1 was ignored because it referenced an unknown trackId.',
+    ]);
+
+    const unknownVideoResult = parseAndValidateMergeAiResponse(
       JSON.stringify({
         matches: [
           { trackId: 'track-1', videoId: 'video-2', confidence: 'high', reason: 'Unknown video' },
@@ -108,11 +119,23 @@ describe('merge AI payload and response validation', () => {
       }),
       ['track-1'],
       ['video-1'],
-    )).toThrow(/unknown videoId/i);
+    );
+
+    expect(unknownVideoResult.matches).toEqual([
+      {
+        trackId: 'track-1',
+        videoId: null,
+        confidence: 'low',
+        reason: 'The AI referenced an unknown video, so this track was left unmatched.',
+      },
+    ]);
+    expect(unknownVideoResult.warnings).toEqual([
+      'Match 1 referenced an unknown videoId and was left unmatched.',
+    ]);
   });
 
-  it('rejects invalid confidence values', () => {
-    expect(() => parseAndValidateMergeAiResponse(
+  it('ignores invalid confidence values', () => {
+    const result = parseAndValidateMergeAiResponse(
       JSON.stringify({
         matches: [
           { trackId: 'track-1', videoId: 'video-1', confidence: 'certain', reason: 'Too confident' },
@@ -120,6 +143,61 @@ describe('merge AI payload and response validation', () => {
       }),
       ['track-1'],
       ['video-1'],
-    )).toThrow(/invalid confidence/i);
+    );
+
+    expect(result.matches).toEqual([]);
+    expect(result.warnings).toEqual([
+      'Match 1 was ignored because it contained an invalid confidence value.',
+    ]);
+  });
+
+  it('keeps a later valid duplicate when the first entry references an unknown video', () => {
+    const result = parseAndValidateMergeAiResponse(
+      JSON.stringify({
+        matches: [
+          { trackId: 'track-1', videoId: 'video-2', confidence: 'high', reason: 'Stale video id' },
+          { trackId: 'track-1', videoId: 'video-1', confidence: 'high', reason: 'Valid fallback' },
+        ],
+      }),
+      ['track-1'],
+      ['video-1'],
+    );
+
+    expect(result.matches).toEqual([
+      {
+        trackId: 'track-1',
+        videoId: 'video-1',
+        confidence: 'high',
+        reason: 'Valid fallback',
+      },
+    ]);
+    expect(result.warnings).toEqual([
+      'Match 1 referenced an unknown videoId and was left unmatched.',
+    ]);
+  });
+
+  it('keeps a later valid duplicate when the first entry is invalid', () => {
+    const result = parseAndValidateMergeAiResponse(
+      JSON.stringify({
+        matches: [
+          { trackId: 'track-1', videoId: 'video-1', confidence: 'certain', reason: 'Invalid confidence' },
+          { trackId: 'track-1', videoId: 'video-1', confidence: 'high', reason: 'Valid fallback' },
+        ],
+      }),
+      ['track-1'],
+      ['video-1'],
+    );
+
+    expect(result.matches).toEqual([
+      {
+        trackId: 'track-1',
+        videoId: 'video-1',
+        confidence: 'high',
+        reason: 'Valid fallback',
+      },
+    ]);
+    expect(result.warnings).toEqual([
+      'Match 1 was ignored because it contained an invalid confidence value.',
+    ]);
   });
 });

@@ -1,5 +1,6 @@
 <script lang="ts">
   import {
+    AlertTriangle,
     CheckCircle2,
     FileAudio,
     FileVideo,
@@ -36,6 +37,7 @@
     status: MergeAiStatus;
     error: string | null;
     suggestions: MergeAiSuggestion[];
+    warnings: string[];
     canAnalyze: boolean;
     onProviderChange: (provider: LLMProvider) => void;
     onModelChange: (model: string) => void;
@@ -55,6 +57,7 @@
     status,
     error,
     suggestions,
+    warnings,
     canAnalyze,
     onProviderChange,
     onModelChange,
@@ -77,6 +80,8 @@
   const unmatchedSuggestions = $derived(
     suggestions.filter(suggestion => suggestion.videoId === null)
   );
+  const visibleWarnings = $derived(warnings.slice(0, 3));
+  const remainingWarningCount = $derived(Math.max(0, warnings.length - visibleWarnings.length));
   const videoIds = $derived(videos.map(video => video.id));
   const defaultExpandedVideoIds = $derived(videoIds.slice(0, 3));
   const expandedVideoIds = $derived(
@@ -203,6 +208,23 @@
               <div class="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
                 <p class="font-medium text-destructive">AI match failed</p>
                 <p class="mt-1 text-muted-foreground">{error}</p>
+              </div>
+            {/if}
+
+            {#if status === 'preview' && warnings.length > 0}
+              <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+                <div class="flex items-center gap-2 font-medium text-amber-700">
+                  <AlertTriangle class="size-4" />
+                  <span>Some AI suggestions were ignored</span>
+                </div>
+                <ul class="mt-2 space-y-1 text-muted-foreground">
+                  {#each visibleWarnings as warning}
+                    <li>{warning}</li>
+                  {/each}
+                </ul>
+                {#if remainingWarningCount > 0}
+                  <p class="mt-2 text-muted-foreground">{remainingWarningCount} more warning(s).</p>
+                {/if}
               </div>
             {/if}
           </Card.Content>
