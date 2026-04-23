@@ -210,7 +210,7 @@
                     </div>
                     <button
                       type="button"
-                      class="size-6 flex items-center justify-center hover:bg-destructive/20 text-muted-foreground hover:text-destructive shrink-0"
+                      class="size-6 flex items-center justify-center rounded-full hover:bg-destructive/20 text-muted-foreground hover:text-destructive shrink-0"
                       onclick={(event) => handleRemoveModel(event, savedModel)}
                       title="Remove model"
                     >

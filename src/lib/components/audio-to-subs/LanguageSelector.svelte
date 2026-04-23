@@ -46,22 +46,24 @@
         </span>
       </div>
     </Select.Trigger>
-    <Select.Content class="max-h-[max(30vh,300px)]">
-      {#each DEEPGRAM_LANGUAGES as lang (lang.code)}
-        <Select.Item value={lang.code} label={lang.name}>
-          <div class="flex items-center gap-2">
-            {#if lang.code === 'multi'}
-              <Globe class="size-4 text-primary" />
-            {:else if lang.flag}
-              <span>{lang.flag}</span>
-            {/if}
-            <span>{lang.name}</span>
-            {#if lang.code !== 'multi'}
-              <span class="text-xs text-muted-foreground ml-auto uppercase">{lang.code}</span>
-            {/if}
-          </div>
-        </Select.Item>
-      {/each}
+    <Select.Content>
+        <Select.Group>
+            {#each DEEPGRAM_LANGUAGES as lang (lang.code)}
+                <Select.Item value={lang.code} label={lang.name}>
+                <div class="flex items-center gap-2">
+                    {#if lang.code === 'multi'}
+                    <Globe class="size-4 text-primary" />
+                    {:else if lang.flag}
+                    <span>{lang.flag}</span>
+                    {/if}
+                    <span>{lang.name}</span>
+                    {#if lang.code !== 'multi'}
+                    <span class="text-xs text-muted-foreground ml-auto uppercase">{lang.code}</span>
+                    {/if}
+                </div>
+                </Select.Item>
+            {/each}
+        </Select.Group>
     </Select.Content>
   </Select.Root>
 
