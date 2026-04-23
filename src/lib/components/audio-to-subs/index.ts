@@ -1,5 +1,8 @@
 export { default as AudioFileList } from './AudioFileList.svelte';
 export { default as AudioDetails } from './AudioDetails.svelte';
+export { default as AudioToSubsDialogs } from './AudioToSubsDialogs.svelte';
+export { default as AudioToSubsSidebar } from './AudioToSubsSidebar.svelte';
+export { default as AudioToSubsWorkspace } from './AudioToSubsWorkspace.svelte';
 export { default as Waveform } from './Waveform.svelte';
 export { default as ModelSelector } from './ModelSelector.svelte';
 export { default as LanguageSelector } from './LanguageSelector.svelte';

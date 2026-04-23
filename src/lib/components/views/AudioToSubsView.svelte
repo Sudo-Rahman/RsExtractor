@@ -1,5 +1,4 @@
 <script lang="ts" module>
-  import { AudioLines, Trash2, X } from '@lucide/svelte';
   export interface AudioToSubsViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -7,40 +6,35 @@
 
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { open } from '@tauri-apps/plugin-dialog';
-  import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { invoke } from '@tauri-apps/api/core';
   import { tempDir } from '@tauri-apps/api/path';
+  import { open } from '@tauri-apps/plugin-dialog';
   import { mkdir, exists, remove } from '@tauri-apps/plugin-fs';
   import { toast } from 'svelte-sonner';
 
-  import type { AudioFile, DeepgramConfig, TranscriptionVersion, AudioTrackInfo, BatchTrackStrategy } from '$lib/types';
+  import type { AudioFile, AudioTrackInfo, BatchTrackStrategy, DeepgramConfig, TranscriptionVersion } from '$lib/types';
   import type { ImportSourceId } from '$lib/types/tool-import';
   import { AUDIO_EXTENSIONS } from '$lib/types';
-  import { audioToSubsStore, settingsStore, toolImportStore } from '$lib/stores';
   import { transcribeWithDeepgram } from '$lib/services/deepgram';
+  import { scanFile } from '$lib/services/ffprobe';
   import { transcriptionVersionToSubtitleFile } from '$lib/services/subtitle-interop';
-  import { 
-    saveTranscriptionData, 
-    loadTranscriptionData 
-  } from '$lib/services/transcription-storage';
+  import { loadTranscriptionData, saveTranscriptionData } from '$lib/services/transcription-storage';
+  import { audioToSubsStore, settingsStore, toolImportStore } from '$lib/stores';
   import { resolveDeepgramTrackLanguage } from '$lib/utils/audio-language';
   import { logAndToast } from '$lib/utils/log-toast';
-  import { scanFile } from '$lib/services/ffprobe';
-
-  import { Button } from '$lib/components/ui/button';
-  import * as AlertDialog from '$lib/components/ui/alert-dialog';
-  import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
-  import { ToolImportButton } from '$lib/components/shared';
-  import { 
-    AudioFileList, 
-    AudioDetails,
-    TranscriptionPanel,
-    TranscriptionResultDialog,
-    RetranscribeDialog,
-    AudioTrackSelectDialog,
-    BatchTrackSelectDialog
+  import {
+    AudioToSubsDialogs,
+    AudioToSubsSidebar,
+    AudioToSubsWorkspace,
   } from '$lib/components/audio-to-subs';
+  import {
+    buildProbedFileUpdate,
+    collectResolvedTrackLanguages,
+    extractAudioTracks,
+    resolveTrackIndex,
+    type ProbedAudioFile,
+  } from '$lib/components/audio-to-subs/audio-track-utils';
 
   interface AudioToSubsViewProps {
     onNavigateToSettings?: () => void;
@@ -55,7 +49,6 @@
 
   let persistedTranscriptionVersionKeys = $state<Set<string>>(new Set());
 
-  // State for result dialog
   let resultDialogOpen = $state(false);
   let resultDialogFileId = $state<string | null>(null);
   const resultDialogFile = $derived(
@@ -281,33 +274,6 @@
     batchTrackDialogOpen = false;
   }
 
-  // Apply batch strategy to resolve track index for a file
-  function resolveTrackIndex(
-    strategy: BatchTrackStrategy,
-    tracks: AudioTrackInfo[]
-  ): number {
-    switch (strategy.type) {
-      case 'default': {
-        const defaultTrack = tracks.find(t => t.isDefault);
-        return defaultTrack?.index ?? 0;
-      }
-      case 'language': {
-        const langTrack = tracks.find((track) =>
-          resolveDeepgramTrackLanguage(track.language) === strategy.language.toLowerCase()
-        );
-        return langTrack?.index ?? 0;
-      }
-      case 'first':
-        return 0;
-      case 'index':
-        return Math.min(strategy.index, tracks.length - 1);
-      case 'individual':
-      default:
-        // This should not be called for 'individual' strategy
-        return 0;
-    }
-  }
-
   // Initialize on mount
   onMount(async () => {
     await settingsStore.load();
@@ -365,15 +331,7 @@
   async function addFiles(paths: string[]) {
     const newFiles = audioToSubsStore.addFilesFromPaths(paths);
     
-    // Type for tracking file probe results
-    interface ProbedFile {
-      file: AudioFile;
-      probeResult: Awaited<ReturnType<typeof scanFile>>;
-      audioTracks: AudioTrackInfo[];
-      needsTranscoding: boolean;
-    }
-    
-    const probedFiles: ProbedFile[] = [];
+    const probedFiles: ProbedAudioFile[] = [];
     
     // Phase 1: Probe all files and collect metadata
     for (const file of newFiles) {
@@ -381,37 +339,9 @@
       
       try {
         const probeResult = await scanFile(file.path);
-        const audioTracks: AudioTrackInfo[] = probeResult.tracks
-          .filter((t: { type: string }) => t.type === 'audio')
-          .map((t, idx) => ({
-            index: idx,
-            codec: t.codec || 'unknown',
-            channels: t.channels ?? 2,
-            sampleRate: t.sampleRate ?? 48000,
-            bitrate: t.bitrate,
-            language: t.language,
-            title: t.title,
-            isDefault: t.default
-          }));
-        
-        const firstTrack = audioTracks[0];
-        
-        // Initial update with first track info
-        audioToSubsStore.updateFile(file.id, { 
-          duration: probeResult.duration,
-          format: firstTrack?.codec,
-          channels: firstTrack?.channels,
-          sampleRate: firstTrack?.sampleRate,
-          bitrate: firstTrack?.bitrate || probeResult.bitrate,
-          size: firstTrack?.bitrate && probeResult.duration 
-            ? Math.round((firstTrack.bitrate * probeResult.duration) / 8)
-            : probeResult.size || file.size,
-          status: 'ready',
-          selectedTrackIndex: 0,
-          audioTrackLanguage: firstTrack?.language,
-          audioTrackTitle: firstTrack?.title,
-          audioTrackCount: audioTracks.length
-        });
+        const audioTracks = extractAudioTracks(probeResult);
+
+        audioToSubsStore.updateFile(file.id, buildProbedFileUpdate(file, probeResult, audioTracks));
 
         // Load existing transcriptions if any
         const existingData = await loadTranscriptionData(file.path);
@@ -451,22 +381,14 @@
     const singleTrackFiles = probedFiles.filter(p => p.needsTranscoding && p.audioTracks.length <= 1);
     
     // Collect all unique languages from multi-track files
-    const allLanguages = new Set<string>();
-    for (const pf of multiTrackFiles) {
-      for (const track of pf.audioTracks) {
-        const resolvedLanguage = resolveDeepgramTrackLanguage(track.language);
-        if (resolvedLanguage) {
-          allLanguages.add(resolvedLanguage);
-        }
-      }
-    }
+    const allLanguages = collectResolvedTrackLanguages(multiTrackFiles);
     
     // Phase 3: Handle track selection
     let batchStrategy: BatchTrackStrategy | null = null;
     
     if (multiTrackFiles.length >= 2) {
       // Show batch dialog for 2+ multi-track files
-      batchStrategy = await promptForBatchStrategy(multiTrackFiles.length, Array.from(allLanguages));
+      batchStrategy = await promptForBatchStrategy(multiTrackFiles.length, allLanguages);
       if (batchStrategy === null) {
         // User cancelled - fallback to first track strategy
         batchStrategy = { type: 'first' };
@@ -489,21 +411,10 @@
           const result = await promptForTrackSelection(pf.file.name, pf.audioTracks);
           // Fallback to first track if cancelled
           const selectedIndex = result ?? 0;
-          const selectedTrack = pf.audioTracks[selectedIndex];
-          if (selectedTrack) {
-            audioToSubsStore.updateFile(pf.file.id, {
-              format: selectedTrack.codec,
-              channels: selectedTrack.channels,
-              sampleRate: selectedTrack.sampleRate,
-              bitrate: selectedTrack.bitrate || pf.probeResult.bitrate,
-              size: selectedTrack.bitrate && pf.probeResult.duration
-                ? Math.round((selectedTrack.bitrate * pf.probeResult.duration) / 8)
-                : pf.probeResult.size || pf.file.size,
-              selectedTrackIndex: selectedIndex,
-              audioTrackLanguage: selectedTrack.language,
-              audioTrackTitle: selectedTrack.title
-            });
-          }
+          audioToSubsStore.updateFile(
+            pf.file.id,
+            buildProbedFileUpdate(pf.file, pf.probeResult, pf.audioTracks, selectedIndex),
+          );
           const updatedFile = audioToSubsStore.audioFiles.find(f => f.id === pf.file.id);
           if (updatedFile) {
             filesToTranscode.push({ file: updatedFile, trackIndex: selectedIndex });
@@ -513,22 +424,10 @@
         // Apply batch strategy to all multi-track files
         for (const pf of multiTrackFiles) {
           const trackIndex = resolveTrackIndex(batchStrategy, pf.audioTracks);
-          const selectedTrack = pf.audioTracks[trackIndex];
-          
-          if (selectedTrack) {
-            audioToSubsStore.updateFile(pf.file.id, {
-              format: selectedTrack.codec,
-              channels: selectedTrack.channels,
-              sampleRate: selectedTrack.sampleRate,
-              bitrate: selectedTrack.bitrate || pf.probeResult.bitrate,
-              size: selectedTrack.bitrate && pf.probeResult.duration
-                ? Math.round((selectedTrack.bitrate * pf.probeResult.duration) / 8)
-                : pf.probeResult.size || pf.file.size,
-              selectedTrackIndex: trackIndex,
-              audioTrackLanguage: selectedTrack.language,
-              audioTrackTitle: selectedTrack.title
-            });
-          }
+          audioToSubsStore.updateFile(
+            pf.file.id,
+            buildProbedFileUpdate(pf.file, pf.probeResult, pf.audioTracks, trackIndex),
+          );
           const updatedFile = audioToSubsStore.audioFiles.find(f => f.id === pf.file.id);
           if (updatedFile) {
             filesToTranscode.push({ file: updatedFile, trackIndex });
@@ -541,21 +440,10 @@
       const result = await promptForTrackSelection(pf.file.name, pf.audioTracks);
       // Fallback to first track if cancelled
       const selectedIndex = result ?? 0;
-      const selectedTrack = pf.audioTracks[selectedIndex];
-      if (selectedTrack) {
-        audioToSubsStore.updateFile(pf.file.id, {
-          format: selectedTrack.codec,
-          channels: selectedTrack.channels,
-          sampleRate: selectedTrack.sampleRate,
-          bitrate: selectedTrack.bitrate || pf.probeResult.bitrate,
-          size: selectedTrack.bitrate && pf.probeResult.duration
-            ? Math.round((selectedTrack.bitrate * pf.probeResult.duration) / 8)
-            : pf.probeResult.size || pf.file.size,
-          selectedTrackIndex: selectedIndex,
-          audioTrackLanguage: selectedTrack.language,
-          audioTrackTitle: selectedTrack.title
-        });
-      }
+      audioToSubsStore.updateFile(
+        pf.file.id,
+        buildProbedFileUpdate(pf.file, pf.probeResult, pf.audioTracks, selectedIndex),
+      );
       const updatedFile = audioToSubsStore.audioFiles.find(f => f.id === pf.file.id);
       if (updatedFile) {
         filesToTranscode.push({ file: updatedFile, trackIndex: selectedIndex });
@@ -1024,43 +912,58 @@
     }
   }
 
-  async function handleCancelFile(id: string) {
-    const file = getAudioFile(id);
-    if (!file) return;
-
-    if (file.status === 'transcoding') {
-      await cancelTranscodeAndCleanup(file);
-      audioToSubsStore.failTranscoding(id, 'Cancelled');
-    } else if (file.status === 'transcribing') {
-      // Abort the fetch request for this file
-      const controller = abortControllers.get(id);
-      if (controller) {
-        controller.abort();
-        abortControllers.delete(id);
-      }
-      audioToSubsStore.cancelFile(id);
+  function abortTranscriptionFile(fileId: string): void {
+    const controller = abortControllers.get(fileId);
+    if (!controller) {
+      return;
     }
-    
-    toast.info('Cancelled');
+
+    controller.abort();
+    abortControllers.delete(fileId);
   }
 
-  async function handleCancelAll() {
-    // Cancel all ongoing transcodes
+  async function cancelActiveFileProcessing(file: AudioFile): Promise<void> {
+    if (file.status === 'transcoding') {
+      await cancelTranscodeAndCleanup(file);
+      audioToSubsStore.failTranscoding(file.id, 'Cancelled');
+      return;
+    }
+
+    if (file.status === 'transcribing') {
+      abortTranscriptionFile(file.id);
+      audioToSubsStore.cancelFile(file.id);
+    }
+  }
+
+  async function cancelAllProcessing(): Promise<void> {
+    const hasActiveTranscriptions = audioToSubsStore.isTranscribing || abortControllers.size > 0;
+
     try {
       await invoke('cancel_audio_transcode');
     } catch (error) {
       console.error('Failed to cancel transcodes:', error);
     }
-    
-    // Abort all pending fetch requests
-    for (const [, controller] of abortControllers) {
-      controller.abort();
+
+    for (const fileId of Array.from(abortControllers.keys())) {
+      abortTranscriptionFile(fileId);
     }
-    abortControllers.clear();
 
     audioToSubsStore.clearTranscodingScope();
-    
-    audioToSubsStore.cancelAll();
+    if (hasActiveTranscriptions) {
+      audioToSubsStore.cancelAll();
+    }
+  }
+
+  async function handleCancelFile(id: string) {
+    const file = getAudioFile(id);
+    if (!file) return;
+
+    await cancelActiveFileProcessing(file);
+    toast.info('Cancelled');
+  }
+
+  async function handleCancelAll() {
+    await cancelAllProcessing();
     toast.info('Cancelling all...');
   }
 
@@ -1103,7 +1006,7 @@
     if (target.mode === 'single') {
       const file = getAudioFile(target.fileId);
       if (file) {
-        await cancelTranscodeAndCleanup(file);
+        await cancelActiveFileProcessing(file);
         clearPersistedTranscriptionVersionsForPath(file.path);
         audioToSubsStore.removeFile(file.id);
       }
@@ -1111,12 +1014,10 @@
       return;
     }
 
-    try {
-      await invoke('cancel_audio_transcode');
-    } catch (error) {
-      console.error('Failed to cancel transcodes before clearing list:', error);
+    await cancelAllProcessing();
+    for (const file of audioToSubsStore.audioFiles) {
+      clearPersistedTranscriptionVersionsForPath(file.path);
     }
-
     persistedTranscriptionVersionKeys = new Set();
     audioToSubsStore.clear();
     removeTarget = null;
@@ -1136,18 +1037,7 @@
     // Re-probe the file to get audio tracks
     try {
       const probeResult = await scanFile(file.path);
-      const audioTracks: AudioTrackInfo[] = probeResult.tracks
-        .filter((t: { type: string }) => t.type === 'audio')
-        .map((t, idx) => ({
-          index: idx,
-          codec: t.codec || 'unknown',
-          channels: t.channels ?? 2,
-          sampleRate: t.sampleRate ?? 48000,
-          bitrate: t.bitrate,
-          language: t.language,
-          title: t.title,
-          isDefault: t.default
-        }));
+      const audioTracks = extractAudioTracks(probeResult);
 
       if (audioTracks.length <= 1) {
         toast.info('This file only has one audio track');
@@ -1161,26 +1051,14 @@
         return;
       }
 
-      const selectedTrack = audioTracks[result];
-      if (!selectedTrack) return;
-
       // Note: We don't delete the old OPUS file - it stays in cache for potential reuse
       // The new track will either use its own cached OPUS or be transcoded fresh
 
       // Update file metadata with new track info
       audioToSubsStore.updateFile(file.id, {
-        format: selectedTrack.codec,
-        channels: selectedTrack.channels,
-        sampleRate: selectedTrack.sampleRate,
-        bitrate: selectedTrack.bitrate || file.bitrate,
-        size: selectedTrack.bitrate && file.duration
-          ? Math.round((selectedTrack.bitrate * file.duration) / 8)
-          : file.size,
-        selectedTrackIndex: result,
-        audioTrackLanguage: selectedTrack.language,
-        audioTrackTitle: selectedTrack.title,
+        ...buildProbedFileUpdate(file, probeResult, audioTracks, result),
         opusPath: undefined,  // Clear the OPUS path
-        status: 'ready'
+        status: 'ready',
       });
 
       // Get fresh file data and start transcoding
@@ -1249,180 +1127,80 @@
   });
 
   const apiKeyConfigured = $derived(settingsStore.hasDeepgramApiKey());
+  const audioFiles = $derived(audioToSubsStore.audioFiles);
+  const selectedFile = $derived(audioToSubsStore.selectedFile);
+  const totalFilesCount = $derived(audioFiles.length);
+  const readyFilesCount = $derived(audioFiles.filter((file) => file.status === 'ready').length);
+  const completedFilesCount = $derived(audioToSubsStore.completedFiles.length);
   const transcodingCount = $derived(audioToSubsStore.transcodingFiles.length);
   const invalidAutoLanguageFiles = $derived.by(() =>
-    collectFilesMissingLanguage(
-      audioToSubsStore.audioFiles.filter((file) => file.status === 'ready' || file.status === 'completed'),
-      audioToSubsStore.deepgramConfig,
-    ).map((result) => result.file.name)
+    collectFilesMissingLanguage(audioToSubsStore.readyFiles, audioToSubsStore.deepgramConfig).map(
+      (result) => result.file.name,
+    )
   );
 </script>
 
 <div class="h-full flex overflow-hidden">
-  <!-- Left Panel: File List -->
-  <div class="w-[max(20rem,25vw)] max-w-lg border-r flex flex-col overflow-hidden">
-    <!-- Header -->
-    <div class="p-3 border-b shrink-0 flex items-center justify-between">
-      <h2 class="font-semibold">Audio Files ({audioToSubsStore.audioFiles.length})</h2>
-      <div class="flex items-center gap-1">
-        {#if audioToSubsStore.isTranscribing}
-          <Button
-            variant="destructive"
-            size="sm"
-            onclick={handleCancelAll}
-            title="Cancel all transcriptions"
-          >
-            <X class="size-4 mr-1" />
-            Cancel
-          </Button>
-        {:else}
-          {#if audioToSubsStore.audioFiles.length > 0}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onclick={handleRequestRemoveAll}
-              class="text-muted-foreground hover:text-destructive"
-            >
-              <Trash2 class="size-4" />
-              <span class="sr-only">Clear list</span>
-            </Button>
-          {/if}
-          <ToolImportButton
-            targetTool="audio-to-subs"
-            onBrowse={handleAddFiles}
-            onSelectSource={handleImportFromSource}
-            disabled={audioToSubsStore.isTranscribing}
-          />
-        {/if}
-      </div>
-    </div>
+  <AudioToSubsSidebar
+    files={audioFiles}
+    selectedId={audioToSubsStore.selectedFileId}
+    isTranscribing={audioToSubsStore.isTranscribing}
+    audioFormats={AUDIO_FORMATS}
+    onBrowse={handleAddFiles}
+    onImportFromSource={handleImportFromSource}
+    onCancelAll={handleCancelAll}
+    onClearAll={handleRequestRemoveAll}
+    onSelectFile={(id) => audioToSubsStore.selectFile(id)}
+    onRemoveFile={handleRequestRemoveFile}
+    onCancelFile={handleCancelFile}
+    onViewResult={handleViewResult}
+    onRetry={handleRetranscribeRequest}
+  />
 
-    <!-- Content -->
-    <div class="flex-1 min-h-0 overflow-auto p-2">
-      {#if audioToSubsStore.audioFiles.length === 0}
-        <ImportDropZone
-          icon={AudioLines}
-          title="Drop audio files here"
-          formats={AUDIO_FORMATS}
-          onBrowse={handleAddFiles}
-          disabled={audioToSubsStore.isTranscribing}
-        />
-      {:else}
-        <AudioFileList
-          files={audioToSubsStore.audioFiles}
-          selectedId={audioToSubsStore.selectedFileId}
-          onSelect={(id) => audioToSubsStore.selectFile(id)}
-          onRemove={handleRequestRemoveFile}
-          onCancel={handleCancelFile}
-          onViewResult={handleViewResult}
-          onRetry={handleRetranscribeRequest}
-          disabled={audioToSubsStore.isTranscribing}
-        />
-      {/if}
-    </div>
-
-  </div>
-
-  <!-- Center Panel: File Details -->
-  <div class="flex-1 flex flex-col overflow-hidden">
-    <AudioDetails 
-      file={audioToSubsStore.selectedFile}
-      showWaveform={true}
-      onChangeTrack={handleChangeTrack}
-    />
-  </div>
-
-  <!-- Right Panel: Transcription Config -->
-  <div class="w-80 border-l overflow-hidden flex flex-col">
-    <div class="flex-1 overflow-auto">
-      <TranscriptionPanel
-        config={audioToSubsStore.config}
-        {apiKeyConfigured}
-        isTranscribing={audioToSubsStore.isTranscribing}
-        isTranscoding={audioToSubsStore.isTranscoding}
-        readyFilesCount={audioToSubsStore.readyFiles.filter(f => f.status === 'ready').length}
-        completedFilesCount={audioToSubsStore.completedFiles.length}
-        totalFilesCount={audioToSubsStore.audioFiles.length}
-        {transcodingCount}
-        invalidAutoLanguageFiles={invalidAutoLanguageFiles}
-        onDeepgramConfigChange={(updates) => audioToSubsStore.updateDeepgramConfig(updates)}
-        onMaxConcurrentChange={(value) => audioToSubsStore.setMaxConcurrentTranscriptions(value)}
-        onTranscribeAll={handleTranscribeAll}
-        {onNavigateToSettings}
-      />
-    </div>
-  </div>
+  <AudioToSubsWorkspace
+    file={selectedFile}
+    config={audioToSubsStore.config}
+    {apiKeyConfigured}
+    isTranscribing={audioToSubsStore.isTranscribing}
+    isTranscoding={audioToSubsStore.isTranscoding}
+    {readyFilesCount}
+    {completedFilesCount}
+    {totalFilesCount}
+    {transcodingCount}
+    {invalidAutoLanguageFiles}
+    onChangeTrack={handleChangeTrack}
+    onDeepgramConfigChange={(updates) => audioToSubsStore.updateDeepgramConfig(updates)}
+    onMaxConcurrentChange={(value) => audioToSubsStore.setMaxConcurrentTranscriptions(value)}
+    onTranscribeAll={handleTranscribeAll}
+    {onNavigateToSettings}
+  />
 </div>
 
-<!-- Result Dialog -->
-<TranscriptionResultDialog
-  bind:open={resultDialogOpen}
-  onOpenChange={(v) => { resultDialogOpen = v; }}
-  file={resultDialogFile}
+<AudioToSubsDialogs
+  bind:resultDialogOpen
+  resultDialogFile={resultDialogFile}
+  bind:retranscribeDialogOpen
+  retranscribeDialogFile={retranscribeDialogFile}
+  deepgramConfig={audioToSubsStore.deepgramConfig}
+  bind:trackSelectDialogOpen
+  {trackSelectTracks}
+  trackSelectFileName={trackSelectFileName}
+  bind:batchTrackDialogOpen
+  batchTrackFileCount={batchTrackFileCount}
+  batchTrackLanguages={batchTrackLanguages}
+  bind:removeDialogOpen
+  {removeTarget}
   onDeleteVersion={handleDeleteVersion}
-/>
-
-<!-- Retranscribe Dialog -->
-<RetranscribeDialog
-  bind:open={retranscribeDialogOpen}
-  onOpenChange={(v) => { retranscribeDialogOpen = v; }}
-  file={retranscribeDialogFile}
-  baseConfig={audioToSubsStore.deepgramConfig}
-  onConfirm={handleRetranscribe}
-/>
-
-<!-- Audio Track Selection Dialog -->
-<AudioTrackSelectDialog
-  bind:open={trackSelectDialogOpen}
-  onOpenChange={(open) => {
-    if (!open) handleTrackSelectCancel();
+  onRetranscribeConfirm={handleRetranscribe}
+  onTrackSelect={handleTrackSelect}
+  onTrackSelectCancel={handleTrackSelectCancel}
+  onBatchStrategySelect={handleBatchStrategySelect}
+  onBatchStrategyCancel={handleBatchStrategyCancel}
+  onConfirmRemove={handleConfirmRemove}
+  onRemoveDialogOpenChange={(open) => {
+    removeDialogOpen = open;
+    if (!open) {
+      removeTarget = null;
+    }
   }}
-  tracks={trackSelectTracks}
-  fileName={trackSelectFileName}
-  onSelect={handleTrackSelect}
 />
-
-<!-- Batch Track Selection Dialog -->
-<BatchTrackSelectDialog
-  bind:open={batchTrackDialogOpen}
-  onOpenChange={(open) => {
-    if (!open) handleBatchStrategyCancel();
-  }}
-  fileCount={batchTrackFileCount}
-  availableLanguages={batchTrackLanguages}
-  onSelect={handleBatchStrategySelect}
-  onCancel={handleBatchStrategyCancel}
-/>
-
-<AlertDialog.Root bind:open={removeDialogOpen}>
-  <AlertDialog.Content>
-    <AlertDialog.Header>
-      <AlertDialog.Title>
-        {removeTarget?.mode === 'all' ? 'Remove all files while processing?' : 'Remove file while processing?'}
-      </AlertDialog.Title>
-      <AlertDialog.Description>
-        {#if removeTarget?.mode === 'all'}
-          One or more files are currently being processed. Removing all files will cancel active operations.
-        {:else}
-          This file is currently being processed. Removing it will cancel the active operation.
-        {/if}
-      </AlertDialog.Description>
-    </AlertDialog.Header>
-    <AlertDialog.Footer>
-      <AlertDialog.Cancel
-        onclick={() => {
-          removeDialogOpen = false;
-          removeTarget = null;
-        }}
-      >
-        Cancel
-      </AlertDialog.Cancel>
-      <AlertDialog.Action
-        onclick={handleConfirmRemove}
-        class="bg-destructive text-white hover:bg-destructive/90"
-      >
-        Remove
-      </AlertDialog.Action>
-    </AlertDialog.Footer>
-  </AlertDialog.Content>
-</AlertDialog.Root>

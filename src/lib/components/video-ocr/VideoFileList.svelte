@@ -157,7 +157,7 @@
               </Button>
             {/if}
 
-            {#if ['extracting_frames', 'ocr_processing', 'generating_subs'].includes(file.status) && onCancel}
+            {#if ['transcoding', 'extracting_frames', 'ocr_processing', 'generating_subs'].includes(file.status) && onCancel}
               <Button
                 variant="ghost"
                 size="icon"

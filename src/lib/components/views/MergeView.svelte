@@ -1,6 +1,4 @@
 <script lang="ts" module>
-  import { ChevronDown, FileVideo, FileAudio, Sparkles, Subtitles, Video, Volume2, Trash2, Plus, Wand2, Link, Unlink, Settings2, GripVertical, Clock, Layers } from '@lucide/svelte';
-
   export interface MergeViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -8,60 +6,24 @@
 
 <script lang="ts">
   import { onDestroy, onMount, untrack } from 'svelte';
-  import { ArrowLeft, Home, LayoutGrid, Table } from '@lucide/svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
   import { toast } from 'svelte-sonner';
-  import { flip } from 'svelte/animate';
 
-  import { createRenameWorkspaceStore, mergeStore, settingsStore, toolImportStore } from '$lib/stores';
-  import { fetchFileMetadata } from '$lib/services/file-metadata';
-  import { analyzeMergeAiMatches } from '$lib/services/merge-ai';
-  import {
-    getBaseName,
-    getDirectoryFromPath,
-    getExtension,
-    type ResolveRenameTargetPathContext,
-  } from '$lib/services/rename';
-  import { scanFiles } from '$lib/services/ffprobe';
-  import { pickOutputDirectory } from '$lib/services/output-folder';
-  import { dndzone } from '$lib/utils/dnd';
-  import { logAndToast } from '$lib/utils/log-toast';
-  import { resolveOutputFolderDisplay } from '$lib/utils';
   import { useToolHeader } from '$lib/components/layout/tool-header-context.svelte';
-
-  import {
-    getCodecFromExtension,
-    type ImportedTrack,
-    type MergeTrack,
-    type MergeTrackConfig,
-    type MergeProgressEvent,
-    type MergeVideoFile,
-    type RenameFile,
-  } from '$lib/types';
+  import { MergeAiMatchView, MergeHomeView, MergeOutputNamingView, MergeTrackGroups, MergeTrackSettings, MergeTrackTable, MergeViewModeActions } from '$lib/components/merge';
+  import { ProcessingRemoveDialog } from '$lib/components/shared';
+  import { fetchFileMetadata } from '$lib/services/file-metadata';
+  import { scanFiles } from '$lib/services/ffprobe';
+  import { analyzeMergeAiMatches } from '$lib/services/merge-ai';
+  import { pickOutputDirectory } from '$lib/services/output-folder';
+  import { getBaseName, getDirectoryFromPath, getExtension, type ResolveRenameTargetPathContext } from '$lib/services/rename';
+  import { createRenameWorkspaceStore, mergeStore, settingsStore, toolImportStore } from '$lib/stores';
+  import { resolveOutputFolderDisplay } from '$lib/utils';
+  import { logAndToast } from '$lib/utils/log-toast';
+  import { getCodecFromExtension, type ImportedTrack, type MergeTrackConfig, type MergeProgressEvent, type MergeVideoFile, type RenameFile } from '$lib/types';
   import type { ImportItem, ImportSourceId, ImportableKind } from '$lib/types/tool-import';
-
-  import { Button } from '$lib/components/ui/button';
-  import * as ButtonGroup from '$lib/components/ui/button-group';
-  import { Badge } from '$lib/components/ui/badge';
-  import { Checkbox } from '$lib/components/ui/checkbox';
-  import * as Card from '$lib/components/ui/card';
-  import * as Tooltip from '$lib/components/ui/tooltip';
-  import * as Tabs from '$lib/components/ui/tabs';
-  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-  import { ScrollArea } from '$lib/components/ui/scroll-area';
-  import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
-  import { OutputFolderField, ProcessingRemoveDialog, ToolImportButton } from '$lib/components/shared';
-  import {
-    MergeAiMatchView,
-    MergeTrackSettings,
-    MergeOutputPanel,
-    MergeTrackGroups,
-    MergeTrackTable,
-    MergeFileList,
-  } from '$lib/components/merge';
-  import { RenameWorkspace } from '$lib/components/rename';
 
   interface Props {
     onNavigateToSettings?: () => void;
@@ -69,15 +31,141 @@
 
   let { onNavigateToSettings }: Props = $props();
 
-  // Constants
   const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
   const SUBTITLE_EXTENSIONS = ['.ass', '.ssa', '.srt', '.sub', '.idx', '.vtt', '.sup'];
   const AUDIO_EXTENSIONS = ['.aac', '.ac3', '.dts', '.flac', '.mp3', '.ogg', '.wav', '.eac3', '.opus'];
   const ALL_EXTENSIONS = [...VIDEO_EXTENSIONS, ...SUBTITLE_EXTENSIONS, ...AUDIO_EXTENSIONS];
-  const FLIP_DURATION_MS = 200;
-  const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((ext) => ext.slice(1).toUpperCase());
+  const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((extension) => extension.slice(1).toUpperCase());
+
   type ForcedImportType = 'video' | 'subtitle' | 'audio';
+
   const toolHeader = useToolHeader();
+  const outputNamingWorkspace = createRenameWorkspaceStore({
+    mode: 'rename',
+    includeOutputDirInTargetPath: true,
+    targetPathOptions: {
+      extension: '.mkv',
+      resolveTargetPath: resolveMergeOutputTargetPath,
+    },
+  });
+
+  let settingsOpen = $state(false);
+  let editingTrackId = $state<string | null>(null);
+  let editingTrackType = $state<'imported' | 'source'>('imported');
+  let mergeInternalView = $state<'main' | 'output-naming' | 'ai-match'>('main');
+  let viewMode = $state<'home' | 'groups' | 'table'>('home');
+
+  let currentMergingId = $state<string | null>(null);
+  let isCancelling = $state(false);
+  let cancelAllRequested = $state(false);
+  let cancelCurrentFileId = $state<string | null>(null);
+  let removeDialogOpen = $state(false);
+  let removeInProgress = $state(false);
+  let removeTarget = $state.raw<{ mode: 'single'; fileId: string } | { mode: 'all' } | null>(null);
+  let removeAfterCancelIds = new Set<string>();
+  let clearAllAfterCancel = false;
+  let unlistenMergeProgress: UnlistenFn | null = null;
+  let activeAiPreviewContextKey = $state<string | null>(null);
+  let mergedOutputItems = $state<Array<{
+    key: string;
+    path: string;
+    name: string;
+    kind: 'generic_file';
+    createdAt: number;
+  }>>([]);
+
+  const autoMatchMode = $derived.by(() => mergeStore.autoMatchMode);
+  const editingImportedTrack = $derived.by(() => {
+    if (!editingTrackId || editingTrackType !== 'imported') {
+      return null;
+    }
+
+    return mergeStore.importedTracks.find((track) => track.id === editingTrackId) ?? null;
+  });
+  const editingSourceTrack = $derived.by(() => {
+    if (!editingTrackId || editingTrackType !== 'source') {
+      return null;
+    }
+
+    for (const video of mergeStore.videoFiles) {
+      const track = video.tracks.find((candidate) => candidate.id === editingTrackId);
+      if (track) {
+        return track;
+      }
+    }
+
+    return null;
+  });
+  const editingTrackPreview = $derived.by(() => {
+    const importedTrack = editingImportedTrack;
+    if (!importedTrack) {
+      return editingSourceTrack;
+    }
+
+    return createImportedTrackSettingsPreview(importedTrack);
+  });
+  const editingTrackConfig = $derived.by(() => {
+    if (editingTrackType === 'imported') {
+      return editingImportedTrack?.config ?? null;
+    }
+
+    const sourceTrack = editingSourceTrack;
+    return sourceTrack ? mergeStore.getSourceTrackConfig(sourceTrack.id) ?? null : null;
+  });
+  const editingTrackTitle = $derived.by(() =>
+    editingTrackType === 'imported' ? editingImportedTrack?.name ?? null : null,
+  );
+  const isProcessing = $derived.by(() => mergeStore.status === 'processing');
+  const currentMergingFileName = $derived.by(() => {
+    if (!currentMergingId) {
+      return '';
+    }
+
+    return mergeStore.videoFiles.find((video) => video.id === currentMergingId)?.name ?? '';
+  });
+  const selectedOutputVideoIds = $derived.by(() =>
+    new Set(outputNamingWorkspace.selectedFiles.map((file) => file.id)),
+  );
+  const selectedVideosToMerge = $derived.by(() =>
+    mergeStore.videosReadyForMerge.filter((video) => selectedOutputVideoIds.has(video.id)),
+  );
+  const selectedVideosToMergeCount = $derived.by(() => selectedVideosToMerge.length);
+  const selectedMergeSourcePaths = $derived.by(() => selectedVideosToMerge.map((video) => video.path));
+  const selectedTracksToMergeCount = $derived.by(() =>
+    selectedVideosToMerge.reduce((sum, video) => sum + video.attachedTracks.length, 0),
+  );
+  const outputNamingFolderDisplay = $derived.by(() =>
+    resolveOutputFolderDisplay({
+      explicitPath: outputNamingWorkspace.outputDir,
+      sourcePaths: selectedMergeSourcePaths,
+      allowSourceFallback: true,
+      fallbackLabel: 'Use each source folder',
+    }),
+  );
+  const readyVideos = $derived.by(() => mergeStore.videoFiles.filter((video) => video.status === 'ready'));
+  const aiCandidateTracks = $derived.by(() => mergeStore.unassignedTracks);
+  const aiApiKey = $derived.by(() => settingsStore.getLLMApiKey(mergeStore.aiProvider));
+  const canRunAiAutoMatch = $derived.by(() =>
+    readyVideos.length > 0
+      && aiCandidateTracks.length > 0
+      && aiApiKey.trim().length > 0
+      && mergeStore.aiModel.trim().length > 0
+      && mergeStore.aiStatus !== 'analyzing',
+  );
+  const aiPreviewContextKey = $derived.by(() =>
+    `${readyVideos.map((video) => video.id).join('|')}::${aiCandidateTracks.map((track) => track.id).join('|')}`,
+  );
+  const mergeHeaderTitle = $derived.by(() => {
+    if (mergeInternalView === 'output-naming') {
+      return 'Output Naming';
+    }
+
+    if (mergeInternalView === 'ai-match') {
+      return 'AI Auto-match';
+    }
+
+    return undefined;
+  });
 
   function resolveMergeOutputTargetPath(
     file: RenameFile,
@@ -94,134 +182,30 @@
     });
   }
 
-  // Track settings dialog
-  let settingsOpen = $state(false);
-  let editingTrackId = $state<string | null>(null);
-  let editingTrackType = $state<'imported' | 'source'>('imported');
-  let mergeInternalView = $state<'main' | 'output-naming' | 'ai-match'>('main');
-  let viewMode = $state<'home' | 'groups' | 'table'>('home');
-  const autoMatchMode = $derived(() => mergeStore.autoMatchMode);
-  const outputNamingWorkspace = createRenameWorkspaceStore({
-    mode: 'rename',
-    includeOutputDirInTargetPath: true,
-    targetPathOptions: {
-      extension: '.mkv',
-      resolveTargetPath: resolveMergeOutputTargetPath,
-    },
-  });
-
-  // Merge cancellation state
-  let currentMergingId = $state<string | null>(null);
-  let isCancelling = $state(false);
-  let cancelAllRequested = $state(false);
-  let cancelCurrentFileId = $state<string | null>(null);
-  let unlistenMergeProgress: UnlistenFn | null = null;
-  let removeDialogOpen = $state(false);
-  let removeInProgress = $state(false);
-  let removeTarget = $state.raw<{ mode: 'single'; fileId: string } | { mode: 'all' } | null>(null);
-  let removeAfterCancelIds = new Set<string>();
-  let clearAllAfterCancel = false;
-
-  // Derived states
-  const editingImportedTrack = $derived(() => {
-    if (!editingTrackId || editingTrackType !== 'imported') return null;
-    return mergeStore.importedTracks.find(t => t.id === editingTrackId) || null;
-  });
-
-  const editingSourceTrack = $derived(() => {
-    if (!editingTrackId || editingTrackType !== 'source') return null;
-    for (const video of mergeStore.videoFiles) {
-      const track = video.tracks.find(t => t.id === editingTrackId);
-      if (track) return track;
-    }
-    return null;
-  });
-
-  const selectedVideoTracks = $derived(() => mergeStore.selectedVideo?.tracks || []);
-  const isProcessing = $derived(() => mergeStore.status === 'processing');
-  const currentMergingFileName = $derived(() => {
-    if (!currentMergingId) return '';
-    return mergeStore.videoFiles.find(v => v.id === currentMergingId)?.name || '';
-  });
-  const selectedOutputVideoIds = $derived(() => new Set(outputNamingWorkspace.selectedFiles.map((file) => file.id)));
-  const selectedVideosToMerge = $derived(() =>
-    mergeStore.videosReadyForMerge.filter((video) => selectedOutputVideoIds().has(video.id)),
-  );
-  const selectedTracksToMergeCount = $derived(() =>
-    selectedVideosToMerge().reduce((sum, video) => sum + video.attachedTracks.length, 0),
-  );
-  const outputNamingFolderDisplay = $derived.by(() =>
-    resolveOutputFolderDisplay({
-      explicitPath: outputNamingWorkspace.outputDir,
-      sourcePaths: selectedVideosToMerge().map((video) => video.path),
-      allowSourceFallback: true,
-      fallbackLabel: 'Use each source folder',
-    }),
-  );
-  const readyVideos = $derived(() => mergeStore.videoFiles.filter(video => video.status === 'ready'));
-  const aiCandidateTracks = $derived(() => mergeStore.unassignedTracks);
-  const aiApiKey = $derived(() => settingsStore.getLLMApiKey(mergeStore.aiProvider));
-  const canRunAiAutoMatch = $derived(() =>
-    readyVideos().length > 0
-      && aiCandidateTracks().length > 0
-      && aiApiKey().trim().length > 0
-      && mergeStore.aiModel.trim().length > 0
-      && mergeStore.aiStatus !== 'analyzing'
-  );
-
-  onMount(async () => {
-    await mergeStore.loadUiPreferences();
-    unlistenMergeProgress = await listen<MergeProgressEvent>('merge-progress', (event) => {
-      if (!mergeStore.isProcessing) {
-        return;
-      }
-
-      const runtime = mergeStore.runtimeProgress;
-      if (!runtime.currentFilePath || runtime.currentFilePath !== event.payload.videoPath) {
-        return;
-      }
-
-      mergeStore.updateRuntimeCurrentFile(
-        event.payload.progress,
-        event.payload.speedBytesPerSec,
-      );
-      mergeStore.updateFileRunProgress(
-        runtime.currentFilePath,
-        event.payload.progress,
-        event.payload.speedBytesPerSec,
-      );
-    });
-  });
-
-  onDestroy(() => {
-    unlistenMergeProgress?.();
-    outputNamingWorkspace.destroy();
-  });
-
-  // DnD items - mutable state required by svelte-dnd-action
-  let unassignedItems = $state<(ImportedTrack & { id: string })[]>([]);
-  let attachedItems = $state<(ImportedTrack & { id: string })[]>([]);
-  let mergedOutputItems = $state<Array<{
-    key: string;
-    path: string;
-    name: string;
-    kind: 'generic_file';
-    createdAt: number;
-  }>>([]);
-
-  // Sync items with store
-  $effect(() => {
-    unassignedItems = mergeStore.unassignedTracks.map(t => ({ ...t }));
-  });
-
-  $effect(() => {
-    attachedItems = mergeStore.selectedVideoId
-      ? mergeStore.getAttachedTracks(mergeStore.selectedVideoId).map(t => ({ ...t }))
-      : [];
-  });
+  function createImportedTrackSettingsPreview(importedTrack: ImportedTrack) {
+    return {
+      id: importedTrack.id,
+      sourceFileId: '',
+      originalIndex: 0,
+      type: importedTrack.type,
+      codec: importedTrack.codec,
+      codecLong: undefined,
+      language: importedTrack.language,
+      title: importedTrack.title,
+      bitrate: undefined,
+      width: undefined,
+      height: undefined,
+      frameRate: undefined,
+      channels: undefined,
+      sampleRate: undefined,
+      forced: importedTrack.config.forced,
+      default: importedTrack.config.default,
+    };
+  }
 
   function createMergeOutputRenameFile(video: MergeVideoFile): RenameFile {
     const baseName = getBaseName(video.name);
+
     return {
       id: video.id,
       originalPath: video.path,
@@ -242,23 +226,7 @@
     return outputNamingWorkspace.getTargetPath(namingFile);
   }
 
-  $effect(() => {
-    const nextFiles = mergeStore.videoFiles.map((video) => createMergeOutputRenameFile(video));
-    untrack(() => {
-      outputNamingWorkspace.replaceFiles(nextFiles, { preserveSelection: true });
-    });
-  });
-
-  $effect(() => {
-    const mergeOutputDir = mergeStore.outputConfig.outputDir;
-    untrack(() => {
-      if (outputNamingWorkspace.outputDir !== mergeOutputDir) {
-        outputNamingWorkspace.setOutputDir(mergeOutputDir);
-      }
-    });
-  });
-
-  function appendMergedOutputs(paths: string[]) {
+  function appendMergedOutputs(paths: string[]): void {
     if (paths.length === 0) {
       return;
     }
@@ -279,85 +247,26 @@
     mergedOutputItems = Array.from(byPath.values());
   }
 
-  function getTrackTypeColor(type: string) {
-    switch (type) {
-      case 'video': return 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30';
-      case 'audio': return 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/30';
-      case 'subtitle': return 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/30';
-      default: return 'bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/30';
-    }
-  }
-
-  function getTrackIcon(type: string) {
-    switch (type) {
-      case 'video': return Video;
-      case 'audio': return Volume2;
-      case 'subtitle': return Subtitles;
-      default: return FileVideo;
-    }
-  }
-
-  function formatSeriesInfo(season?: number, episode?: number) {
-    if (episode === undefined) return null;
-    if (season !== undefined) {
-      return `S${season.toString().padStart(2, '0')}E${episode.toString().padStart(2, '0')}`;
-    }
-    return `EP ${episode.toString().padStart(2, '0')}`;
-  }
-
-  // File import handlers
-  export async function handleFileDrop(paths: string[]) {
-    const supportedPaths = paths.filter(p => {
-      const ext = p.toLowerCase().substring(p.lastIndexOf('.'));
-      return ALL_EXTENSIONS.includes(ext);
-    });
-
-    if (supportedPaths.length === 0) {
-      toast.warning('No supported files detected');
-      return;
-    }
-
-    await addFiles(supportedPaths);
-  }
-
-  async function handleAddVideoFiles() {
-    const selected = await open({
-      multiple: true,
-      filters: [{ name: 'Video files', extensions: VIDEO_EXTENSIONS.map(e => e.slice(1)) }]
-    });
-    if (selected) {
-      await addFiles(Array.isArray(selected) ? selected : [selected]);
-    }
-  }
-
-  async function handleAddTrackFiles() {
-    const selected = await open({
-      multiple: true,
-      filters: [
-        { name: 'All tracks', extensions: [...SUBTITLE_EXTENSIONS, ...AUDIO_EXTENSIONS].map(e => e.slice(1)) },
-        { name: 'Subtitles', extensions: SUBTITLE_EXTENSIONS.map(e => e.slice(1)) },
-        { name: 'Audio', extensions: AUDIO_EXTENSIONS.map(e => e.slice(1)) }
-      ]
-    });
-    if (selected) {
-      await addFiles(Array.isArray(selected) ? selected : [selected]);
-    }
-  }
-
   function kindToForcedImportType(kind: ImportableKind): ForcedImportType | null {
     if (kind === 'track_video') {
       return 'video';
     }
+
     if (kind === 'track_subtitle') {
       return 'subtitle';
     }
+
     if (kind === 'track_audio') {
       return 'audio';
     }
+
     return null;
   }
 
-  function buildSourceImportPayload(items: ImportItem[]): { paths: string[]; forcedTypes: Map<string, ForcedImportType> } {
+  function buildSourceImportPayload(items: ImportItem[]): {
+    paths: string[];
+    forcedTypes: Map<string, ForcedImportType>;
+  } {
     const pathSet = new Set<string>();
     const forcedTypes = new Map<string, ForcedImportType>();
 
@@ -376,62 +285,108 @@
     return { paths: Array.from(pathSet), forcedTypes };
   }
 
-  async function addFiles(paths: string[], forcedTypes?: Map<string, ForcedImportType>) {
+  export async function handleFileDrop(paths: string[]) {
+    const supportedPaths = paths.filter((path) => {
+      const extension = path.toLowerCase().substring(path.lastIndexOf('.'));
+      return ALL_EXTENSIONS.includes(extension);
+    });
+
+    if (supportedPaths.length === 0) {
+      toast.warning('No supported files detected');
+      return;
+    }
+
+    await addFiles(supportedPaths);
+  }
+
+  async function handleAddVideoFiles(): Promise<void> {
+    const selected = await open({
+      multiple: true,
+      filters: [{ name: 'Video files', extensions: VIDEO_EXTENSIONS.map((extension) => extension.slice(1)) }],
+    });
+
+    if (selected) {
+      await addFiles(Array.isArray(selected) ? selected : [selected]);
+    }
+  }
+
+  async function handleAddTrackFiles(): Promise<void> {
+    const selected = await open({
+      multiple: true,
+      filters: [
+        { name: 'All tracks', extensions: [...SUBTITLE_EXTENSIONS, ...AUDIO_EXTENSIONS].map((extension) => extension.slice(1)) },
+        { name: 'Subtitles', extensions: SUBTITLE_EXTENSIONS.map((extension) => extension.slice(1)) },
+        { name: 'Audio', extensions: AUDIO_EXTENSIONS.map((extension) => extension.slice(1)) },
+      ],
+    });
+
+    if (selected) {
+      await addFiles(Array.isArray(selected) ? selected : [selected]);
+    }
+  }
+
+  async function addFiles(paths: string[], forcedTypes?: Map<string, ForcedImportType>): Promise<void> {
     if (mergeStore.status === 'completed') {
       mergeStore.reset();
     }
 
-    let videosAdded = 0, tracksAdded = 0, skipped = 0;
+    let videosAdded = 0;
+    let tracksAdded = 0;
+    let skipped = 0;
 
-    // Separate video files from track files, filtering duplicates
     const videoPaths: string[] = [];
-    const videoFileIds: Map<string, string> = new Map(); // path -> fileId
+    const videoFileIds = new Map<string, string>();
 
     for (const path of paths) {
       if (mergeStore.isFileAlreadyImported(path)) {
-        skipped++;
+        skipped += 1;
         continue;
       }
 
       const name = path.split('/').pop() || path.split('\\').pop() || path;
-      const ext = path.toLowerCase().substring(path.lastIndexOf('.'));
-
+      const extension = path.toLowerCase().substring(path.lastIndexOf('.'));
       const forcedType = forcedTypes?.get(path);
 
-      if (forcedType === 'video' || (!forcedType && VIDEO_EXTENSIONS.includes(ext))) {
-        // Add video file to store with 'scanning' status
+      if (forcedType === 'video' || (!forcedType && VIDEO_EXTENSIONS.includes(extension))) {
         const fileId = mergeStore.addVideoFile({
-          path, name, size: 0, tracks: [], status: 'scanning'
+          path,
+          name,
+          size: 0,
+          tracks: [],
+          status: 'scanning',
         });
         videoPaths.push(path);
         videoFileIds.set(path, fileId);
       } else {
-        // Handle track files immediately (no scanning needed)
         const type: 'subtitle' | 'audio' = (forcedType === 'subtitle' || forcedType === 'audio')
           ? forcedType
-          : (SUBTITLE_EXTENSIONS.includes(ext) ? 'subtitle' : 'audio');
-        const codec = getCodecFromExtension(ext);
+          : (SUBTITLE_EXTENSIONS.includes(extension) ? 'subtitle' : 'audio');
 
         mergeStore.addImportedTrack({
-          path, name, type, codec, language: undefined, title: name
+          path,
+          name,
+          type,
+          codec: getCodecFromExtension(extension),
+          language: undefined,
+          title: name,
         });
-        tracksAdded++;
+        tracksAdded += 1;
       }
     }
 
-    // Scan all video files in parallel
     if (videoPaths.length > 0) {
       const [scannedFiles, metadataEntries] = await Promise.all([
         scanFiles(videoPaths, 3),
-        Promise.all(
-          videoPaths.map(async (path) => [path, await fetchFileMetadata(path)] as const),
-        ),
+        Promise.all(videoPaths.map(async (path) => [path, await fetchFileMetadata(path)] as const)),
       ]);
       const metadataByPath = new Map(metadataEntries);
 
       for (const scanned of scannedFiles) {
         const fileId = videoFileIds.get(scanned.path);
-        if (!fileId) continue;
+        if (!fileId) {
+          continue;
+        }
+
         const metadata = metadataByPath.get(scanned.path);
 
         if (scanned.status === 'error') {
@@ -441,56 +396,62 @@
             modifiedAt: metadata?.modifiedAt,
             createdAt: metadata?.createdAt,
           });
-        } else {
-          const tracks: MergeTrack[] = scanned.tracks.map(t => ({
-            id: `${fileId}-track-${t.id}`,
-            sourceFileId: fileId,
-            originalIndex: t.index,
-            type: t.type,
-            codec: t.codec,
-            codecLong: t.codecLong,
-            language: t.language,
-            title: t.title,
-            bitrate: t.bitrate,
-            width: t.width,
-            height: t.height,
-            frameRate: t.frameRate,
-            channels: t.channels,
-            sampleRate: t.sampleRate,
-            forced: t.forced,
-            default: t.default,
-          }));
-
-          mergeStore.updateVideoFile(fileId, {
-            size: scanned.size,
-            modifiedAt: metadata?.modifiedAt,
-            createdAt: metadata?.createdAt,
-            duration: scanned.duration,
-            tracks,
-            status: 'ready'
-          });
-
-          // Initialize track configs for source tracks
-          for (const track of tracks) {
-            mergeStore.initSourceTrackConfig(track);
-          }
-
-          videosAdded++;
+          continue;
         }
+
+        const tracks = scanned.tracks.map((track) => ({
+          id: `${fileId}-track-${track.id}`,
+          sourceFileId: fileId,
+          originalIndex: track.index,
+          type: track.type,
+          codec: track.codec,
+          codecLong: track.codecLong,
+          language: track.language,
+          title: track.title,
+          bitrate: track.bitrate,
+          width: track.width,
+          height: track.height,
+          frameRate: track.frameRate,
+          channels: track.channels,
+          sampleRate: track.sampleRate,
+          forced: track.forced,
+          default: track.default,
+        }));
+
+        mergeStore.updateVideoFile(fileId, {
+          size: scanned.size,
+          modifiedAt: metadata?.modifiedAt,
+          createdAt: metadata?.createdAt,
+          duration: scanned.duration,
+          tracks,
+          status: 'ready',
+        });
+
+        for (const track of tracks) {
+          mergeStore.initSourceTrackConfig(track);
+        }
+
+        videosAdded += 1;
       }
     }
 
-    const parts = [];
-    if (videosAdded > 0) parts.push(`${videosAdded} video(s)`);
-    if (tracksAdded > 0) parts.push(`${tracksAdded} track(s)`);
-    if (skipped > 0) parts.push(`${skipped} skipped`);
+    const parts: string[] = [];
+    if (videosAdded > 0) {
+      parts.push(`${videosAdded} video(s)`);
+    }
+    if (tracksAdded > 0) {
+      parts.push(`${tracksAdded} track(s)`);
+    }
+    if (skipped > 0) {
+      parts.push(`${skipped} skipped`);
+    }
 
     if (parts.length > 0) {
       toast.success(`Added: ${parts.join(', ')}`);
     }
   }
 
-  async function handleImportFromSource(sourceId: ImportSourceId) {
+  async function handleImportFromSource(sourceId: ImportSourceId): Promise<void> {
     const items = toolImportStore.getItems(sourceId, 'merge');
     if (items.length === 0) {
       toast.info('No compatible tracks available from this source');
@@ -506,20 +467,20 @@
     await addFiles(paths, forcedTypes);
   }
 
-
-
-  function handleAutoMatch() {
+  function handleAutoMatch(): void {
     mergeStore.autoMatchByEpisodeNumber();
-    const matched = mergeStore.videoFiles.filter(v => v.attachedTracks.length > 0).length;
+    const matched = mergeStore.videoFiles.filter((video) => video.attachedTracks.length > 0).length;
+
     if (matched > 0) {
       toast.success(`Auto-matched ${matched} video(s) with tracks`);
-    } else {
-      toast.info('No matches found. Check episode numbers in filenames.');
+      return;
     }
+
+    toast.info('No matches found. Check episode numbers in filenames.');
   }
 
-  function handleAutoMatchAction() {
-    if (autoMatchMode() === 'classic') {
+  function handleAutoMatchAction(): void {
+    if (autoMatchMode === 'classic') {
       handleAutoMatch();
       return;
     }
@@ -527,13 +488,13 @@
     mergeInternalView = 'ai-match';
   }
 
-  async function handleRunAiAutoMatch() {
-    if (!canRunAiAutoMatch()) {
-      if (readyVideos().length === 0) {
+  async function handleRunAiAutoMatch(): Promise<void> {
+    if (!canRunAiAutoMatch) {
+      if (readyVideos.length === 0) {
         toast.info('Add ready video files before running Auto-match AI');
-      } else if (aiCandidateTracks().length === 0) {
+      } else if (aiCandidateTracks.length === 0) {
         toast.info('There are no unassigned tracks to analyze');
-      } else if (!aiApiKey().trim()) {
+      } else if (!aiApiKey.trim()) {
         toast.error('Configure an API key before running Auto-match AI');
       } else if (!mergeStore.aiModel.trim()) {
         toast.error('Select an AI model before running Auto-match AI');
@@ -545,8 +506,8 @@
 
     try {
       const suggestions = await analyzeMergeAiMatches({
-        videos: readyVideos(),
-        tracks: aiCandidateTracks(),
+        videos: readyVideos,
+        tracks: aiCandidateTracks,
         provider: mergeStore.aiProvider,
         model: mergeStore.aiModel,
       });
@@ -558,63 +519,22 @@
     }
   }
 
-  function handleApplyAiSuggestions() {
+  function handleApplyAiSuggestions(): void {
     const applied = mergeStore.applySelectedAiSuggestions();
 
     if (applied > 0) {
       toast.success(`Applied ${applied} AI match(es)`);
-    } else {
-      toast.info('No AI matches were selected');
+      return;
     }
+
+    toast.info('No AI matches were selected');
   }
 
-  function handleClearAiSuggestions() {
+  function handleClearAiSuggestions(): void {
     mergeStore.clearAiState();
   }
 
-  // DnD callbacks
-  function handleUnassignedConsider(items: typeof unassignedItems) {
-    unassignedItems = items;
-  }
-
-  function handleUnassignedFinalize(items: typeof unassignedItems) {
-    unassignedItems = items;
-    // Sync with store: detach items now in unassigned from any video
-    for (const item of items) {
-      for (const video of mergeStore.videoFiles) {
-        if (video.attachedTracks.some(at => at.trackId === item.id)) {
-          mergeStore.detachTrackFromVideo(item.id, video.id);
-        }
-      }
-    }
-  }
-
-  function handleAttachedConsider(items: typeof attachedItems) {
-    attachedItems = items;
-  }
-
-  function handleAttachedFinalize(items: typeof attachedItems) {
-    attachedItems = items;
-    if (!mergeStore.selectedVideoId) return;
-
-    const currentAttached = new Set(
-      mergeStore.selectedVideo?.attachedTracks.map(at => at.trackId) || []
-    );
-
-    const newAttachedIds = items.map(item => item.id);
-
-    // Attach new tracks
-    for (const item of items) {
-      if (!currentAttached.has(item.id)) {
-        mergeStore.attachTrackToVideo(item.id, mergeStore.selectedVideoId);
-      }
-    }
-
-    // Reorder
-    mergeStore.reorderAttachedTracks(mergeStore.selectedVideoId, newAttachedIds);
-  }
-
-  async function handleSelectOutputDir() {
+  async function handleSelectOutputDir(): Promise<void> {
     const selected = await pickOutputDirectory();
     if (selected) {
       mergeStore.setOutputDir(selected);
@@ -622,21 +542,21 @@
     }
   }
 
-  function handleClearOutputDir() {
+  function handleClearOutputDir(): void {
     mergeStore.setOutputDir('');
     outputNamingWorkspace.setOutputDir('');
   }
 
-  function handleOpenOutputNaming() {
+  function handleOpenOutputNaming(): void {
     mergeInternalView = 'output-naming';
   }
 
-  function handleBackToMerge() {
+  function handleBackToMerge(): void {
     mergeInternalView = 'main';
   }
 
-  async function handleMerge() {
-    const videosToMerge = selectedVideosToMerge();
+  async function handleMerge(): Promise<void> {
+    const videosToMerge = selectedVideosToMerge;
     if (videosToMerge.length === 0) {
       toast.warning('No videos ready to merge.');
       return;
@@ -667,23 +587,22 @@
     let mergeError: string | null = null;
 
     for (const video of videosToMerge) {
-      if (cancelAllRequested) break;
+      if (cancelAllRequested) {
+        break;
+      }
 
       currentMergingId = video.id;
       mergeStore.setFileProcessing(video.path);
       mergeStore.setCurrentRuntimeFile(video.id, video.path, video.name);
+
       const attachedTracks = mergeStore.getAttachedTracks(video.id);
       const fullOutputPath = buildMergeOutputPath(video);
-
-      // Build attached track args (external tracks to add)
-      const trackArgs = attachedTracks.map(track => ({
+      const trackArgs = attachedTracks.map((track) => ({
         inputPath: track.path,
         trackIndex: 0,
-        config: track.config
+        config: track.config,
       }));
-
-      // Build source track configs (for metadata modifications and track selection)
-      const sourceTrackConfigs = video.tracks.map(track => {
+      const sourceTrackConfigs = video.tracks.map((track) => {
         const config = mergeStore.getSourceTrackConfig(track.id);
         return {
           originalIndex: track.originalIndex,
@@ -696,8 +615,8 @@
             default: track.default,
             forced: track.forced,
             delayMs: 0,
-            order: 0
-          }
+            order: 0,
+          },
         };
       });
 
@@ -711,11 +630,11 @@
         });
 
         mergedPaths.push(fullOutputPath);
-        completed++;
+        completed += 1;
         mergeStore.setFileCompleted(video.path);
       } catch (error) {
         if (cancelAllRequested || cancelCurrentFileId === video.id) {
-          cancelled++;
+          cancelled += 1;
           mergeStore.setFileCancelled(video.path);
         } else {
           mergeError = error instanceof Error ? error.message : String(error);
@@ -754,12 +673,11 @@
       logAndToast.error({
         source: 'merge',
         title: 'Merge failed',
-        details: mergeError
+        details: mergeError,
       });
     } else if (cancelAllRequested || cancelled > 0) {
       mergeStore.setStatus('idle');
       mergeStore.resetRuntimeProgress();
-
       appendMergedOutputs(mergedPaths);
 
       if (shouldClearAllAfterCancel) {
@@ -771,15 +689,17 @@
         }
       }
 
-      const parts = [];
-      if (completed > 0) parts.push(`${completed} completed`);
-      if (cancelled > 0) parts.push(`${cancelled} cancelled`);
+      const parts: string[] = [];
+      if (completed > 0) {
+        parts.push(`${completed} completed`);
+      }
+      if (cancelled > 0) {
+        parts.push(`${cancelled} cancelled`);
+      }
       toast.info(parts.length > 0 ? `Merge finished: ${parts.join(', ')}` : 'Merge cancelled');
     } else {
       mergeStore.setStatus('completed');
-      
       appendMergedOutputs(mergedPaths);
-      
       toast.success(`Successfully merged ${completed} file(s)!`);
     }
 
@@ -791,12 +711,14 @@
   }
 
   async function handleCancelFile(fileId: string): Promise<boolean> {
-    if (!mergeStore.isProcessing) return false;
-    if (isCancelling) return false;
-    if (currentMergingId !== fileId) return false;
+    if (!mergeStore.isProcessing || isCancelling || currentMergingId !== fileId) {
+      return false;
+    }
 
-    const video = mergeStore.videoFiles.find(v => v.id === fileId);
-    if (!video) return false;
+    const video = mergeStore.videoFiles.find((candidate) => candidate.id === fileId);
+    if (!video) {
+      return false;
+    }
 
     cancelCurrentFileId = fileId;
     isCancelling = true;
@@ -818,8 +740,9 @@
   }
 
   async function handleCancelAll(): Promise<boolean> {
-    if (!mergeStore.isProcessing) return false;
-    if (isCancelling) return false;
+    if (!mergeStore.isProcessing || isCancelling) {
+      return false;
+    }
 
     cancelAllRequested = true;
     isCancelling = true;
@@ -840,7 +763,7 @@
     }
   }
 
-  async function handleOpenFolder() {
+  async function handleOpenFolder(): Promise<void> {
     const basePath = mergeStore.outputConfig.outputDir || mergedOutputItems[0]?.path;
     if (!basePath) {
       toast.info('No output folder available yet');
@@ -851,13 +774,13 @@
     await invoke('open_folder', { path: folderPath });
   }
 
-  function handleClearAll() {
+  function handleClearAll(): void {
     mergeStore.clearAll();
     mergedOutputItems = [];
     toast.info('Cleared all files');
   }
 
-  function handleRequestRemoveFile(fileId: string) {
+  function handleRequestRemoveFile(fileId: string): void {
     const isCurrentProcessing = mergeStore.isProcessing && currentMergingId === fileId;
     if (isCurrentProcessing) {
       removeTarget = { mode: 'single', fileId };
@@ -867,11 +790,10 @@
 
     if (!mergeStore.isProcessing) {
       mergeStore.removeVideoFile(fileId);
-      return;
     }
   }
 
-  function handleRequestClearAll() {
+  function handleRequestClearAll(): void {
     if (mergeStore.isProcessing) {
       removeTarget = { mode: 'all' };
       removeDialogOpen = true;
@@ -881,9 +803,11 @@
     handleClearAll();
   }
 
-  async function handleConfirmRemove() {
+  async function handleConfirmRemove(): Promise<void> {
     const target = removeTarget;
-    if (!target) return;
+    if (!target) {
+      return;
+    }
 
     removeInProgress = true;
 
@@ -912,51 +836,82 @@
     removeInProgress = false;
   }
 
-  function handleCancelRemoveDialog() {
+  function handleCancelRemoveDialog(): void {
     removeDialogOpen = false;
     removeTarget = null;
     removeAfterCancelIds = new Set();
     clearAllAfterCancel = false;
   }
 
-  // Track editing
-  function handleEditImportedTrack(trackId: string) {
+  function handleEditImportedTrack(trackId: string): void {
     editingTrackId = trackId;
     editingTrackType = 'imported';
     settingsOpen = true;
   }
 
-  function handleEditSourceTrack(trackId: string) {
+  function handleEditSourceTrack(trackId: string): void {
     editingTrackId = trackId;
     editingTrackType = 'source';
     settingsOpen = true;
   }
 
-  function handleCloseSettings() {
+  function handleCloseSettings(): void {
     settingsOpen = false;
     editingTrackId = null;
   }
 
-  function handleSaveTrackSettings(updates: Partial<MergeTrackConfig>) {
-    if (!editingTrackId) return;
+  function handleSaveTrackSettings(updates: Partial<MergeTrackConfig>): void {
+    if (!editingTrackId) {
+      return;
+    }
 
     if (editingTrackType === 'imported') {
       mergeStore.updateTrackConfig(editingTrackId, updates);
-    } else {
-      mergeStore.updateSourceTrackConfig(editingTrackId, updates);
+      return;
     }
+
+    mergeStore.updateSourceTrackConfig(editingTrackId, updates);
   }
 
-  // Group source tracks by type
-  function groupTracksByType(tracks: MergeTrack[]) {
-    const groups: Record<string, MergeTrack[]> = { video: [], audio: [], subtitle: [] };
-    for (const track of tracks) {
-      if (groups[track.type]) {
-        groups[track.type].push(track);
+  onMount(async () => {
+    await mergeStore.loadUiPreferences();
+    unlistenMergeProgress = await listen<MergeProgressEvent>('merge-progress', (event) => {
+      if (!mergeStore.isProcessing) {
+        return;
       }
-    }
-    return groups;
-  }
+
+      const runtime = mergeStore.runtimeProgress;
+      if (!runtime.currentFilePath || runtime.currentFilePath !== event.payload.videoPath) {
+        return;
+      }
+
+      mergeStore.updateRuntimeCurrentFile(
+        event.payload.progress,
+        event.payload.speedBytesPerSec,
+      );
+      mergeStore.updateFileRunProgress(
+        runtime.currentFilePath,
+        event.payload.progress,
+        event.payload.speedBytesPerSec,
+      );
+    });
+  });
+
+  $effect(() => {
+    const nextFiles = mergeStore.videoFiles.map((video) => createMergeOutputRenameFile(video));
+    untrack(() => {
+      outputNamingWorkspace.replaceFiles(nextFiles, { preserveSelection: true });
+    });
+  });
+
+  $effect(() => {
+    const mergeOutputDir = mergeStore.outputConfig.outputDir;
+    untrack(() => {
+      if (outputNamingWorkspace.outputDir !== mergeOutputDir) {
+        outputNamingWorkspace.setOutputDir(mergeOutputDir);
+      }
+    });
+  });
 
   $effect(() => {
     const mediaItems = mergeStore.videoFiles
@@ -976,121 +931,68 @@
     toolImportStore.publishPathSource('merge_outputs', 'merge', 'Merge', mergedOutputItems);
   });
 
-  const groupedSourceTracks = $derived(() => groupTracksByType(selectedVideoTracks()));
-  const mergeHeaderTitle = $derived(() => {
-    if (mergeInternalView === 'output-naming') return 'Output Naming';
-    if (mergeInternalView === 'ai-match') return 'AI Auto-match';
-    return undefined;
+  $effect(() => {
+    const contextKey = aiPreviewContextKey;
+
+    if (mergeStore.aiStatus === 'preview') {
+      if (activeAiPreviewContextKey && activeAiPreviewContextKey !== contextKey) {
+        mergeStore.clearAiState();
+        activeAiPreviewContextKey = null;
+        return;
+      }
+
+      activeAiPreviewContextKey = contextKey;
+      return;
+    }
+
+    activeAiPreviewContextKey = null;
   });
 
   $effect(() => {
     toolHeader.setHeader('merge', {
-      title: mergeHeaderTitle(),
+      title: mergeHeaderTitle,
       actions: mergeHeaderActions,
     });
   });
 
   onDestroy(() => {
+    unlistenMergeProgress?.();
+    outputNamingWorkspace.destroy();
     toolHeader.clearHeader('merge');
   });
 </script>
 
 {#snippet mergeHeaderActions()}
-  {#if mergeInternalView !== 'main'}
-    <Button
-      variant="outline"
-      size="sm"
-      class="mr-2"
-      onclick={handleBackToMerge}
-    >
-      <ArrowLeft class="size-4 mr-2" />
-      Back to Merge
-    </Button>
-  {:else}
-    <div class="flex items-center gap-1 mr-2">
-      <Button
-        variant={viewMode === 'home' ? 'secondary' : 'ghost'}
-        size="sm"
-        onclick={() => viewMode = 'home'}
-        title="Home view"
-      >
-        <Home class="size-4 mr-1" />
-        Home
-      </Button>
-      <Button
-        variant={viewMode === 'groups' ? 'secondary' : 'ghost'}
-        size="sm"
-        onclick={() => viewMode = 'groups'}
-        title="Groups view"
-      >
-        <LayoutGrid class="size-4 mr-1" />
-        Groups
-      </Button>
-      <Button
-        variant={viewMode === 'table' ? 'secondary' : 'ghost'}
-        size="sm"
-        onclick={() => viewMode = 'table'}
-        title="Table view"
-      >
-        <Table class="size-4 mr-1" />
-        Table
-      </Button>
-    </div>
-  {/if}
+  <MergeViewModeActions
+    internalView={mergeInternalView}
+    {viewMode}
+    onBack={handleBackToMerge}
+    onViewModeChange={(nextViewMode) => viewMode = nextViewMode}
+  />
 {/snippet}
 
 {#if mergeInternalView === 'output-naming'}
-  <div class="h-full">
-    <RenameWorkspace
-      workspace={outputNamingWorkspace}
-      showImportButton={false}
-      onClearAll={handleRequestClearAll}
-      onRemoveFile={handleRequestRemoveFile}
-      emptyStateTitle="No videos in the merge batch"
-      emptyStateSubtitle="Add videos in Merge to configure output names."
-    >
-      {#snippet actionPanel()}
-        <div class="space-y-2">
-          <OutputFolderField
-            label="Output folder"
-            displayText={outputNamingFolderDisplay.displayText}
-            state={outputNamingFolderDisplay.state}
-            description="Optional. Leave empty to save merged files next to each source video."
-            showReset={outputNamingFolderDisplay.showReset}
-            resetLabel="Use source folders"
-            onBrowse={handleSelectOutputDir}
-            onReset={handleClearOutputDir}
-          />
-        </div>
-
-        <div class="rounded-md bg-muted/50 p-3 space-y-2">
-          <div class="flex items-center justify-between text-sm">
-            <span class="text-muted-foreground">Selected videos</span>
-            <Badge variant={selectedVideosToMerge().length > 0 ? 'default' : 'secondary'}>
-              {selectedVideosToMerge().length}
-            </Badge>
-          </div>
-          <div class="flex items-center justify-between text-sm">
-            <span class="text-muted-foreground">Attached tracks</span>
-            <Badge variant={selectedTracksToMergeCount() > 0 ? 'default' : 'secondary'}>
-              {selectedTracksToMergeCount()}
-            </Badge>
-          </div>
-        </div>
-      {/snippet}
-    </RenameWorkspace>
-  </div>
+  <MergeOutputNamingView
+    workspace={outputNamingWorkspace}
+    outputFolderDisplay={outputNamingFolderDisplay}
+    selectedVideosCount={selectedVideosToMergeCount}
+    selectedTracksCount={selectedTracksToMergeCount}
+    onClearAll={handleRequestClearAll}
+    onRemoveFile={handleRequestRemoveFile}
+    onBrowseOutputDir={handleSelectOutputDir}
+    onResetOutputDir={handleClearOutputDir}
+  />
 {:else if mergeInternalView === 'ai-match'}
   <MergeAiMatchView
-    videos={readyVideos()}
+    videos={readyVideos}
     importedTracks={mergeStore.importedTracks}
-    unassignedTracks={aiCandidateTracks()}
+    unassignedTracks={aiCandidateTracks}
     provider={mergeStore.aiProvider}
     model={mergeStore.aiModel}
     status={mergeStore.aiStatus}
     error={mergeStore.aiError}
     suggestions={mergeStore.aiSuggestions}
-    canAnalyze={canRunAiAutoMatch()}
+    canAnalyze={canRunAiAutoMatch}
     onProviderChange={(provider) => mergeStore.setAiProvider(provider)}
     onModelChange={(model) => mergeStore.setAiModel(model)}
     onAnalyze={() => void handleRunAiAutoMatch()}
@@ -1100,424 +1002,61 @@
     onNavigateToSettings={onNavigateToSettings}
   />
 {:else if viewMode === 'groups'}
-  <!-- Groups View: Full width -->
   <div class="h-full">
     <MergeTrackGroups />
   </div>
 {:else if viewMode === 'table'}
-  <!-- Table View: Full width -->
   <div class="h-full">
     <MergeTrackTable />
   </div>
 {:else}
-  <!-- Home View: Classic layout with left panel, center tabs, right panel -->
-  <div class="h-full flex overflow-hidden">
-    <!-- Left panel: Video files -->
-    <div class="w-[max(20rem,25vw)] max-w-lg border-r flex flex-col overflow-hidden">
-      <div class="p-3 border-b shrink-0 flex items-center justify-between">
-        <h2 class="font-semibold">Videos ({mergeStore.videoFiles.length})</h2>
-        <div class="flex gap-1">
-          {#if mergeStore.videoFiles.length > 0}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onclick={handleRequestClearAll}
-              class="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-            >
-              <Trash2 class="size-4" />
-            </Button>
-          {/if}
-          <ToolImportButton
-            targetTool="merge"
-            sourceFilter={[]}
-            onBrowse={handleAddVideoFiles}
-            disabled={isProcessing()}
-          />
-        </div>
-      </div>
-
-      <div class="flex-1 min-h-0 overflow-auto p-2">
-        {#if mergeStore.videoFiles.length === 0}
-          <ImportDropZone
-            icon={Video}
-            title="Drop video files here"
-            formats={VIDEO_FORMATS}
-            onBrowse={handleAddVideoFiles}
-          />
-        {:else}
-          <MergeFileList
-            files={mergeStore.videoFiles}
-            selectedId={mergeStore.selectedVideoId}
-            fileRunStates={mergeStore.fileRunStates}
-            isProcessing={mergeStore.isProcessing}
-            currentProcessingPath={mergeStore.runtimeProgress.currentFilePath}
-            onSelect={(fileId) => mergeStore.selectVideo(fileId)}
-            onCancelFile={(fileId) => { void handleCancelFile(fileId); }}
-            onRemove={handleRequestRemoveFile}
-            showAddButton={false}
-          />
-        {/if}
-      </div>
-    </div>
-
-    <!-- Center panel: Track management with tabs -->
-    <div class="flex-1 flex flex-col overflow-hidden">
-      <Tabs.Root value="source" class="flex-1 flex flex-col overflow-hidden">
-        <ScrollArea orientation="horizontal" class="border-b bg-background">
-          <div class="flex w-max min-w-full items-center justify-between gap-4 p-2.5">
-            <Tabs.List class="shrink-0">
-              <Tabs.Trigger value="source" class="flex items-center gap-1.5">
-                <Layers class="size-4" />
-                Source
-              </Tabs.Trigger>
-              <Tabs.Trigger value="import" class="flex items-center gap-1.5">
-                <Plus class="size-4" />
-                Import
-                {#if mergeStore.unassignedTracks.length > 0}
-                  <Badge variant="secondary" class="text-xs ml-1">{mergeStore.unassignedTracks.length}</Badge>
-                {/if}
-              </Tabs.Trigger>
-            </Tabs.List>
-
-            <div class="flex shrink-0 gap-2">
-              {#if mergeStore.importedTracks.length > 0 && mergeStore.videoFiles.length > 0}
-                <ButtonGroup.Root class="shrink-0 gap-0 overflow-hidden rounded-4xl shadow-xs">
-                  <Tooltip.Root>
-                    <Tooltip.Trigger>
-                      {#snippet child({ props })}
-                        <Button
-                          {...props}
-                          variant="outline"
-                          size="sm"
-                          class="h-8 min-w-0 rounded-r-none border-r-0 px-2.5"
-                          onclick={handleAutoMatchAction}
-                        >
-                          {#if autoMatchMode() === 'classic'}
-                            <Wand2 class="size-4 shrink-0 min-[1120px]:mr-1.5" />
-                            <span class="hidden min-[1120px]:inline">Auto-match</span>
-                            <span class="min-[1120px]:hidden">Auto</span>
-                          {:else}
-                            <Sparkles class="size-4 shrink-0 min-[1120px]:mr-1.5" />
-                            <span class="hidden min-[1120px]:inline">AI match</span>
-                            <span class="min-[1120px]:hidden">AI</span>
-                          {/if}
-                        </Button>
-                      {/snippet}
-                    </Tooltip.Trigger>
-                    <Tooltip.Content>
-                      {autoMatchMode() === 'classic'
-                        ? 'Match tracks to videos by episode number'
-                        : 'Open the AI match workspace'}
-                    </Tooltip.Content>
-                  </Tooltip.Root>
-                  <div class="self-stretch w-px bg-border"></div>
-                  <DropdownMenu.Root>
-                    <DropdownMenu.Trigger>
-                      {#snippet child({ props })}
-                        <Button
-                          {...props}
-                          variant="outline"
-                          size="icon-sm"
-                          class="h-8 w-8 rounded-l-none border-l-0"
-                          title="Choose auto-match mode"
-                        >
-                          <ChevronDown class="size-4" />
-                        </Button>
-                      {/snippet}
-                    </DropdownMenu.Trigger>
-                    <DropdownMenu.Content align="end" class="w-44">
-                      <DropdownMenu.Label>Auto-match mode</DropdownMenu.Label>
-                      <DropdownMenu.Separator />
-                      <DropdownMenu.Item onclick={() => mergeStore.setAutoMatchMode('classic')}>
-                        <div class="flex items-center gap-2">
-                          <Wand2 class="size-4" />
-                          Classic
-                        </div>
-                        {#if autoMatchMode() === 'classic'}
-                          <Badge variant="secondary" class="ml-auto text-[10px]">Active</Badge>
-                        {/if}
-                      </DropdownMenu.Item>
-                      <DropdownMenu.Item onclick={() => mergeStore.setAutoMatchMode('ai')}>
-                        <div class="flex items-center gap-2">
-                          <Sparkles class="size-4" />
-                          AI
-                        </div>
-                        {#if autoMatchMode() === 'ai'}
-                          <Badge variant="secondary" class="ml-auto text-[10px]">Active</Badge>
-                        {/if}
-                      </DropdownMenu.Item>
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Root>
-                </ButtonGroup.Root>
-              {/if}
-            </div>
-          </div>
-        </ScrollArea>
-
-        <!-- Source Tracks Tab -->
-        <Tabs.Content value="source" class="flex-1 min-h-0 overflow-auto p-4 mt-0">
-          {#if mergeStore.selectedVideo}
-            {@const groups = groupedSourceTracks()}
-            <div class="space-y-4">
-              {#each Object.entries(groups) as [type, tracks] (type)}
-                {#if tracks.length > 0}
-                  {@const Icon = getTrackIcon(type)}
-                  <Card.Root>
-                    <Card.Header class="py-3">
-                      <div class="flex items-center gap-2">
-                        <Icon class="size-4 text-muted-foreground" />
-                        <Card.Title class="text-sm capitalize">{type} ({tracks.length})</Card.Title>
-                      </div>
-                    </Card.Header>
-                    <Card.Content class="pt-0 space-y-1.5">
-                      {#each tracks as track (track.id)}
-                        {@const config = mergeStore.getSourceTrackConfig(track.id)}
-                        {@const enabled = config?.enabled ?? true}
-                        <div
-                          class="flex items-center gap-2 rounded-md border p-2.5 transition-all {getTrackTypeColor(track.type)} {!enabled ? 'opacity-50' : ''}"
-                        >
-                          <Checkbox
-                            checked={enabled}
-                            onCheckedChange={() => mergeStore.toggleSourceTrack(track.id)}
-                          />
-
-                          <div class="flex-1 min-w-0">
-                            <div class="flex items-center gap-2 flex-wrap">
-                              <Badge variant="outline" class="font-mono text-xs">#{track.originalIndex}</Badge>
-                              <span class="font-medium text-sm">{track.codec.toUpperCase()}</span>
-                              {#if config?.language || track.language}
-                                <Badge variant="secondary" class="text-xs">
-                                  {config?.language || track.language}
-                                </Badge>
-                              {/if}
-                              {#if config?.default ?? track.default}
-                                <Badge class="text-xs">Default</Badge>
-                              {/if}
-                              {#if config?.forced ?? track.forced}
-                                <Badge variant="destructive" class="text-xs">Forced</Badge>
-                              {/if}
-                            </div>
-
-                            <div class="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-xs text-muted-foreground">
-                              {#if config?.title || track.title}
-                                <span class="truncate max-w-[200px]">"{config?.title || track.title}"</span>
-                              {/if}
-                              {#if track.type === 'video' && track.width && track.height}
-                                <span>{track.width}x{track.height}</span>
-                              {/if}
-                              {#if track.type === 'audio' && track.channels}
-                                <span>{track.channels}ch</span>
-                              {/if}
-                              {#if config?.delayMs && config.delayMs !== 0}
-                                <span class="flex items-center gap-1 text-orange-500">
-                                  <Clock class="size-3" />
-                                  {config.delayMs > 0 ? '+' : ''}{config.delayMs}ms
-                                </span>
-                              {/if}
-                            </div>
-                          </div>
-
-                          <Button
-                            variant="ghost" size="icon-sm"
-                            onclick={() => handleEditSourceTrack(track.id)}
-                          >
-                            <Settings2 class="size-4" />
-                          </Button>
-                        </div>
-                      {/each}
-                    </Card.Content>
-                  </Card.Root>
-                {/if}
-              {/each}
-            </div>
-          {:else}
-            <div class="flex items-center justify-center py-20 text-muted-foreground">
-              <p>Select a video to view its tracks</p>
-            </div>
-          {/if}
-        </Tabs.Content>
-
-        <!-- Import Tracks Tab -->
-        <Tabs.Content value="import" class="flex-1 min-h-0 overflow-auto p-4 mt-0 space-y-4">
-          <div class="flex justify-end">
-            <ToolImportButton
-              targetTool="merge"
-              label="Add tracks"
-              sourceFilter={['extraction_outputs']}
-              onBrowse={handleAddTrackFiles}
-              onSelectSource={handleImportFromSource}
-            />
-          </div>
-
-          <!-- Unassigned tracks (droppable) -->
-          <Card.Root>
-            <Card.Header class="py-3">
-              <Card.Title class="text-sm flex items-center gap-2">
-                <Unlink class="size-4 text-muted-foreground" />
-                Unassigned tracks
-              </Card.Title>
-              <Card.Description>Drag tracks to attach them to a video</Card.Description>
-            </Card.Header>
-            <Card.Content class="pt-0">
-              <section
-                class="min-h-[60px] rounded-md border-2 border-dashed p-2 space-y-1"
-                use:dndzone={{
-                  items: unassignedItems,
-                  flipDurationMs: FLIP_DURATION_MS,
-                  type: 'tracks',
-                  onConsider: handleUnassignedConsider,
-                  onFinalize: handleUnassignedFinalize
-                }}
-              >
-                {#each unassignedItems as track (track.id)}
-                  {@const TrackIcon = track.type === 'subtitle' ? Subtitles : FileAudio}
-                  {@const seriesInfo = formatSeriesInfo(track.seasonNumber, track.episodeNumber)}
-                  <div
-                    class="flex items-center gap-2 rounded-md border p-2 bg-card cursor-grab active:cursor-grabbing {getTrackTypeColor(track.type)}"
-                    animate:flip={{ duration: FLIP_DURATION_MS }}
-                  >
-                    <GripVertical class="size-4 text-muted-foreground/50" />
-                    <TrackIcon class="size-4" />
-                    <span class="flex-1 text-sm truncate">{track.name}</span>
-                    {#if seriesInfo}
-                      <Badge variant="outline" class="text-xs">{seriesInfo}</Badge>
-                    {/if}
-                    {#if track.config.language}
-                      <Badge variant="secondary" class="text-xs">{track.config.language}</Badge>
-                    {/if}
-                    <Button variant="ghost" size="icon-sm" onclick={() => handleEditImportedTrack(track.id)}>
-                      <Settings2 class="size-3" />
-                    </Button>
-                    <Button variant="ghost" size="icon-sm" onclick={() => mergeStore.removeImportedTrack(track.id)} class="text-muted-foreground hover:text-destructive">
-                      <Trash2 class="size-3" />
-                    </Button>
-                  </div>
-                {:else}
-                  <p class="text-sm text-muted-foreground text-center py-4 select-none">
-                    No unassigned tracks. Add tracks or drag here to detach.
-                  </p>
-                {/each}
-              </section>
-            </Card.Content>
-          </Card.Root>
-
-          <!-- Attached tracks for selected video -->
-          {#if mergeStore.selectedVideo}
-            {@const video = mergeStore.selectedVideo}
-            <Card.Root class="border-primary/50">
-              <Card.Header class="py-3">
-                <Card.Title class="text-sm flex items-center gap-2">
-                  <Link class="size-4 text-primary" />
-                  <span class="wrap-anywhere">Attached to: {video.name}</span>
-                </Card.Title>
-                <Card.Description>Drop tracks here to merge with this video</Card.Description>
-              </Card.Header>
-              <Card.Content class="pt-0">
-                <section
-                  class="min-h-[80px] rounded-md border-2 border-primary/30 border-dashed p-2 space-y-1 bg-primary/5"
-                  use:dndzone={{
-                    items: attachedItems,
-                    flipDurationMs: FLIP_DURATION_MS,
-                    type: 'tracks',
-                    onConsider: handleAttachedConsider,
-                    onFinalize: handleAttachedFinalize
-                  }}
-                >
-                  {#each attachedItems as track (track.id)}
-                    {@const TrackIcon = track.type === 'subtitle' ? Subtitles : FileAudio}
-                    <div
-                      class="flex items-center gap-2 rounded-md border p-2 bg-card cursor-grab active:cursor-grabbing {getTrackTypeColor(track.type)}"
-                      animate:flip={{ duration: FLIP_DURATION_MS }}
-                    >
-                      <GripVertical class="size-4 text-muted-foreground/50" />
-                      <TrackIcon class="size-4" />
-                      <span class="flex-1 text-sm truncate">{track.name}</span>
-                      {#if track.config.delayMs !== 0}
-                        <Badge variant="secondary" class="text-xs">{track.config.delayMs}ms</Badge>
-                      {/if}
-                      {#if track.config.language}
-                        <Badge variant="secondary" class="text-xs">{track.config.language}</Badge>
-                      {/if}
-                      <Button variant="ghost" size="icon-sm" onclick={() => handleEditImportedTrack(track.id)}>
-                        <Settings2 class="size-3" />
-                      </Button>
-                      <Button
-                        variant="ghost" size="icon-sm"
-                        onclick={() => mergeStore.detachTrackFromVideo(track.id, video.id)}
-                        class="text-muted-foreground hover:text-orange-500"
-                      >
-                        <Unlink class="size-3" />
-                      </Button>
-                    </div>
-                  {:else}
-                    <p class="text-sm text-muted-foreground text-center py-6">
-                      Drop tracks here to attach to this video
-                    </p>
-                  {/each}
-                </section>
-              </Card.Content>
-            </Card.Root>
-          {:else if mergeStore.videoFiles.length > 0}
-            <div class="flex items-center justify-center py-8 text-muted-foreground">
-              <p>Select a video to attach tracks</p>
-            </div>
-          {/if}
-        </Tabs.Content>
-      </Tabs.Root>
-    </div>
-
-    <!-- Right panel: Output config -->
-    <div class="w-80 border-l p-4 overflow-auto">
-      <MergeOutputPanel
-        outputConfig={mergeStore.outputConfig}
-        sourcePaths={selectedVideosToMerge().map((video) => video.path)}
-        enabledTracksCount={selectedTracksToMergeCount()}
-        videosCount={selectedVideosToMerge().length}
-        completedFiles={mergeStore.runtimeProgress.completedFiles}
-        status={mergeStore.status}
-        onSelectOutputDir={handleSelectOutputDir}
-        onClearOutputDir={handleClearOutputDir}
-        onEditOutputNames={handleOpenOutputNaming}
-        onMerge={handleMerge}
-        onOpenFolder={handleOpenFolder}
-        onCancel={handleCancelAll}
-        isCancelling={isCancelling}
-        currentFileName={currentMergingFileName()}
-        currentFileProgress={mergeStore.runtimeProgress.currentFileProgress}
-        currentSpeedBytesPerSec={mergeStore.runtimeProgress.currentSpeedBytesPerSec}
-      />
-    </div>
-
-    <!-- Track settings dialog -->
-    <MergeTrackSettings
-      open={settingsOpen}
-      track={editingTrackType === 'imported'
-        ? (editingImportedTrack() ? {
-            id: editingImportedTrack()!.id,
-            sourceFileId: '',
-            originalIndex: 0,
-            type: editingImportedTrack()!.type,
-            codec: editingImportedTrack()!.codec,
-            language: editingImportedTrack()!.language,
-            title: editingImportedTrack()!.title
-          } : null)
-        : editingSourceTrack()
-      }
-      config={editingTrackType === 'imported'
-        ? editingImportedTrack()?.config ?? null
-        : (editingSourceTrack() ? mergeStore.getSourceTrackConfig(editingSourceTrack()!.id) ?? null : null)
-      }
-      onClose={handleCloseSettings}
-      onSave={handleSaveTrackSettings}
-    />
-
-  </div>
-
-  <ProcessingRemoveDialog
-    bind:open={removeDialogOpen}
-    mode={removeTarget?.mode ?? null}
-    inProgress={removeInProgress}
-    onConfirm={handleConfirmRemove}
-    onCancel={handleCancelRemoveDialog}
+  <MergeHomeView
+    autoMatchMode={autoMatchMode}
+    videoFormats={VIDEO_FORMATS}
+    selectedMergeSourcePaths={selectedMergeSourcePaths}
+    selectedTracksToMergeCount={selectedTracksToMergeCount}
+    selectedVideosToMergeCount={selectedVideosToMergeCount}
+    currentFileName={currentMergingFileName}
+    currentFileProgress={mergeStore.runtimeProgress.currentFileProgress}
+    currentSpeedBytesPerSec={mergeStore.runtimeProgress.currentSpeedBytesPerSec}
+    completedFiles={mergeStore.runtimeProgress.completedFiles}
+    status={mergeStore.status}
+    isProcessing={isProcessing}
+    {isCancelling}
+    currentProcessingPath={mergeStore.runtimeProgress.currentFilePath}
+    onAddVideoFiles={handleAddVideoFiles}
+    onRequestClearAll={handleRequestClearAll}
+    onSelectVideo={(fileId) => mergeStore.selectVideo(fileId)}
+    onCancelFile={(fileId) => { void handleCancelFile(fileId); }}
+    onRequestRemoveFile={handleRequestRemoveFile}
+    onAutoMatch={handleAutoMatchAction}
+    onAutoMatchModeChange={(mode) => mergeStore.setAutoMatchMode(mode)}
+    onEditSourceTrack={handleEditSourceTrack}
+    onAddTrackFiles={handleAddTrackFiles}
+    onEditImportedTrack={handleEditImportedTrack}
+    onImportFromSource={handleImportFromSource}
+    onSelectOutputDir={handleSelectOutputDir}
+    onClearOutputDir={handleClearOutputDir}
+    onEditOutputNames={handleOpenOutputNaming}
+    onMerge={handleMerge}
+    onOpenFolder={handleOpenFolder}
+    onCancelAll={() => { void handleCancelAll(); }}
   />
 {/if}
+
+<MergeTrackSettings
+  open={settingsOpen}
+  track={editingTrackPreview}
+  config={editingTrackConfig}
+  title={editingTrackTitle}
+  onClose={handleCloseSettings}
+  onSave={handleSaveTrackSettings}
+/>
+
+<ProcessingRemoveDialog
+  bind:open={removeDialogOpen}
+  mode={removeTarget?.mode ?? null}
+  inProgress={removeInProgress}
+  onConfirm={handleConfirmRemove}
+  onCancel={handleCancelRemoveDialog}
+/>

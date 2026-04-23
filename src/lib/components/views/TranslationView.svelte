@@ -1,5 +1,4 @@
 <script lang="ts" module>
-  import { Play, Trash2, FileText, Languages, X, Square, AlertCircle, Copy, Loader2, RotateCw } from '@lucide/svelte';
   export interface TranslationViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -31,30 +30,26 @@
     TranslationJob,
     TranslationModelSelection,
   } from '$lib/types';
-  import { LLM_PROVIDERS, SUPPORTED_LANGUAGES } from '$lib/types';
+  import { SUPPORTED_LANGUAGES } from '$lib/types';
   import type { ImportSelectionMode, ImportSourceId, VersionedImportItem } from '$lib/types/tool-import';
 
-  import { Button } from '$lib/components/ui/button';
-  import * as Card from '$lib/components/ui/card';
-  import { Badge } from '$lib/components/ui/badge';
-  import { Progress } from '$lib/components/ui/progress';
-  import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
-  import * as Resizable from '$lib/components/ui/resizable';
-  import * as Select from '$lib/components/ui/select';
-  import * as Tooltip from "$lib/components/ui/tooltip/index.js";
-  import * as AlertDialog from '$lib/components/ui/alert-dialog';
-  import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
-  import { ToolImportButton, ToolImportSourceDialog } from '$lib/components/shared';
+  import { ToolImportSourceDialog } from '$lib/components/shared';
 
   import {
-    TranslationConfigPanel,
-    TranslationFileList,
+    TranslationRemoveDialog,
     TranslationRetryDialog,
     TranslationResultDialog,
+    TranslationSidebar,
+    TranslationWorkspace,
   } from '$lib/components/translation';
-
-  import { Textarea } from '$lib/components/ui/textarea';
+  import {
+    createModelJobId,
+    createRunId,
+    createTokenCountCacheKey,
+    getModelDisplayName,
+    selectTranslateAllTargets,
+    SUBTITLE_EXTENSIONS,
+  } from '$lib/components/translation/translation-view-utils';
 
   interface TranslationViewProps {
     onNavigateToSettings?: () => void;
@@ -62,8 +57,6 @@
 
   let { onNavigateToSettings }: TranslationViewProps = $props();
 
-  const SUBTITLE_EXTENSIONS = ['.srt', '.ass', '.vtt', '.ssa'] as const;
-  const SUBTITLE_FORMATS = SUBTITLE_EXTENSIONS.map((ext) => ext.slice(1).toUpperCase());
   let sourceDialogOpen = $state(false);
   let sourceDialogSourceId = $state<ImportSourceId | null>(null);
   let sourceDialogLabel = $state('');
@@ -74,47 +67,75 @@
     settingsStore.isLoaded && !!settingsStore.getLLMApiKey(translationStore.config.provider)
   );
 
-  // Token count cache by file path (to avoid recalculating on job status changes)
+  // Token count cache by file path + language pair.
   let tokenCountCache = $state<Map<string, number>>(new Map());
-  let isCountingTokens = $state(false);
+  let tokenCountGenerations = $state<Map<string, number>>(new Map());
+  let pendingTokenCountKeys = $state<Set<string>>(new Set());
+  const selectedTokenCountKey = $derived.by(() => {
+    const selectedJob = translationStore.selectedJob;
+    if (!selectedJob) {
+      return null;
+    }
 
-  // Get token count for selected job from cache
-  const tokenCount = $derived(() => {
-    const path = translationStore.selectedJob?.file?.path;
-    return path ? tokenCountCache.get(path) ?? null : null;
+    const generation = tokenCountGenerations.get(selectedJob.file.path) ?? 0;
+
+    return createTokenCountCacheKey(
+      selectedJob.file.path,
+      translationStore.config.sourceLanguage,
+      translationStore.config.targetLanguage,
+      generation,
+    );
   });
+  const tokenCount = $derived.by(() => {
+    if (!selectedTokenCountKey) {
+      return null;
+    }
 
-  // Calculate tokens only when a NEW file path is selected
-  let lastCountedPath = $state<string | null>(null);
+    return tokenCountCache.get(selectedTokenCountKey) ?? null;
+  });
+  const isCountingTokens = $derived.by(() => {
+    if (!selectedTokenCountKey) {
+      return false;
+    }
+
+    return pendingTokenCountKeys.has(selectedTokenCountKey);
+  });
 
   $effect(() => {
     const job = translationStore.selectedJob;
-    const filePath = job?.file?.path;
+    const cacheKey = selectedTokenCountKey;
 
-    // Only calculate if we have a new file that wasn't counted before
-    if (filePath && filePath !== lastCountedPath && !tokenCountCache.has(filePath)) {
-      const fileContent = job.file.content;
-      lastCountedPath = filePath;
-      isCountingTokens = true;
-
-      // Use untrack to avoid re-triggering on config changes
-      untrack(() => {
-        const { sourceLanguage, targetLanguage } = translationStore.config;
-        const fullPrompt = buildFullPromptForTokenCount(
-          fileContent,
-          sourceLanguage,
-          targetLanguage
-        );
-
-        countTokens(fullPrompt)
-          .then(count => {
-            tokenCountCache.set(filePath, count);
-            tokenCountCache = new Map(tokenCountCache); // Trigger reactivity
-          })
-          .catch(() => { /* ignore errors */ })
-          .finally(() => { isCountingTokens = false; });
-      });
+    if (!job || !cacheKey || tokenCountCache.has(cacheKey) || pendingTokenCountKeys.has(cacheKey)) {
+      return;
     }
+
+    const { sourceLanguage, targetLanguage } = translationStore.config;
+    const nextPendingKeys = new Set(pendingTokenCountKeys);
+    nextPendingKeys.add(cacheKey);
+    pendingTokenCountKeys = nextPendingKeys;
+
+    untrack(() => {
+      const fullPrompt = buildFullPromptForTokenCount(
+        job.file.content,
+        sourceLanguage,
+        targetLanguage,
+      );
+
+      countTokens(fullPrompt)
+        .then((count) => {
+          const nextTokenCountCache = new Map(tokenCountCache);
+          nextTokenCountCache.set(cacheKey, count);
+          tokenCountCache = nextTokenCountCache;
+        })
+        .catch(() => {
+          // Ignore tokenizer failures in the UI.
+        })
+        .finally(() => {
+          const updatedPendingKeys = new Set(pendingTokenCountKeys);
+          updatedPendingKeys.delete(cacheKey);
+          pendingTokenCountKeys = updatedPendingKeys;
+        });
+    });
   });
 
   // Expose API for drag & drop from parent
@@ -132,6 +153,18 @@
     for (const path of subtitlePaths) {
       await loadSubtitleFile(path);
     }
+  }
+
+  function clearTokenCountCacheForPath(filePath: string): void {
+    const nextGenerations = new Map(tokenCountGenerations);
+    nextGenerations.set(filePath, (nextGenerations.get(filePath) ?? 0) + 1);
+    tokenCountGenerations = nextGenerations;
+    tokenCountCache = new Map(
+      [...tokenCountCache].filter(([cacheKey]) => !cacheKey.startsWith(`${filePath}::`)),
+    );
+    pendingTokenCountKeys = new Set(
+      [...pendingTokenCountKeys].filter((cacheKey) => !cacheKey.startsWith(`${filePath}::`)),
+    );
   }
 
   async function loadSubtitleFile(path: string) {
@@ -159,6 +192,7 @@
         size: new Blob([content]).size
       };
 
+      clearTokenCountCacheForPath(path);
       translationStore.addFile(subtitleFile);
 
       // Load persisted translation versions if any
@@ -233,6 +267,8 @@
         skipped++;
         continue;
       }
+
+      clearTokenCountCacheForPath(file.path);
       translationStore.addFile(file);
       existingPaths.add(file.path);
       imported++;
@@ -310,22 +346,6 @@
     }
   }
 
-  /** Get a display name for a model (e.g. "GPT-5", "Claude 4 Sonnet") */
-  function getModelDisplayName(provider: string, model: string): string {
-    const providerConfig = LLM_PROVIDERS[provider as keyof typeof LLM_PROVIDERS];
-    if (!providerConfig) return model;
-    const found = providerConfig.models.find(m => m.id === model);
-    return found?.name || model;
-  }
-
-  function createRunId(jobId: string): string {
-    return `${jobId}_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  }
-
-  function createModelJobId(runId: string, index: number): string {
-    return `${runId}_model_${index}_${Math.random().toString(36).slice(2, 8)}`;
-  }
-
   function isRunActive(jobId: string, runId: string): boolean {
     return translationStore.isRunActive(jobId, runId);
   }
@@ -334,19 +354,6 @@
     return translationStore.jobs
       .find(j => j.id === jobId)
       ?.modelJobs?.find(mj => mj.id === modelJobId);
-  }
-
-  function isPrimaryRetryableStatus(status: TranslationJob['status']): boolean {
-    return status === 'pending' || status === 'error' || status === 'cancelled';
-  }
-
-  function selectTranslateAllTargets(jobs: TranslationJob[]): TranslationJob[] {
-    const primaryTargets = jobs.filter((job) => isPrimaryRetryableStatus(job.status));
-    if (primaryTargets.length > 0) {
-      return primaryTargets;
-    }
-
-    return jobs.filter((job) => job.status === 'completed');
   }
 
   interface TranslationRunConfig {
@@ -1139,12 +1146,6 @@
     }
   }
 
-  function formatFileSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
-
   const translateAllTargets = $derived(selectTranslateAllTargets(translationStore.jobs));
   const translateAllTargetCount = $derived(translateAllTargets.length);
   const hasFiles = $derived(translationStore.hasFiles);
@@ -1152,7 +1153,7 @@
   const canTranslate = $derived(
     hasFiles &&
     translateAllTargetCount > 0 &&
-    translationStore.config.model &&
+    !!translationStore.config.model &&
     hasApiKey
   );
   const selectedJob = $derived(translationStore.selectedJob);
@@ -1167,27 +1168,65 @@
   const displayedContent = $derived(activeVersion?.translatedContent ?? selectedJob?.result?.translatedContent ?? '');
 
   // Debounced persistence for version edits
-  let persistTimer: ReturnType<typeof setTimeout> | null = null;
+  let persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
   function debouncedPersistVersionEdit(jobId: string, versionId: string, content: string): void {
-    // Update store immediately
     translationStore.updateVersionContent(jobId, versionId, content);
 
-    // Debounce the disk write
-    if (persistTimer) clearTimeout(persistTimer);
-    persistTimer = setTimeout(async () => {
+    const timerKey = `${jobId}:${versionId}`;
+    const existingTimer = persistTimers.get(timerKey);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    const nextTimer = setTimeout(async () => {
       const job = translationStore.jobs.find(j => j.id === jobId);
-      if (!job) return;
-      await saveTranslationData(job.file.path, {
-        version: 1,
-        filePath: job.file.path,
-        translationVersions: job.translationVersions,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
+      if (!job) {
+        persistTimers.delete(timerKey);
+        return;
+      }
+
+      try {
+        await saveTranslationData(job.file.path, {
+          version: 1,
+          filePath: job.file.path,
+          translationVersions: job.translationVersions,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+      } finally {
+        persistTimers.delete(timerKey);
+      }
     }, 500);
+
+    persistTimers.set(timerKey, nextTimer);
   }
 
-  // Result dialog state
+  function handleSelectedVersionChange(versionId: string): void {
+    if (!selectedJob) {
+      return;
+    }
+
+    translationStore.setActiveVersion(selectedJob.id, versionId);
+  }
+
+  function handleSelectedContentEdit(content: string): void {
+    if (!selectedJob) {
+      return;
+    }
+
+    if (activeVersion && activeVersionId) {
+      debouncedPersistVersionEdit(selectedJob.id, activeVersionId, content);
+      return;
+    }
+
+    if (selectedJob.result) {
+      translationStore.updateJob(selectedJob.id, {
+        result: { ...selectedJob.result, translatedContent: content },
+      });
+    }
+  }
+
   let resultDialogOpen = $state(false);
   let resultDialogJobId = $state<string | null>(null);
   const resultDialogJob = $derived(resultDialogJobId ? translationStore.jobs.find(j => j.id === resultDialogJobId) ?? null : null);
@@ -1195,6 +1234,41 @@
   function openResultDialog(jobId: string): void {
     resultDialogJobId = jobId;
     resultDialogOpen = true;
+  }
+
+  function handleResultDialogOpenChange(open: boolean): void {
+    resultDialogOpen = open;
+    if (!open) {
+      resultDialogJobId = null;
+    }
+  }
+
+  function handleRetryDialogOpenChange(open: boolean): void {
+    retryDialogOpen = open;
+    if (!open) {
+      retryDialogJobId = null;
+    }
+  }
+
+  function handleSourceDialogOpenChange(open: boolean): void {
+    sourceDialogOpen = open;
+    if (!open) {
+      sourceDialogSourceId = null;
+      sourceDialogItems = [];
+      sourceDialogLabel = '';
+    }
+  }
+
+  function handleRemoveDialogOpenChange(open: boolean): void {
+    removeDialogOpen = open;
+    if (!open && removeTarget) {
+      removeTarget = null;
+    }
+  }
+
+  function handleCancelRemoveDialog(): void {
+    removeDialogOpen = false;
+    removeTarget = null;
   }
 
   async function handleDeleteTranslationVersion(versionId: string): Promise<void> {
@@ -1217,316 +1291,49 @@
 </script>
 
 <div class="flex flex-col h-full">
-  <!-- Top Section: Config and File List -->
   <div class="flex min-h-0 flex-1">
-    <!-- Left Panel: File Import & Config -->
-    <div class="flex-1 max-w-100 border-r flex flex-col min-h-0">
-      <div class="flex-1 min-h-0 overflow-y-auto p-4">
-        <div class="space-y-4 pb-4">
-          <!-- File Section -->
-          <Card.Root
-              class={hasFiles ? "" : "pb-0"}>
-            <Card.Header>
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-2">
-                  <FileText class="size-5 text-primary" />
-                  <Card.Title>Subtitle Files</Card.Title>
-                  {#if translationStore.jobs.length > 0}
-                    <Badge variant="secondary">{translationStore.jobs.length}</Badge>
-                  {/if}
-                </div>
+    <TranslationSidebar
+      jobs={translationStore.jobs}
+      selectedJobId={selectedJob?.id ?? null}
+      {hasFiles}
+      {isTranslating}
+      {canTranslate}
+      {translateAllTargetCount}
+      batchCount={translationStore.config.batchCount}
+      onSelectJob={(jobId) => translationStore.selectJob(jobId)}
+      onRequestRemoveJob={handleRequestRemoveJob}
+      onRequestRemoveAll={handleRequestRemoveAll}
+      onCancelJob={handleCancelJob}
+      onOpenResult={(job) => openResultDialog(job.id)}
+      onRetryJob={handleRetryRequest}
+      onImportClick={handleImportClick}
+      onImportFromSource={handleImportFromSource}
+      onBatchCountChange={(value) => translationStore.setBatchCount(value)}
+      onTranslateAll={handleTranslateAll}
+      onCancelAll={handleCancelAll}
+      {onNavigateToSettings}
+    />
 
-                <div class="flex items-center gap-2">
-                  {#if translationStore.jobs.length > 0}
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onclick={handleRequestRemoveAll}
-                      class="text-muted-foreground hover:text-destructive"
-                    >
-                      <Trash2 class="size-4" />
-                      <span class="sr-only">Clear all</span>
-                    </Button>
-                  {/if}
-                  <ToolImportButton
-                    targetTool="translate"
-                    label="Import"
-                    variant="outline"
-                    onBrowse={handleImportClick}
-                    onSelectSource={handleImportFromSource}
-                    disabled={isTranslating}
-                  />
-                </div>
-              </div>
-            </Card.Header>
-            <Card.Content class="p-2">
-              {#if hasFiles}
-                <div class="px-3">
-                  <TranslationFileList
-                    jobs={translationStore.jobs}
-                    selectedId={selectedJob?.id ?? null}
-                    onSelect={(id) => translationStore.selectJob(id)}
-                    onRemove={handleRequestRemoveJob}
-                    onCancel={handleCancelJob}
-                    onViewResult={(job) => openResultDialog(job.id)}
-                    onRetry={handleRetryRequest}
-                    disabled={isTranslating}
-                  />
-                </div>
-              {:else}
-                <ImportDropZone
-                  icon={Languages}
-                  title="Drop subtitle files here"
-                  formats={SUBTITLE_FORMATS}
-                  onBrowse={handleImportClick}
-                  disabled={isTranslating}
-                />
-              {/if}
-            </Card.Content>
-          </Card.Root>
-
-          <!-- Config Panel -->
-          <TranslationConfigPanel onNavigateToSettings={onNavigateToSettings} />
-
-          <!-- Batch Settings -->
-          <Card.Root>
-            <Card.Header class="pb-3">
-              <Card.Title class="text-sm">Batch Settings</Card.Title>
-            </Card.Header>
-            <Card.Content class="space-y-3">
-              <div class="space-y-2">
-                <Label for="batch-count" class="text-xs">Number of batches</Label>
-                <Input
-                  id="batch-count"
-                  type="number"
-                  min="1"
-                  max="20"
-                  value={translationStore.config.batchCount}
-                  oninput={(e) => translationStore.setBatchCount(parseInt(e.currentTarget.value) || 1)}
-                  class="h-8"
-                />
-                <p class="text-xs text-muted-foreground">
-                  Split file into N parts to avoid token limits (1 = no split)
-                </p>
-              </div>
-            </Card.Content>
-          </Card.Root>
-          <!-- Action Buttons -->
-          <div class="flex gap-2 pt-2">
-            {#if isTranslating}
-              <Button variant="destructive" class="flex-1" onclick={handleCancelAll}>
-                <Square class="size-4 mr-2" />
-                Cancel All
-              </Button>
-            {:else}
-              <Button
-                size="lg"
-                class="flex-1"
-                onclick={handleTranslateAll}
-                disabled={!canTranslate}
-              >
-                <Play class="size-4 mr-2" />
-                Translate ({translateAllTargetCount})
-              </Button>
-            {/if}
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Right Panel: Comparison View -->
-    <div class="flex-2 flex flex-col min-h-0 overflow-scroll">
-      {#if selectedJob}
-        <div class="p-4 border-b flex items-center justify-between">
-          <div class="flex items-center gap-2 min-w-0">
-            <FileText class="size-5 text-primary shrink-0" />
-            <h3 class="font-medium truncate">{selectedJob.file.name}</h3>
-            <Badge variant={selectedJob.status === 'completed' ? 'default' : selectedJob.status === 'error' ? 'destructive' : 'secondary'}>
-              {selectedJob.status}
-            </Badge>
-            {#if selectedJobVersions.length > 1}
-              <Select.Root
-                type="single"
-                value={activeVersionId ?? undefined}
-                onValueChange={(v) => {
-                  if (selectedJob && v) {
-                    translationStore.setActiveVersion(selectedJob.id, v);
-                  }
-                }}
-              >
-                <Select.Trigger class="h-7 text-xs w-auto min-w-[120px]">
-                  {activeVersion?.name ?? 'Select version'}
-                </Select.Trigger>
-                <Select.Content>
-                  <Select.Group>
-                    {#each selectedJobVersions as version (version.id)}
-                      <Select.Item value={version.id}>{version.name}</Select.Item>
-                    {/each}
-                  </Select.Group>
-                </Select.Content>
-              </Select.Root>
-            {/if}
-          </div>
-          {#if displayedContent}
-            <div class="flex gap-2 shrink-0">
-              <Button
-                variant="outline"
-                size="icon-sm"
-                onclick={() => handleCopyToClipboard(displayedContent)}
-                title="Copy translation"
-                aria-label="Copy translation"
-              >
-                <Copy class="size-4" />
-              </Button>
-            </div>
-          {/if}
-        </div>
-
-        <Resizable.PaneGroup direction="horizontal" class="flex-1 min-h-0">
-          <!-- Original Content -->
-          <Resizable.Pane defaultSize={50} minSize={20}>
-            <div class="h-full flex flex-col">
-              <div class="p-2 bg-muted/30 border-b flex items-center justify-between">
-                <span class="text-sm font-medium">Original</span>
-                <span class="text-xs text-muted-foreground">
-                  {selectedJob.file.content.split('\n').length} lines
-                  {#if tokenCount() !== null}
-                    · ~{tokenCount()?.toLocaleString()} tokens
-                  {:else if isCountingTokens}
-                    · <Loader2 class="size-3 animate-spin inline" />
-                  {/if}
-                </span>
-              </div>
-              <div class="flex-1 overflow-y-scroll">
-                <pre class="p-4 text-sm whitespace-pre-wrap font-mono">{selectedJob.file.content}</pre>
-              </div>
-            </div>
-          </Resizable.Pane>
-
-          <Resizable.Handle withHandle />
-
-          <!-- Translated Content -->
-          <Resizable.Pane defaultSize={50} minSize={20}>
-            <div class="h-full flex flex-col">
-              <div class="p-2 bg-muted/30 border-b flex items-center justify-between">
-                <span class="text-sm font-medium">
-                  Translation
-                  {#if activeVersion}
-                    <span class="text-xs text-muted-foreground ml-1">({activeVersion.name})</span>
-                  {/if}
-                </span>
-                <span class="text-xs text-muted-foreground">
-                  {#if displayedContent}
-                    {displayedContent.split('\n').length} lines
-                  {/if}
-                  {#if activeVersion?.usage}
-                    <Tooltip.Root>
-                      <Tooltip.Trigger>· {activeVersion.usage.totalTokens.toLocaleString()} tokens</Tooltip.Trigger>
-                      <Tooltip.Content>
-                        <span>
-                          {activeVersion.usage.promptTokens.toLocaleString()} in / {activeVersion.usage.completionTokens.toLocaleString()} out
-                        </span>
-                      </Tooltip.Content>
-                    </Tooltip.Root>
-                  {:else if selectedJob.result?.usage && !activeVersion}
-                    <Tooltip.Root>
-                      <Tooltip.Trigger>· {selectedJob.result.usage.totalTokens.toLocaleString()} tokens</Tooltip.Trigger>
-                      <Tooltip.Content>
-                        <span>
-                          {selectedJob.result.usage.promptTokens.toLocaleString()} in / {selectedJob.result.usage.completionTokens.toLocaleString()} out
-                        </span>
-                      </Tooltip.Content>
-                    </Tooltip.Root>
-                  {/if}
-                </span>
-              </div>
-              <div class="flex-1 overflow-y-scroll">
-                {#if selectedJob.status === 'translating'}
-                  <div class="flex flex-col items-center justify-center h-full p-8 gap-4">
-                    <Loader2 class="size-8 text-primary animate-spin" />
-                    <div class="text-center">
-                      <p class="font-medium">Translating...</p>
-                      <p class="text-sm text-muted-foreground">
-                        {selectedJob.progress}%
-                        {#if selectedJob.totalBatches > 1}
-                          - Batch {selectedJob.currentBatch}/{selectedJob.totalBatches}
-                        {/if}
-                      </p>
-                    </div>
-                    <Progress value={selectedJob.progress} class="w-48" />
-                  </div>
-                {:else if displayedContent}
-                  <Textarea
-                    class="w-full h-full p-4 resize-none font-mono text-sm border-0 focus-visible:ring-0 rounded-none bg-transparent"
-                    value={displayedContent}
-                    oninput={(e) => {
-                      if (!selectedJob) return;
-                      const newContent = e.currentTarget.value;
-                      if (activeVersion && activeVersionId) {
-                        // Edit the active version content with debounced persist
-                        debouncedPersistVersionEdit(selectedJob.id, activeVersionId, newContent);
-                      } else if (selectedJob.result) {
-                        // Legacy: edit result directly (no version)
-                        translationStore.updateJob(selectedJob.id, {
-                          result: { ...selectedJob.result, translatedContent: newContent }
-                        });
-                      }
-                    }}
-                  />
-                {:else if selectedJob.status === 'error'}
-                  <div class="flex flex-col items-center justify-center h-full p-8 gap-4">
-                    <AlertCircle class="size-8 text-destructive" />
-                    <div class="text-center">
-                      <p class="font-medium text-destructive">Translation failed</p>
-                      <p class="text-sm text-muted-foreground mt-2">{selectedJob.error}</p>
-                    </div>
-                    {#if selectedJob.result?.truncated}
-                      <div class="flex flex-col items-center gap-2 mt-2">
-                        <p class="text-xs text-muted-foreground">Response was truncated due to token limits</p>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onclick={() => retryWithMoreBatches(selectedJob)}
-                          disabled={isTranslating}
-                        >
-                          <RotateCw class="size-4 mr-2" />
-                          Retry with more batches
-                        </Button>
-                      </div>
-                    {/if}
-                  </div>
-                {:else if selectedJob.status === 'cancelled'}
-                  <div class="flex flex-col items-center justify-center h-full p-8 gap-4">
-                    <X class="size-8 text-orange-500" />
-                    <p class="font-medium text-orange-500">Translation cancelled</p>
-                  </div>
-                {:else}
-                  <div class="flex flex-col items-center justify-center h-full p-8 text-center text-muted-foreground">
-                    <Languages class="size-8 mb-4" />
-                    <p>Click "Translate" to start</p>
-                  </div>
-                {/if}
-              </div>
-            </div>
-          </Resizable.Pane>
-        </Resizable.PaneGroup>
-      {:else}
-        <div class="flex-1 flex flex-col items-center justify-center text-center text-muted-foreground p-8">
-          <Languages class="size-12 mb-4" />
-          <p class="text-lg font-medium">No file selected</p>
-          <p class="text-sm">Import subtitle files to get started</p>
-        </div>
-      {/if}
-    </div>
+    <TranslationWorkspace
+      {selectedJob}
+      {selectedJobVersions}
+      {activeVersionId}
+      {activeVersion}
+      {displayedContent}
+      {tokenCount}
+      {isCountingTokens}
+      {isTranslating}
+      onSelectVersion={handleSelectedVersionChange}
+      onCopyContent={handleCopyToClipboard}
+      onEditContent={handleSelectedContentEdit}
+      onRetryWithMoreBatches={retryWithMoreBatches}
+    />
   </div>
 </div>
 
 <TranslationResultDialog
   open={resultDialogOpen}
-  onOpenChange={(v) => {
-    resultDialogOpen = v;
-    if (!v) resultDialogJobId = null;
-  }}
+  onOpenChange={handleResultDialogOpenChange}
   fileName={resultDialogJob?.file.name ?? ''}
   fileFormat={resultDialogJob?.file.format ?? 'srt'}
   versions={resultDialogJob?.translationVersions ?? []}
@@ -1535,12 +1342,7 @@
 
 <TranslationRetryDialog
   open={retryDialogOpen}
-  onOpenChange={(open) => {
-    retryDialogOpen = open;
-    if (!open) {
-      retryDialogJobId = null;
-    }
-  }}
+  onOpenChange={handleRetryDialogOpenChange}
   fileName={retryDialogJob?.file.name ?? ''}
   existingVersions={retryDialogJob?.translationVersions ?? []}
   defaultProvider={translationStore.config.provider}
@@ -1556,48 +1358,16 @@
 
 <ToolImportSourceDialog
   bind:open={sourceDialogOpen}
-  onOpenChange={(open) => {
-    sourceDialogOpen = open;
-    if (!open) {
-      sourceDialogSourceId = null;
-      sourceDialogItems = [];
-      sourceDialogLabel = '';
-    }
-  }}
+  onOpenChange={handleSourceDialogOpenChange}
   sourceLabel={sourceDialogLabel}
   items={sourceDialogItems}
   onConfirm={handleConfirmVersionImport}
 />
 
-<AlertDialog.Root bind:open={removeDialogOpen}>
-  <AlertDialog.Content>
-    <AlertDialog.Header>
-      <AlertDialog.Title>
-        {removeTarget?.mode === 'all' ? 'Remove all files while translating?' : 'Remove file while translating?'}
-      </AlertDialog.Title>
-      <AlertDialog.Description>
-        {#if removeTarget?.mode === 'all'}
-          One or more files are currently being translated. Removing all files will cancel active translations.
-        {:else}
-          This file is currently being translated. Removing it will cancel the active translation.
-        {/if}
-      </AlertDialog.Description>
-    </AlertDialog.Header>
-    <AlertDialog.Footer>
-      <AlertDialog.Cancel
-        onclick={() => {
-          removeDialogOpen = false;
-          removeTarget = null;
-        }}
-      >
-        Cancel
-      </AlertDialog.Cancel>
-      <AlertDialog.Action
-        onclick={handleConfirmRemove}
-        class="bg-destructive text-white hover:bg-destructive/90"
-      >
-        Remove
-      </AlertDialog.Action>
-    </AlertDialog.Footer>
-  </AlertDialog.Content>
-</AlertDialog.Root>
+<TranslationRemoveDialog
+  open={removeDialogOpen}
+  targetMode={removeTarget?.mode ?? null}
+  onOpenChange={handleRemoveDialogOpenChange}
+  onCancel={handleCancelRemoveDialog}
+  onConfirm={handleConfirmRemove}
+/>
