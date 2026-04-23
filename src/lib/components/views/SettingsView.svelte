@@ -542,7 +542,6 @@
 
         <div class="pt-2 text-xs text-muted-foreground">
           <p>The API key is stored locally and is never shared.</p>
-          <p class="mt-1">Deepgram offers $200 in free credits to get started.</p>
         </div>
       </Card.Content>
     </Card.Root>
