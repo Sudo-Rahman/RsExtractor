@@ -150,4 +150,29 @@ describe('merge AI payload and response validation', () => {
       'Match 1 was ignored because it contained an invalid confidence value.',
     ]);
   });
+
+  it('keeps a later valid duplicate when the first entry is invalid', () => {
+    const result = parseAndValidateMergeAiResponse(
+      JSON.stringify({
+        matches: [
+          { trackId: 'track-1', videoId: 'video-1', confidence: 'certain', reason: 'Invalid confidence' },
+          { trackId: 'track-1', videoId: 'video-1', confidence: 'high', reason: 'Valid fallback' },
+        ],
+      }),
+      ['track-1'],
+      ['video-1'],
+    );
+
+    expect(result.matches).toEqual([
+      {
+        trackId: 'track-1',
+        videoId: 'video-1',
+        confidence: 'high',
+        reason: 'Valid fallback',
+      },
+    ]);
+    expect(result.warnings).toEqual([
+      'Match 1 was ignored because it contained an invalid confidence value.',
+    ]);
+  });
 });

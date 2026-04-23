@@ -195,7 +195,6 @@ export function parseAndValidateMergeAiResponse(
       warnings.push(`Duplicate AI match for ${match.trackId} was ignored.`);
       return;
     }
-    seenTrackIds.add(match.trackId);
 
     const rawVideoId = match.videoId;
     let videoId: string | null = null;
@@ -218,6 +217,7 @@ export function parseAndValidateMergeAiResponse(
       return;
     }
 
+    seenTrackIds.add(match.trackId);
     matches.push({
       trackId: match.trackId,
       videoId,
