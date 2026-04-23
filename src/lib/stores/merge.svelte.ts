@@ -49,6 +49,7 @@ let aiModel = $state<string>(DEFAULT_AI_MODEL);
 let aiStatus = $state<MergeAiStatus>('idle');
 let aiSuggestions = $state<MergeAiSuggestion[]>([]);
 let aiError = $state<string | null>(null);
+let aiWarnings = $state<string[]>([]);
 
 // Track groups for bulk editing
 let trackGroups = $state<Map<string, TrackGroup>>(new Map());
@@ -169,6 +170,7 @@ function resetAiState(): void {
   aiStatus = 'idle';
   aiSuggestions = [];
   aiError = null;
+  aiWarnings = [];
 }
 
 export const mergeStore = {
@@ -192,6 +194,7 @@ export const mergeStore = {
   get aiStatus() { return aiStatus; },
   get aiSuggestions() { return aiSuggestions; },
   get aiError() { return aiError; },
+  get aiWarnings() { return aiWarnings; },
 
   async loadUiPreferences() {
     await loadPreferencesFromStore();
@@ -484,18 +487,21 @@ export const mergeStore = {
     aiStatus = 'analyzing';
     aiSuggestions = [];
     aiError = null;
+    aiWarnings = [];
   },
 
-  setAiPreview(suggestions: MergeAiSuggestion[]) {
+  setAiPreview(suggestions: MergeAiSuggestion[], warnings: string[] = []) {
     aiStatus = 'preview';
     aiSuggestions = suggestions;
     aiError = null;
+    aiWarnings = warnings;
   },
 
   setAiError(message: string) {
     aiStatus = 'error';
     aiSuggestions = [];
     aiError = message;
+    aiWarnings = [];
   },
 
   clearAiState() {

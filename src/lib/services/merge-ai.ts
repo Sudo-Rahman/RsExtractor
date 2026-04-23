@@ -12,12 +12,17 @@ import { type ScannedFile, scanFiles } from './ffprobe';
 import { callLlm } from './llm-client';
 import {
   buildMergeAiPromptPayload,
+  createMergeAiPromptIdMaps,
+  mapMergeAiPromptMatchesToRealIds,
   normalizeMergeAiName,
   parseAndValidateMergeAiResponse,
+  validateMergeAiSemanticMatches,
   type MergeAiCandidateTrack,
   type MergeAiCandidateVideo,
+  type MergeAiPromptIdMaps,
   type MergeAiProbeSummary,
   type MergeAiTrackSummary,
+  type MergeAiValidatedMatch,
 } from './merge-ai-core';
 
 function summarizeTrack(track: {
@@ -116,13 +121,15 @@ function buildMergeAiSystemPrompt(): string {
 function buildMergeAiUserPrompt(
   videos: MergeAiCandidateVideo[],
   tracks: MergeAiCandidateTrack[],
+  idMaps: MergeAiPromptIdMaps,
 ): string {
-  const payload = buildMergeAiPromptPayload(videos, tracks);
+  const payload = buildMergeAiPromptPayload(videos, tracks, idMaps);
 
   return [
     'Match each imported track to the best source video, if any.',
     'Return every imported track exactly once in the matches array.',
     'Use videoId: null when the match is ambiguous or unsupported.',
+    'Use only the short ids present in the payload, such as v001 and t001.',
     'Do not include commentary outside the JSON response.',
     '',
     'Payload JSON:',
@@ -151,9 +158,34 @@ export interface AnalyzeMergeAiMatchesOptions {
   signal?: AbortSignal;
 }
 
+export interface AnalyzeMergeAiMatchesResult {
+  suggestions: MergeAiSuggestion[];
+  warnings: string[];
+}
+
+function buildSuggestionsFromMatches(
+  tracks: ImportedTrack[],
+  matches: MergeAiValidatedMatch[],
+): MergeAiSuggestion[] {
+  const matchByTrackId = new Map(matches.map(match => [match.trackId, match]));
+
+  return tracks.map(track => {
+    const match = matchByTrackId.get(track.id);
+    return {
+      trackId: track.id,
+      videoId: match?.videoId ?? null,
+      confidence: match?.confidence ?? 'low',
+      reason: match?.reason ?? 'The AI did not return a match for this track.',
+      selected: match?.videoId !== null,
+    };
+  });
+}
+
 export async function analyzeMergeAiMatches(
   options: AnalyzeMergeAiMatchesOptions,
-): Promise<MergeAiSuggestion[]> {
+): Promise<AnalyzeMergeAiMatchesResult> {
+  const warnings: string[] = [];
+
   const providerName = LLM_PROVIDERS[options.provider]?.name || options.provider;
   const apiKey = settingsStore.getLLMApiKey(options.provider);
   if (!apiKey) {
@@ -167,13 +199,14 @@ export async function analyzeMergeAiMatches(
   const probeByPath = await probeImportedTracks(options.tracks);
   const videoCandidates = options.videos.map(buildVideoCandidate);
   const trackCandidates = options.tracks.map(track => buildTrackCandidate(track, probeByPath.get(track.path)));
+  const idMaps = createMergeAiPromptIdMaps(videoCandidates, trackCandidates);
 
   const llmResponse = await callLlm({
     provider: options.provider,
     apiKey,
     model: options.model,
     systemPrompt: buildMergeAiSystemPrompt(),
-    userPrompt: buildMergeAiUserPrompt(videoCandidates, trackCandidates),
+    userPrompt: buildMergeAiUserPrompt(videoCandidates, trackCandidates, idMaps),
     responseMode: 'json',
     temperature: 0,
     signal: options.signal,
@@ -188,22 +221,22 @@ export async function analyzeMergeAiMatches(
     throw new Error(llmResponse.error);
   }
 
-  const validatedMatches = parseAndValidateMergeAiResponse(
+  const parsedMatches = parseAndValidateMergeAiResponse(
     llmResponse.content,
-    options.tracks.map(track => track.id),
-    options.videos.map(video => video.id),
+    idMaps.realTrackIdByPromptId.keys(),
+    idMaps.realVideoIdByPromptId.keys(),
   );
+  warnings.push(...parsedMatches.warnings);
 
-  const matchByTrackId = new Map(validatedMatches.map(match => [match.trackId, match]));
+  const realAiMatches = mapMergeAiPromptMatchesToRealIds(parsedMatches.matches, idMaps);
+  const semanticResult = validateMergeAiSemanticMatches(realAiMatches, options.tracks, options.videos);
+  warnings.push(...semanticResult.warnings);
 
-  return options.tracks.map(track => {
-    const match = matchByTrackId.get(track.id);
-    return {
-      trackId: track.id,
-      videoId: match?.videoId ?? null,
-      confidence: match?.confidence ?? 'low',
-      reason: match?.reason ?? 'The AI did not return a match for this track.',
-      selected: match?.videoId !== null,
-    };
-  });
+  return {
+    suggestions: buildSuggestionsFromMatches(
+      options.tracks,
+      semanticResult.matches,
+    ),
+    warnings,
+  };
 }
