@@ -9,6 +9,7 @@ import type {
   TranscodeAudioTrackOverride,
   TranscodeCapabilities,
   TranscodeContainerCapability,
+  TranscodeEncoderOption,
   TranscodeFile,
   TranscodeMetadata,
   TranscodeOutputTrackPlan,
@@ -205,6 +206,70 @@ export function cloneAdditionalArgs<T extends { id: string; flag: string; value?
   additionalArgs: T[],
 ): T[] {
   return additionalArgs.map((item) => ({ ...item }));
+}
+
+export function scoreTranscodeEncoderOption(option: TranscodeEncoderOption): number {
+  if (!option.flag.trim()) {
+    return 0;
+  }
+
+  let score = 1;
+
+  if (option.valueKind === 'dictionary') {
+    score += 100;
+  } else if (option.valueKind === 'int' || option.valueKind === 'float') {
+    score += 45;
+  } else if (option.valueKind === 'boolean') {
+    score += 20;
+  } else if (option.valueKind === 'string') {
+    score += 10;
+  }
+
+  if (option.choices.length > 0) {
+    score += 65 + Math.min(option.choices.length, 10);
+  }
+
+  const hasFiniteMin = option.min !== undefined && Number.isFinite(option.min);
+  const hasFiniteMax = option.max !== undefined && Number.isFinite(option.max);
+  if (hasFiniteMin || hasFiniteMax) {
+    score += 25;
+  }
+  if (hasFiniteMin && hasFiniteMax && option.max! > option.min!) {
+    score += 15;
+  }
+
+  if (option.defaultValue !== undefined) {
+    score += 5;
+  }
+  if (option.description.trim()) {
+    score += 2;
+  }
+
+  return score;
+}
+
+export function getSuggestedTranscodeOverrideFlags(
+  options: TranscodeEncoderOption[],
+  maxCount = 5,
+): string[] {
+  const seenFlags = new Set<string>();
+
+  return options
+    .map((option) => ({
+      flag: option.flag,
+      score: scoreTranscodeEncoderOption(option),
+    }))
+    .filter(({ flag, score }) => flag.trim() && score > 0)
+    .sort((left, right) => right.score - left.score || left.flag.localeCompare(right.flag))
+    .filter(({ flag }) => {
+      if (seenFlags.has(flag)) {
+        return false;
+      }
+      seenFlags.add(flag);
+      return true;
+    })
+    .slice(0, maxCount)
+    .map(({ flag }) => flag);
 }
 
 export function cloneVideoSettings(settings: TranscodeVideoSettings): TranscodeVideoSettings {
@@ -1224,6 +1289,8 @@ function normalizeAudioTrackOverrides(
         trackId: trackOverride.trackId,
         ...normalized,
         additionalArgs: cloneAdditionalArgs(trackOverride.additionalArgs ?? []),
+        source: trackOverride.source,
+        reason: trackOverride.reason,
       };
     });
 }
@@ -1389,41 +1456,107 @@ export function normalizeProfileForContainerChange(
   return clampTranscodeProfile(next, capabilities, file);
 }
 
+function sourceAudioBitrateKbps(track?: Track): number | undefined {
+  return track?.bitrate
+    ? Math.max(1, Math.round(track.bitrate / 1000))
+    : undefined;
+}
+
+function hasAudioSafetyPatch(patch: Partial<TranscodeAudioTrackOverride>): boolean {
+  return Object.keys(patch).length > 0;
+}
+
+function buildSourceAwareAudioSafetyPatch(
+  settings: Pick<TranscodeAudioTrackOverride, 'mode' | 'encoderId' | 'bitrateKbps' | 'channels' | 'sampleRate'>,
+  sourceTrack: Track,
+  capabilities: TranscodeCapabilities | null,
+): Partial<TranscodeAudioTrackOverride> {
+  const sourceAudioCodec = normalizeCodecName(sourceTrack.codec);
+  if (settings.mode !== 'transcode' || !sourceAudioCodec || !isLossyAudioCodec(sourceAudioCodec)) {
+    return {};
+  }
+
+  const targetAudioEncoder = getAudioEncoderCapability(capabilities, settings.encoderId);
+  if (isLosslessAudioCodec(targetAudioEncoder?.codec)) {
+    return {
+      mode: 'copy',
+      encoderId: undefined,
+      bitrateKbps: undefined,
+      channels: undefined,
+      sampleRate: undefined,
+    };
+  }
+
+  const patch: Partial<TranscodeAudioTrackOverride> = {};
+  const sourceBitrateKbps = sourceAudioBitrateKbps(sourceTrack);
+
+  if (sourceBitrateKbps && settings.bitrateKbps && settings.bitrateKbps > sourceBitrateKbps) {
+    patch.bitrateKbps = sourceBitrateKbps;
+  }
+
+  if (sourceTrack.channels && settings.channels && settings.channels > sourceTrack.channels) {
+    patch.channels = sourceTrack.channels;
+  }
+
+  if (sourceTrack.sampleRate && settings.sampleRate && settings.sampleRate > sourceTrack.sampleRate) {
+    patch.sampleRate = sourceTrack.sampleRate;
+  }
+
+  return patch;
+}
+
+function applyAudioSafetyPatchToOverride(
+  audio: TranscodeProfile['audio'],
+  sourceTrack: Track,
+  effectiveSettings: TranscodeAudioTrackOverride,
+  patch: Partial<TranscodeAudioTrackOverride>,
+): void {
+  const existingOverride = getAudioTrackOverride(audio, sourceTrack.id);
+  const nextOverride: TranscodeAudioTrackOverride = {
+    ...effectiveSettings,
+    ...existingOverride,
+    ...patch,
+    trackId: sourceTrack.id,
+    additionalArgs: cloneAdditionalArgs(existingOverride?.additionalArgs ?? []),
+    source: existingOverride ? existingOverride.source : 'ai',
+    reason: existingOverride ? existingOverride.reason : 'Adjusted to avoid upgrading lossy source audio.',
+  };
+
+  audio.trackOverrides = existingOverride
+    ? audio.trackOverrides.map((trackOverride) =>
+      trackOverride.trackId === sourceTrack.id ? nextOverride : trackOverride,
+    )
+    : [...audio.trackOverrides, nextOverride];
+}
+
 export function applySourceAwareRecommendation(
   profile: TranscodeProfile,
   capabilities: TranscodeCapabilities | null,
   file: Pick<TranscodeFile, 'hasVideo' | 'hasAudio' | 'tracks'>,
 ): TranscodeProfile {
   const next = cloneTranscodeProfile(profile);
-  const sourceAudioTrack = getPrimaryAudioTrack(file);
-  const sourceAudioCodec = normalizeCodecName(sourceAudioTrack?.codec);
-  const sourceAudioBitrateKbps = sourceAudioTrack?.bitrate
-    ? Math.max(1, Math.round(sourceAudioTrack.bitrate / 1000))
-    : undefined;
-  const targetAudioEncoder = getAudioEncoderCapability(capabilities, next.audio.encoderId);
 
-  if (file.hasAudio && next.audio.mode === 'transcode' && sourceAudioCodec) {
-    if (isLossyAudioCodec(sourceAudioCodec) && isLosslessAudioCodec(targetAudioEncoder?.codec)) {
-      next.audio.mode = 'copy';
-      next.audio.encoderId = undefined;
-      next.audio.bitrateKbps = undefined;
-      next.audio.channels = undefined;
-      next.audio.sampleRate = undefined;
+  if (!file.hasAudio) {
+    return clampTranscodeProfile(next, capabilities, file);
+  }
+
+  const audioTracks = getTracksByType(file, 'audio');
+  for (const sourceTrack of audioTracks) {
+    const effectiveSettings = getEffectiveAudioSettingsForTrack(next.audio, sourceTrack.id);
+    const patch = buildSourceAwareAudioSafetyPatch(effectiveSettings, sourceTrack, capabilities);
+    if (!hasAudioSafetyPatch(patch)) {
+      continue;
     }
 
-    if (isLossyAudioCodec(sourceAudioCodec)) {
-      if (sourceAudioBitrateKbps && next.audio.bitrateKbps && next.audio.bitrateKbps > sourceAudioBitrateKbps) {
-        next.audio.bitrateKbps = sourceAudioBitrateKbps;
-      }
+    const shouldPatchTrackOverride = audioTracks.length > 1
+      || Boolean(getAudioTrackOverride(next.audio, sourceTrack.id));
 
-      if (sourceAudioTrack?.channels && next.audio.channels && next.audio.channels > sourceAudioTrack.channels) {
-        next.audio.channels = sourceAudioTrack.channels;
-      }
-
-      if (sourceAudioTrack?.sampleRate && next.audio.sampleRate && next.audio.sampleRate > sourceAudioTrack.sampleRate) {
-        next.audio.sampleRate = sourceAudioTrack.sampleRate;
-      }
+    if (shouldPatchTrackOverride) {
+      applyAudioSafetyPatchToOverride(next.audio, sourceTrack, effectiveSettings, patch);
+      continue;
     }
+
+    Object.assign(next.audio, patch);
   }
 
   return clampTranscodeProfile(next, capabilities, file);
@@ -1533,7 +1666,7 @@ export function createTranscodeRequest(file: TranscodeFile, outputPath: string):
 export function describeTrackSummary(file: Pick<TranscodeFile, 'tracks' | 'hasVideo' | 'hasAudio'>): string {
   const parts: string[] = [];
   const videoTrack = getPrimaryVideoTrack(file);
-  const audioTrack = getPrimaryAudioTrack(file);
+  const audioTracks = getTracksByType(file, 'audio');
   const subtitleCount = getTracksByType(file, 'subtitle').length;
 
   if (videoTrack) {
@@ -1546,8 +1679,12 @@ export function describeTrackSummary(file: Pick<TranscodeFile, 'tracks' | 'hasVi
     }
   }
 
-  if (audioTrack) {
-    parts.push(audioTrack.codec.toUpperCase());
+  if (audioTracks.length === 1) {
+    parts.push(audioTracks[0].codec.toUpperCase());
+  } else if (audioTracks.length > 1) {
+    const audioCodecs = Array.from(new Set(audioTracks.map((track) => track.codec.toUpperCase())));
+    const codecSummary = audioCodecs.length > 0 ? ` (${audioCodecs.join(', ')})` : '';
+    parts.push(`${audioTracks.length} audio${codecSummary}`);
   }
 
   if (subtitleCount > 0) {

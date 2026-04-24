@@ -21,6 +21,7 @@
     { value: 'merge', label: 'Merge' },
     { value: 'extraction', label: 'Extraction' },
     { value: 'rename', label: 'Rename' },
+    { value: 'transcode', label: 'Transcode' },
     { value: 'system', label: 'System' }
   ];
 
@@ -145,7 +146,7 @@
           </Select.Trigger>
           <Select.Content>
             <Select.Group>
-              {#each sourceOptions as option}
+              {#each sourceOptions as option (option.value)}
                 <Select.Item value={option.value}>{option.label}</Select.Item>
               {/each}
             </Select.Group>
@@ -162,7 +163,7 @@
           </Select.Trigger>
           <Select.Content>
             <Select.Group>
-              {#each levelOptions as option}
+              {#each levelOptions as option (option.value)}
                 <Select.Item value={option.value}>{option.label}</Select.Item>
               {/each}
             </Select.Group>

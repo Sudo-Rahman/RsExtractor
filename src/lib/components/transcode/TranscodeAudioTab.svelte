@@ -24,7 +24,6 @@
     selectedContainer: TranscodeContainerCapability | null;
     availableAudioModeOptions: TranscodeModeOption<TranscodeAudioMode>[];
     availableAudioEncoders: TranscodeAudioEncoderCapability[];
-    commonOverrideFlags: string[];
     updateProfile: TranscodeProfileUpdater;
     createId: (prefix: string) => string;
   }
@@ -37,7 +36,6 @@
     selectedContainer,
     availableAudioModeOptions,
     availableAudioEncoders,
-    commonOverrideFlags,
     updateProfile,
     createId,
   }: Props = $props();
@@ -141,7 +139,6 @@
     title="Additional Overrides"
     description="Optional safe FFmpeg flags for audio transcoding."
     emptyMessage="No audio overrides added."
-    commonFlags={commonOverrideFlags}
     encoderOptions={selectedAudioEncoder?.options ?? []}
     args={file.profile.audio.additionalArgs}
     createId={createId}
@@ -155,7 +152,6 @@
   audioTracks={audioTracks}
   selectedContainer={selectedContainer}
   availableAudioEncoders={availableAudioEncoders}
-  commonOverrideFlags={commonOverrideFlags}
   createId={createId}
   updateProfile={updateProfile}
 />

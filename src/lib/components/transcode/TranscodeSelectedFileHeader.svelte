@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Sparkles } from '@lucide/svelte';
 
-  import type { TranscodeFile } from '$lib/types';
+  import type { TranscodeAiSizePreference, TranscodeFile } from '$lib/types';
   import { Badge } from '$lib/components/ui/badge';
   import { describeTrackSummary } from '$lib/services/transcode';
 
@@ -10,6 +10,12 @@
   }
 
   let { file }: Props = $props();
+
+  function formatSizePreference(sizePreference?: TranscodeAiSizePreference): string {
+    if (sizePreference === 'minimum') return 'minimum size';
+    if (sizePreference === 'no_compromise') return 'no compromise';
+    return 'balanced';
+  }
 </script>
 
 <div class="border-b px-4 py-3">
@@ -20,7 +26,7 @@
       {#if file.aiRecommendation}
         <Badge class="gap-1">
           <Sparkles class="size-3" />
-          AI {file.aiRecommendation.intent}
+          AI {file.aiRecommendation.intent} · {formatSizePreference(file.aiRecommendation.sizePreference)}
         </Badge>
       {/if}
     </div>
