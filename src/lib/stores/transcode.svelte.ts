@@ -19,6 +19,7 @@ import type {
   FileRunState,
   LLMProvider,
   TranscodeAiIntent,
+  TranscodeAiSizePreference,
   TranscodeCapabilities,
   TranscodeFile,
   TranscodeMode,
@@ -56,6 +57,7 @@ let activeTab = $state<TranscodeTab>('video');
 let aiProvider = $state<LLMProvider>(DEFAULT_PROVIDER);
 let aiModel = $state<string>(DEFAULT_MODEL);
 let aiIntent = $state<TranscodeAiIntent>('quality');
+let aiSizePreference = $state<TranscodeAiSizePreference>('balanced');
 let aiUserPrompt = $state('');
 let fileRunStates = $state<Map<string, FileRunState>>(new Map());
 let runtimeProgress = $state<TranscodeRuntimeProgress>({
@@ -257,6 +259,10 @@ export const transcodeStore = {
     return aiIntent;
   },
 
+  get aiSizePreference() {
+    return aiSizePreference;
+  },
+
   get aiUserPrompt() {
     return aiUserPrompt;
   },
@@ -325,6 +331,10 @@ export const transcodeStore = {
 
   setAiIntent(intent: TranscodeAiIntent) {
     aiIntent = intent;
+  },
+
+  setAiSizePreference(sizePreference: TranscodeAiSizePreference) {
+    aiSizePreference = sizePreference;
   },
 
   setAiUserPrompt(nextPrompt: string) {

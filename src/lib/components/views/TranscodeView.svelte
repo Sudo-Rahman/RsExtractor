@@ -88,11 +88,6 @@
   const AUDIO_EXTENSIONS = ['.m4a', '.aac', '.mp3', '.flac', '.opus', '.wav', '.ogg', '.ac3', '.eac3', '.mka'];
   const SUPPORTED_EXTENSIONS = [...VIDEO_EXTENSIONS, ...AUDIO_EXTENSIONS];
   const SUPPORTED_FORMATS = SUPPORTED_EXTENSIONS.map((extension) => extension.slice(1).toUpperCase());
-  const COMMON_OVERRIDE_FLAGS: Record<TranscodePresetTab, string[]> = {
-    video: ['-tag:v', '-colorspace', '-color_trc', '-color_primaries', '-tune'],
-    audio: ['-compression_level', '-cutoff', '-frame_duration', '-application'],
-    subtitles: ['-fix_sub_duration'],
-  };
   const toolHeader = useToolHeader();
 
   let infoDialogOpen = $state(false);
@@ -440,6 +435,7 @@
             provider: transcodeStore.aiProvider,
             model: transcodeStore.aiModel,
             intent: transcodeStore.aiIntent,
+            sizePreference: transcodeStore.aiSizePreference,
             userInstruction: transcodeStore.aiUserPrompt,
           });
 
@@ -973,11 +969,13 @@
               provider={transcodeStore.aiProvider}
               model={transcodeStore.aiModel}
               intent={transcodeStore.aiIntent}
+              sizePreference={transcodeStore.aiSizePreference}
               userPrompt={transcodeStore.aiUserPrompt}
               isAnalyzing={isAnalyzingAi}
               onProviderChange={(provider) => transcodeStore.setAiProvider(provider)}
               onModelChange={(model) => transcodeStore.setAiModel(model)}
               onIntentChange={(intent) => transcodeStore.setAiIntent(intent)}
+              onSizePreferenceChange={(sizePreference) => transcodeStore.setAiSizePreference(sizePreference)}
               onUserPromptChange={(value) => transcodeStore.setAiUserPrompt(value)}
               onNavigateToSettings={onNavigateToSettings}
               onAnalyzeSelected={() => void handleAnalyzeAi('selected')}
@@ -1023,7 +1021,6 @@
                 videoLevelOptions={videoLevelOptions}
                 videoPixelFormatOptions={videoPixelFormatOptions}
                 videoPresetOptions={videoPresetOptions}
-                commonOverrideFlags={COMMON_OVERRIDE_FLAGS.video}
                 updateProfile={updateSelectedProfile}
                 createId={transcodeStore.generateId}
               />
@@ -1038,7 +1035,6 @@
                 selectedContainer={selectedContainer}
                 availableAudioModeOptions={availableAudioModeOptions}
                 availableAudioEncoders={availableAudioEncoders}
-                commonOverrideFlags={COMMON_OVERRIDE_FLAGS.audio}
                 updateProfile={updateSelectedProfile}
                 createId={transcodeStore.generateId}
               />
@@ -1051,7 +1047,6 @@
                 selectedSubtitleEncoder={selectedSubtitleEncoder}
                 availableSubtitleModeOptions={availableSubtitleModeOptions}
                 availableSubtitleEncoders={availableSubtitleEncoders}
-                commonOverrideFlags={COMMON_OVERRIDE_FLAGS.subtitles}
                 updateProfile={updateSelectedProfile}
                 createId={transcodeStore.generateId}
               />

@@ -14,7 +14,6 @@
     selectedSubtitleEncoder: TranscodeSubtitleEncoderCapability | null;
     availableSubtitleModeOptions: TranscodeModeOption<TranscodeSubtitleMode>[];
     availableSubtitleEncoders: TranscodeSubtitleEncoderCapability[];
-    commonOverrideFlags: string[];
     updateProfile: TranscodeProfileUpdater;
     createId: (prefix: string) => string;
   }
@@ -25,7 +24,6 @@
     selectedSubtitleEncoder,
     availableSubtitleModeOptions,
     availableSubtitleEncoders,
-    commonOverrideFlags,
     updateProfile,
     createId,
   }: Props = $props();
@@ -111,7 +109,6 @@
     title="Additional Overrides"
     description="Optional safe FFmpeg flags for subtitle handling."
     emptyMessage="No subtitle overrides added."
-    commonFlags={commonOverrideFlags}
     encoderOptions={selectedSubtitleEncoder?.options ?? []}
     args={file.profile.subtitles.additionalArgs}
     createId={createId}

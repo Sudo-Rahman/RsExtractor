@@ -7,13 +7,26 @@
   import * as Card from '$lib/components/ui/card';
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
-  import type { TranscodeAiIntent, TranscodeFile, LLMProvider } from '$lib/types';
+  import type { TranscodeAiIntent, TranscodeAiSizePreference, TranscodeFile, LLMProvider } from '$lib/types';
+
+  const INTENT_OPTIONS: Array<{ value: TranscodeAiIntent; label: string }> = [
+    { value: 'speed', label: 'Speed' },
+    { value: 'quality', label: 'Quality' },
+    { value: 'archive', label: 'Archive' },
+  ];
+
+  const SIZE_OPTIONS: Array<{ value: TranscodeAiSizePreference; label: string }> = [
+    { value: 'minimum', label: 'Min size' },
+    { value: 'balanced', label: 'Balanced' },
+    { value: 'no_compromise', label: 'No compromise' },
+  ];
 
   interface Props {
     selectedFile: TranscodeFile;
     provider: LLMProvider;
     model: string;
     intent: TranscodeAiIntent;
+    sizePreference: TranscodeAiSizePreference;
     userPrompt: string;
     isAnalyzing: boolean;
     onAnalyzeSelected?: () => void | Promise<void>;
@@ -21,6 +34,7 @@
     onProviderChange?: (provider: LLMProvider) => void;
     onModelChange?: (model: string) => void;
     onIntentChange?: (intent: TranscodeAiIntent) => void;
+    onSizePreferenceChange?: (sizePreference: TranscodeAiSizePreference) => void;
     onUserPromptChange?: (value: string) => void;
     onNavigateToSettings?: () => void;
   }
@@ -30,6 +44,7 @@
     provider,
     model,
     intent,
+    sizePreference,
     userPrompt,
     isAnalyzing,
     onAnalyzeSelected,
@@ -37,6 +52,7 @@
     onProviderChange,
     onModelChange,
     onIntentChange,
+    onSizePreferenceChange,
     onUserPromptChange,
     onNavigateToSettings,
   }: Props = $props();
@@ -66,6 +82,38 @@
       ? `${file.profile.subtitles.mode} · ${file.profile.subtitles.encoderId}`
       : file.profile.subtitles.mode;
   }
+
+  function countAiAdditionalOverrides(file: TranscodeFile): number {
+    return [
+      ...file.profile.video.additionalArgs,
+      ...file.profile.audio.additionalArgs,
+      ...file.profile.subtitles.additionalArgs,
+      ...file.profile.audio.trackOverrides.flatMap((trackOverride) => trackOverride.additionalArgs ?? []),
+    ].filter((arg) => arg.source === 'ai').length;
+  }
+
+  function countAiAudioTrackOverrides(file: TranscodeFile): number {
+    return file.profile.audio.trackOverrides.filter((trackOverride) => trackOverride.source === 'ai').length;
+  }
+
+  function formatAiGeneratedSummary(file: TranscodeFile): string {
+    const flagCount = countAiAdditionalOverrides(file);
+    const trackOverrideCount = countAiAudioTrackOverrides(file);
+    const parts = [];
+
+    if (flagCount > 0) {
+      parts.push(`${flagCount} override flag${flagCount === 1 ? '' : 's'}`);
+    }
+    if (trackOverrideCount > 0) {
+      parts.push(`${trackOverrideCount} audio track override${trackOverrideCount === 1 ? '' : 's'}`);
+    }
+
+    return parts.length > 0 ? parts.join(' · ') : 'No AI-generated overrides';
+  }
+
+  function formatSizePreference(sizePreference?: TranscodeAiSizePreference): string {
+    return SIZE_OPTIONS.find((option) => option.value === sizePreference)?.label ?? 'Balanced';
+  }
 </script>
 
 <Card.Root>
@@ -84,30 +132,36 @@
       onNavigateToSettings={onNavigateToSettings}
     />
 
-    <div class="space-y-2">
-      <Label class="text-sm font-medium">Intent</Label>
-      <div class="flex flex-wrap gap-2">
-        <Button
-          variant={intent === 'speed' ? 'default' : 'outline'}
-          size="sm"
-          onclick={() => onIntentChange?.('speed')}
-        >
-          Speed
-        </Button>
-        <Button
-          variant={intent === 'quality' ? 'default' : 'outline'}
-          size="sm"
-          onclick={() => onIntentChange?.('quality')}
-        >
-          Quality
-        </Button>
-        <Button
-          variant={intent === 'archive' ? 'default' : 'outline'}
-          size="sm"
-          onclick={() => onIntentChange?.('archive')}
-        >
-          Archive
-        </Button>
+    <div class="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+      <div class="space-y-2">
+        <Label class="text-sm font-medium">Optimization target</Label>
+        <div class="flex flex-wrap gap-2">
+          {#each INTENT_OPTIONS as option (option.value)}
+            <Button
+              variant={intent === option.value ? 'default' : 'outline'}
+              size="sm"
+              onclick={() => onIntentChange?.(option.value)}
+            >
+              {option.label}
+            </Button>
+          {/each}
+        </div>
+      </div>
+
+      <div class="space-y-2">
+        <Label class="text-sm font-medium">Size preference</Label>
+        <div class="flex flex-nowrap gap-2">
+          {#each SIZE_OPTIONS as option (option.value)}
+            <Button
+              variant={sizePreference === option.value ? 'default' : 'outline'}
+              size="sm"
+              class="shrink-0 px-3"
+              onclick={() => onSizePreferenceChange?.(option.value)}
+            >
+              <span class="whitespace-nowrap">{option.label}</span>
+            </Button>
+          {/each}
+        </div>
       </div>
     </div>
 
@@ -117,7 +171,7 @@
         id="transcode-ai-user-prompt"
         value={userPrompt}
         class="min-h-24 text-sm"
-        placeholder="Example: Prefer AV1 if it is supported and still practical for this source."
+        placeholder="Example: Keep all original audio tracks and make the video as small as practical."
         oninput={(event) => onUserPromptChange?.(event.currentTarget.value)}
       />
       <p class="text-xs text-muted-foreground">
@@ -158,7 +212,12 @@
               {selectedFile.aiRecommendation.provider} · {selectedFile.aiRecommendation.model}
             </p>
           </div>
-          <Badge>{selectedFile.aiRecommendation.intent}</Badge>
+          <div class="flex flex-wrap justify-end gap-2">
+            <Badge>{selectedFile.aiRecommendation.intent}</Badge>
+            <Badge variant="outline">
+              {formatSizePreference(selectedFile.aiRecommendation.sizePreference)}
+            </Badge>
+          </div>
         </div>
         <Textarea value={selectedFile.aiRecommendation.rationale} readonly class="min-h-24 text-sm" />
         <div class="rounded-md border bg-background p-3 text-sm space-y-1">
@@ -166,7 +225,16 @@
           <p><span class="font-medium">Video:</span> {formatVideoSummary(selectedFile)}</p>
           <p><span class="font-medium">Audio:</span> {formatAudioSummary(selectedFile)}</p>
           <p><span class="font-medium">Subtitles:</span> {formatSubtitleSummary(selectedFile)}</p>
+          <p><span class="font-medium">AI overrides:</span> {formatAiGeneratedSummary(selectedFile)}</p>
         </div>
+        {#if selectedFile.aiRecommendation.warnings?.length}
+          <div class="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm space-y-1">
+            <p class="font-medium">AI warnings</p>
+            {#each selectedFile.aiRecommendation.warnings as warning, index (index)}
+              <p class="text-muted-foreground">{warning}</p>
+            {/each}
+          </div>
+        {/if}
       </div>
     {:else}
       <div class="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">

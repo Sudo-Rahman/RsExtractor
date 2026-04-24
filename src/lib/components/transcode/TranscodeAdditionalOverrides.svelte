@@ -18,6 +18,7 @@
     TranscodeProfile,
     TranscodePresetTab,
   } from '$lib/types';
+  import { getSuggestedTranscodeOverrideFlags } from '$lib/services/transcode';
   import { cn } from '$lib/utils';
 
   import type { TranscodeProfileUpdater } from './types';
@@ -27,7 +28,6 @@
     title: string;
     description: string;
     emptyMessage: string;
-    commonFlags: string[];
     encoderOptions?: TranscodeEncoderOption[];
     args: TranscodeAdditionalArg[];
     createId?: (prefix: string) => string;
@@ -42,7 +42,6 @@
     title,
     description,
     emptyMessage,
-    commonFlags,
     encoderOptions = [],
     args,
     createId,
@@ -56,7 +55,9 @@
   const overrideRowElements: Record<string, HTMLDivElement | undefined> = {};
 
   const optionByFlag = $derived.by(() => new Map(encoderOptions.map((option) => [option.flag, option])));
-  const availableCommonFlags = $derived.by(() => commonFlags.filter((flag) => optionByFlag.has(flag)));
+  const suggestedOverrideFlags = $derived.by(() =>
+    getSuggestedTranscodeOverrideFlags(encoderOptions).filter((flag) => optionByFlag.has(flag)),
+  );
   const hasAvailableEncoderOptions = $derived(encoderOptions.length > 0);
 
   function getTarget(profile: TranscodeProfile) {
@@ -115,6 +116,7 @@
           flag: flag ?? '',
           value: '',
           enabled: true,
+          source: 'user',
         },
       ];
     });
@@ -123,8 +125,14 @@
   }
 
   function updateOverride(argId: string, updates: Partial<TranscodeAdditionalArg>): void {
+    const userUpdates: Partial<TranscodeAdditionalArg> = {
+      ...updates,
+      source: 'user',
+      reason: undefined,
+    };
+
     if (onUpdateOverride) {
-      onUpdateOverride(argId, updates);
+      onUpdateOverride(argId, userUpdates);
       return;
     }
 
@@ -135,7 +143,7 @@
     updateProfile((profile) => {
       const target = getTarget(profile);
       target.additionalArgs = target.additionalArgs.map((arg) =>
-        arg.id === argId ? { ...arg, ...updates } : arg,
+        arg.id === argId ? { ...arg, ...userUpdates } : arg,
       );
     });
   }
@@ -298,7 +306,7 @@
   </Card.Header>
   <Card.Content class="space-y-3">
     <div class="flex flex-wrap gap-2">
-      {#each availableCommonFlags as flag (flag)}
+      {#each suggestedOverrideFlags as flag (flag)}
         <Button variant="outline" size="sm" onclick={() => void addOverride(flag)}>
           {flag}
         </Button>
@@ -384,6 +392,10 @@
 
           {#if arg.flag && !selectedOption}
             <p class="text-xs text-destructive">Not available for the current encoder.</p>
+          {:else if arg.source === 'ai'}
+            <p class="text-xs text-muted-foreground">
+              AI generated{arg.reason ? ` · ${arg.reason}` : ''}
+            </p>
           {/if}
         </div>
 

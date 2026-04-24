@@ -34,7 +34,6 @@
     audioTracks: Track[];
     selectedContainer: TranscodeContainerCapability | null;
     availableAudioEncoders: TranscodeAudioEncoderCapability[];
-    commonOverrideFlags: string[];
     createId: (prefix: string) => string;
     updateProfile: TranscodeProfileUpdater;
   }
@@ -45,7 +44,6 @@
     audioTracks,
     selectedContainer,
     availableAudioEncoders,
-    commonOverrideFlags,
     createId,
     updateProfile,
   }: Props = $props();
@@ -142,6 +140,8 @@
       ...effectiveSettings,
       ...updates,
       trackId,
+      source: 'user' as const,
+      reason: undefined,
     };
 
     if (hasDraftOverride(trackId)) {
@@ -219,6 +219,7 @@
         flag: flag ?? '',
         value: '',
         enabled: true,
+        source: 'user',
       },
     ];
 
@@ -253,7 +254,7 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="sm:max-w-4xl flex h-[85vh] max-h-[85vh] flex-col overflow-hidden">
+  <Dialog.Content class="sm:max-w-5xl flex h-[85vh] max-h-[85vh] flex-col overflow-hidden">
     <Dialog.Header class="shrink-0">
       <Dialog.Title class="flex items-center gap-2">
         <Settings2 class="size-5" />
@@ -299,8 +300,8 @@
           </div>
         </div>
 
-        <div class="min-h-0 flex-1 overflow-hidden">
-          <div class="h-full min-h-0 overflow-y-auto pr-1">
+        <div class="min-h-0 flex-1 overflow-auto">
+          <div class="h-full min-h-0 px-4">
             {#if selectedTrack && selectedTrackEffectiveSettings}
               <div class="space-y-4 pb-1">
                 <div class="rounded-lg border bg-muted/20 p-4">
@@ -357,7 +358,6 @@
                       title="Additional Overrides"
                       description="Optional safe FFmpeg flags applied only to this track."
                       emptyMessage="No per-track audio overrides added."
-                      commonFlags={commonOverrideFlags}
                       encoderOptions={selectedTrackEncoder?.options ?? []}
                       args={selectedTrackOverride.additionalArgs ?? []}
                       onAddOverride={handleTrackAdditionalOverrideAdd}

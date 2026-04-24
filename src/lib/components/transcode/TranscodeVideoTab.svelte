@@ -30,7 +30,6 @@
     videoLevelOptions: string[];
     videoPixelFormatOptions: string[];
     videoPresetOptions: TranscodePresetOption[];
-    commonOverrideFlags: string[];
     updateProfile: TranscodeProfileUpdater;
     createId: (prefix: string) => string;
   }
@@ -45,7 +44,6 @@
     videoLevelOptions,
     videoPixelFormatOptions,
     videoPresetOptions,
-    commonOverrideFlags,
     updateProfile,
     createId,
   }: Props = $props();
@@ -342,7 +340,6 @@
     title="Additional Overrides"
     description="Optional safe FFmpeg flags for the current video encoder."
     emptyMessage="No video overrides added."
-    commonFlags={commonOverrideFlags}
     encoderOptions={selectedVideoEncoder?.options ?? []}
     args={file.profile.video.additionalArgs}
     createId={createId}

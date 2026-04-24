@@ -5,6 +5,7 @@ import type { LLMProvider } from './translation';
 export type TranscodeMode = 'ai' | 'advanced';
 export type TranscodeTab = 'video' | 'audio' | 'subtitles' | 'metadata' | 'output';
 export type TranscodeAiIntent = 'speed' | 'quality' | 'archive';
+export type TranscodeAiSizePreference = 'minimum' | 'balanced' | 'no_compromise';
 export type TranscodeAiStatus = 'idle' | 'analyzing' | 'completed' | 'error';
 export type TranscodeVideoMode = 'copy' | 'transcode' | 'disable';
 export type TranscodeAudioMode = 'copy' | 'transcode' | 'disable';
@@ -14,6 +15,7 @@ export type TranscodeContainerKind = 'video' | 'audio';
 export type TranscodePresetTab = 'video' | 'audio' | 'subtitles';
 export type TranscodeOutputTrackMode = 'copy' | 'transcode' | 'convert_text';
 export type TranscodeEncoderOptionValueKind = 'boolean' | 'int' | 'float' | 'string' | 'dictionary' | 'unknown';
+export type TranscodeGeneratedSource = 'user' | 'ai';
 
 export interface TranscodeContainerMetadataSchema {
   supportsContainerTitle: boolean;
@@ -29,6 +31,8 @@ export interface TranscodeAdditionalArg {
   flag: string;
   value?: string;
   enabled: boolean;
+  source?: TranscodeGeneratedSource;
+  reason?: string;
 }
 
 export interface TranscodeVideoSettings {
@@ -63,6 +67,8 @@ export interface TranscodeAudioTrackOverride {
   channels?: number;
   sampleRate?: number;
   additionalArgs: TranscodeAdditionalArg[];
+  source?: TranscodeGeneratedSource;
+  reason?: string;
 }
 
 export interface TranscodeSubtitleSettings {
@@ -181,7 +187,9 @@ export interface TranscodeAiRecommendation {
   provider: LLMProvider;
   model: string;
   intent: TranscodeAiIntent;
+  sizePreference?: TranscodeAiSizePreference;
   rationale: string;
+  warnings?: string[];
   profile: TranscodeProfile;
   createdAt: number;
 }
@@ -199,6 +207,7 @@ export interface TranscodeAiSuccessResponse {
   audio: Partial<TranscodeProfile['audio']>;
   subtitles: Partial<TranscodeProfile['subtitles']>;
   rationale?: string;
+  warnings?: string[];
 }
 
 export interface TranscodeFile {
