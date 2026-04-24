@@ -8,32 +8,79 @@ import { log } from '$lib/utils/log-toast';
  */
 const DEFAULT_SCAN_CONCURRENCY = 3;
 
-function parseDerivedBitDepth(stream: FFprobeStream): number | undefined {
-  const explicit = stream.bits_per_raw_sample ? parseInt(stream.bits_per_raw_sample, 10) : undefined;
-  if (explicit && Number.isFinite(explicit) && explicit > 0) {
+const DEFAULT_VIDEO_BIT_DEPTH = 8;
+
+function parseBitDepth(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function parsePixelFormatBitDepth(pixelFormat: string | undefined): number | undefined {
+  if (!pixelFormat) return undefined;
+
+  const normalized = pixelFormat.toLowerCase();
+
+  if (normalized === 'monow' || normalized === 'monob') {
+    return 1;
+  }
+
+  const planarMatch = normalized.match(/p(9|10|12|14|16)(?:le|be)?$/);
+  if (planarMatch) {
+    return parseBitDepth(planarMatch[1]);
+  }
+
+  const semiPlanarMatch = normalized.match(/^p(?:0|2|4)(10|12|16)(?:le|be)?$/);
+  if (semiPlanarMatch) {
+    return parseBitDepth(semiPlanarMatch[1]);
+  }
+
+  const grayMatch = normalized.match(/^gray(9|10|12|14|16)(?:le|be)?$/);
+  if (grayMatch) {
+    return parseBitDepth(grayMatch[1]);
+  }
+
+  const packedRgbMatch = normalized.match(/^(?:x2rgb|x2bgr|y210|y212|y216|rgba64|bgra64|rgb48|bgr48)(?:le|be)?$/);
+  if (packedRgbMatch) {
+    if (normalized.includes('210') || normalized.includes('x2')) return 10;
+    if (normalized.includes('212')) return 12;
+    if (normalized.includes('216') || normalized.includes('64') || normalized.includes('48')) return 16;
+  }
+
+  return undefined;
+}
+
+function parseSampleFormatBitDepth(sampleFormat: string | undefined): number | undefined {
+  if (!sampleFormat) return undefined;
+
+  const normalized = sampleFormat.toLowerCase();
+  const integerMatch = normalized.match(/^[us](8|16|24|32|64)p?$/);
+  if (integerMatch) {
+    return parseBitDepth(integerMatch[1]);
+  }
+
+  return undefined;
+}
+
+export function parseDerivedBitDepth(stream: FFprobeStream): number | undefined {
+  const explicit = parseBitDepth(stream.bits_per_raw_sample);
+  if (explicit) {
     return explicit;
   }
 
-  const formatCandidates = [stream.pix_fmt, stream.sample_fmt].filter(
-    (value): value is string => Boolean(value),
-  );
+  const pixelFormatBitDepth = parsePixelFormatBitDepth(stream.pix_fmt);
+  if (pixelFormatBitDepth) {
+    return pixelFormatBitDepth;
+  }
 
-  for (const candidate of formatCandidates) {
-    if (candidate.includes('p010')) {
-      return 10;
-    }
-
-    const numericMatch = candidate.match(/(\d{2})(?:le|be)?$/i) ?? candidate.match(/[a-z]+(\d{2})/i);
-    if (numericMatch) {
-      const parsed = parseInt(numericMatch[1], 10);
-      if (Number.isFinite(parsed) && parsed > 0) {
-        return parsed;
-      }
-    }
+  const sampleFormatBitDepth = parseSampleFormatBitDepth(stream.sample_fmt);
+  if (sampleFormatBitDepth) {
+    return sampleFormatBitDepth;
   }
 
   if (stream.codec_type === 'video' && stream.pix_fmt) {
-    return 8;
+    return DEFAULT_VIDEO_BIT_DEPTH;
   }
 
   return undefined;
