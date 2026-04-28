@@ -1,10 +1,11 @@
 <script lang="ts">
   import { AlertTriangle, Key, Loader2, Play, Settings2, Users } from '@lucide/svelte';
-  import type { TranscriptionConfig, DeepgramConfig } from '$lib/types';
+  import type { TranscriptionConfig, DeepgramConfig, TranscriptionProvider } from '$lib/types';
   import { cn } from '$lib/utils';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
   import { Label } from '$lib/components/ui/label';
+  import * as Select from '$lib/components/ui/select';
   import { Switch } from '$lib/components/ui/switch';
   import { Slider } from '$lib/components/ui/slider';
   import { Separator } from '$lib/components/ui/separator';
@@ -23,6 +24,7 @@
     totalFilesCount: number;
     transcodingCount: number;
     invalidAutoLanguageFiles: string[];
+    onProviderChange: (provider: TranscriptionProvider) => void;
     onDeepgramConfigChange: (updates: Partial<DeepgramConfig>) => void;
     onMaxConcurrentChange: (value: number) => void;
     onTranscribeAll: () => void;
@@ -40,6 +42,7 @@
     totalFilesCount,
     transcodingCount,
     invalidAutoLanguageFiles,
+    onProviderChange,
     onDeepgramConfigChange,
     onMaxConcurrentChange,
     onTranscribeAll,
@@ -52,6 +55,7 @@
   const hasInvalidAutoLanguageFiles = $derived(
     config.deepgramConfig.language === 'multi' && invalidAutoLanguageFiles.length > 0
   );
+  const isMediaFlow = $derived(config.provider === 'mediaflow');
   
   const canTranscribe = $derived(
     transcribableFilesCount > 0 && 
@@ -79,9 +83,11 @@
     <div class="p-4">
       <Alert.Root variant="destructive" class="shrink-0">
         <Key class="size-4" />
-        <Alert.Title>Deepgram API Key Required</Alert.Title>
+        <Alert.Title>{isMediaFlow ? 'MediaFlow Sign-in Required' : 'Deepgram API Key Required'}</Alert.Title>
         <Alert.Description>
-          Please configure your Deepgram API key to use this feature.
+          {isMediaFlow
+            ? 'Sign in to MediaFlow to use managed transcription.'
+            : 'Please configure your Deepgram API key to use this feature.'}
           <Button variant="link" class="p-0 h-auto" onclick={onNavigateToSettings}>
             Go to Settings
           </Button>
@@ -91,19 +97,45 @@
   {/if}
 
   <div class="p-4 space-y-6 flex-1">
-    <!-- Model Selection -->
+    <!-- Provider Selection -->
     <Card.Root>
       <Card.Header class="pb-3">
-        <Card.Title class="text-sm">Model</Card.Title>
+        <Card.Title class="text-sm">Provider</Card.Title>
       </Card.Header>
       <Card.Content>
-        <ModelSelector
-          value={config.deepgramConfig.model}
-          onValueChange={(model) => onDeepgramConfigChange({ model })}
-          disabled={isTranscribing}
-        />
+        <Select.Root
+          type="single"
+          value={config.provider}
+          onValueChange={(value) => onProviderChange(value as TranscriptionProvider)}
+        >
+          <Select.Trigger class="w-full">
+            {config.provider === 'mediaflow' ? 'MediaFlow' : 'Deepgram'}
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Group>
+              <Select.Item value="deepgram">Deepgram</Select.Item>
+              <Select.Item value="mediaflow">MediaFlow</Select.Item>
+            </Select.Group>
+          </Select.Content>
+        </Select.Root>
       </Card.Content>
     </Card.Root>
+
+    <!-- Model Selection -->
+    {#if !isMediaFlow}
+      <Card.Root>
+        <Card.Header class="pb-3">
+          <Card.Title class="text-sm">Model</Card.Title>
+        </Card.Header>
+        <Card.Content>
+          <ModelSelector
+            value={config.deepgramConfig.model}
+            onValueChange={(model) => onDeepgramConfigChange({ model })}
+            disabled={isTranscribing}
+          />
+        </Card.Content>
+      </Card.Root>
+    {/if}
 
     <!-- Language -->
     <Card.Root>
@@ -140,7 +172,7 @@
       <Card.Header class="pb-3">
         <Card.Title class="text-sm flex items-center gap-2">
           <Settings2 class="size-4" />
-          Deepgram Options
+          {isMediaFlow ? 'MediaFlow Options' : 'Deepgram Options'}
         </Card.Title>
       </Card.Header>
       <Card.Content class="space-y-4">
@@ -209,30 +241,32 @@
           />
         </div>
 
-        <Separator />
+        {#if !isMediaFlow}
+          <Separator />
 
-        <!-- Utterance Split -->
-        <div class="space-y-3">
-          <div class="space-y-0.5">
-            <Label class="text-sm">Pause Threshold</Label>
-            <p class="text-xs text-muted-foreground">
-              Silence duration to split phrases ({config.deepgramConfig.uttSplit.toFixed(1)}s)
-            </p>
+          <!-- Utterance Split -->
+          <div class="space-y-3">
+            <div class="space-y-0.5">
+              <Label class="text-sm">Pause Threshold</Label>
+              <p class="text-xs text-muted-foreground">
+                Silence duration to split phrases ({config.deepgramConfig.uttSplit.toFixed(1)}s)
+              </p>
+            </div>
+            <Slider
+              type="multiple"
+              value={[config.deepgramConfig.uttSplit]}
+              onValueChange={(values: number[]) => onDeepgramConfigChange({ uttSplit: values[0] })}
+              min={0.1}
+              max={2.0}
+              step={0.1}
+              disabled={isTranscribing}
+            />
+            <div class="flex justify-between text-xs text-muted-foreground">
+              <span>0.1s (short phrases)</span>
+              <span>2.0s (long phrases)</span>
+            </div>
           </div>
-          <Slider
-            type="multiple"
-            value={[config.deepgramConfig.uttSplit]}
-            onValueChange={(values: number[]) => onDeepgramConfigChange({ uttSplit: values[0] })}
-            min={0.1}
-            max={2.0}
-            step={0.1}
-            disabled={isTranscribing}
-          />
-          <div class="flex justify-between text-xs text-muted-foreground">
-            <span>0.1s (short phrases)</span>
-            <span>2.0s (long phrases)</span>
-          </div>
-        </div>
+        {/if}
 
         <Separator />
 
@@ -305,7 +339,7 @@
     {#if !canTranscribe && !isTranscribing && !isTranscoding}
       <p class="text-xs text-muted-foreground text-center">
         {#if !apiKeyConfigured}
-          Configure your Deepgram API key
+          {isMediaFlow ? 'Sign in to MediaFlow' : 'Configure your Deepgram API key'}
         {:else if hasInvalidAutoLanguageFiles}
           Choose a source language manually above before transcribing
         {:else if transcribableFilesCount === 0}

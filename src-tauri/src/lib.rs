@@ -8,15 +8,21 @@ mod tools;
 pub use shared::ExtractionError;
 pub use tools::ocr::OcrModelPaths;
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    builder
+        .plugin(tauri_plugin_deep_link::init())
         .setup(app::setup)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {
+            // The deep-link feature forwards matching URLs to the running instance.
+        }))
         .invoke_handler(tauri::generate_handler![
             commands::ffprobe::probe_file,
             commands::ffmpeg_extract::extract_track,
@@ -60,8 +66,14 @@ pub fn run() {
             commands::transcode::transcode_media,
             commands::transcode_cancel::cancel_transcode,
             commands::transcode_cancel::cancel_transcode_file,
-            commands::transcode_analysis::extract_transcode_analysis_frames
+            commands::transcode_analysis::extract_transcode_analysis_frames,
+            commands::auth::store_refresh_token,
+            commands::auth::get_refresh_token,
+            commands::auth::delete_refresh_token
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            app::handle_run_event(app_handle, &event);
+        });
 }

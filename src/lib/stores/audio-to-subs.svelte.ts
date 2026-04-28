@@ -7,6 +7,7 @@ import type WaveSurfer from 'wavesurfer.js';
 import type { 
   AudioFile, 
   TranscriptionConfig,
+  TranscriptionProvider,
   DeepgramConfig,
   DeepgramModel,
   TranscriptionVersion
@@ -23,6 +24,7 @@ let selectedFileId = $state<string | null>(null);
 
 // Transcription configuration
 let config = $state<TranscriptionConfig>({
+  provider: 'deepgram',
   deepgramConfig: { ...DEFAULT_DEEPGRAM_CONFIG },
   maxConcurrentTranscriptions: 5,
 });
@@ -122,6 +124,10 @@ export const audioToSubsStore = {
 
   get deepgramConfig(): DeepgramConfig {
     return config.deepgramConfig;
+  },
+
+  get provider(): TranscriptionProvider {
+    return config.provider;
   },
 
   // -------------------------------------------------------------------------
@@ -329,6 +335,10 @@ export const audioToSubsStore = {
       ...config, 
       deepgramConfig: { ...config.deepgramConfig, ...updates } 
     };
+  },
+
+  setTranscriptionProvider(provider: TranscriptionProvider) {
+    config = { ...config, provider };
   },
 
   setModel(model: DeepgramModel) {
@@ -557,6 +567,7 @@ export const audioToSubsStore = {
   reset() {
     this.clear();
     config = {
+      provider: 'deepgram',
       deepgramConfig: { ...DEFAULT_DEEPGRAM_CONFIG },
       maxConcurrentTranscriptions: 5,
     };

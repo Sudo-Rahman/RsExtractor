@@ -359,7 +359,7 @@ function fixLeadingPunctuation(phrases: TranscriptionPhrase[]): TranscriptionPhr
  * Uses utterances (if available) for better natural speech segmentation,
  * with fallback to word-based segmentation if utterances are not present.
  */
-function processDeepgramResponse(response: DeepgramAPIResponse): DeepgramResult {
+export function processDeepgramResponse(response: DeepgramAPIResponse): DeepgramResult {
   const { metadata, results } = response;
   
   // Get the main transcript

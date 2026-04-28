@@ -18,9 +18,15 @@
   import { Badge } from '$lib/components/ui/badge';
   import { loadAppVersion } from '$lib/services/app-metadata';
 
-  import { Sun, Moon, Monitor, Palette, Terminal, FolderOpen, Download, CheckCircle, XCircle, RefreshCw, Info, Key, Eye, EyeOff, Languages, AudioLines, ExternalLink } from '@lucide/svelte';
+  import { Sun, Moon, Monitor, Palette, Terminal, FolderOpen, Download, CheckCircle, XCircle, RefreshCw, Info, Key, Eye, EyeOff, Languages, AudioLines, ExternalLink, LogIn, LogOut, UserRound, Globe } from '@lucide/svelte';
 
-  import { LLM_PROVIDERS, type LLMProvider } from '$lib/types';
+  import { LLM_API_KEY_PROVIDERS, LLM_PROVIDERS, type LLMApiKeyProvider } from '$lib/types';
+  import {
+    refreshMediaFlowSession,
+    restoreMediaFlowSession,
+    signInWithMediaFlow,
+    signOutMediaFlow,
+  } from '$lib/services/mediaflow-auth';
 
   type DownloadResult = {
     ffmpegPath: string;
@@ -66,18 +72,20 @@
   ] as const;
 
   // API Key visibility states
-  let showApiKeys = $state<Record<LLMProvider, boolean>>({
+  let showApiKeys = $state<Record<LLMApiKeyProvider, boolean>>({
     openai: false,
     anthropic: false,
     google: false,
     openrouter: false
   });
 
-  function toggleApiKeyVisibility(provider: LLMProvider) {
+  let isMediaFlowBusy = $state(false);
+
+  function toggleApiKeyVisibility(provider: LLMApiKeyProvider) {
     showApiKeys = { ...showApiKeys, [provider]: !showApiKeys[provider] };
   }
 
-  async function handleApiKeyChange(provider: LLMProvider, value: string) {
+  async function handleApiKeyChange(provider: LLMApiKeyProvider, value: string) {
     await settingsStore.setLLMApiKey(provider, value);
   }
 
@@ -88,6 +96,7 @@
   onMount(() => {
     const setup = async () => {
       await settingsStore.load();
+      await restoreMediaFlowSession();
       try {
         appVersion = await loadAppVersion();
       } catch {
@@ -221,10 +230,50 @@
     }
   }
 
+  async function handleMediaFlowSignIn() {
+    isMediaFlowBusy = true;
+    try {
+      await signInWithMediaFlow();
+      toast.info('Complete sign-in in your browser');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message);
+    } finally {
+      isMediaFlowBusy = false;
+    }
+  }
+
+  async function handleMediaFlowRefresh() {
+    isMediaFlowBusy = true;
+    try {
+      await refreshMediaFlowSession();
+      toast.success('MediaFlow session refreshed');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message);
+    } finally {
+      isMediaFlowBusy = false;
+    }
+  }
+
+  async function handleMediaFlowSignOut() {
+    isMediaFlowBusy = true;
+    try {
+      await signOutMediaFlow();
+      toast.success('Signed out from MediaFlow');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message);
+    } finally {
+      isMediaFlowBusy = false;
+    }
+  }
+
   const currentMode = $derived(mode.current || 'system');
   const deepgramApiKeyConfigured = $derived(
     settingsStore.settings.deepgramApiKey && settingsStore.settings.deepgramApiKey.length > 0
   );
+  const mediaflowUser = $derived(settingsStore.settings.mediaflowUser);
 </script>
 
 <div class="h-full overflow-auto p-6">
@@ -368,6 +417,72 @@
       </Card.Content>
     </Card.Root>
 
+    <!-- MediaFlow Account -->
+    <Card.Root>
+      <Card.Header>
+        <div class="flex items-center gap-2">
+          <UserRound class="size-5 text-primary" />
+          <Card.Title>MediaFlow Account</Card.Title>
+        </div>
+        <Card.Description>
+          Connect to the local MediaFlow backend for managed AI credits
+        </Card.Description>
+      </Card.Header>
+      <Card.Content class="space-y-4">
+        <div class="flex items-center justify-between p-3 rounded-md bg-muted/50">
+          <div class="flex items-center gap-2 min-w-0">
+            {#if mediaflowUser}
+              <CheckCircle class="size-4 text-green-500 shrink-0" />
+              <div class="min-w-0">
+                <p class="text-sm font-medium truncate">{mediaflowUser.name || mediaflowUser.email}</p>
+                <p class="text-xs text-muted-foreground truncate">{mediaflowUser.email}</p>
+              </div>
+            {:else}
+              <XCircle class="size-4 text-amber-500 shrink-0" />
+              <span class="text-sm text-amber-600 dark:text-amber-400">Not signed in</span>
+            {/if}
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <Label for="mediaflow-backend-url">Backend URL</Label>
+          <div class="flex gap-2">
+            <div class="relative flex-1">
+              <Globe class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                id="mediaflow-backend-url"
+                value={settingsStore.settings.mediaflowBaseUrl}
+                oninput={(e) => settingsStore.setMediaFlowBaseUrl(e.currentTarget.value)}
+                class="pl-9"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          {#if mediaflowUser}
+            <Button variant="outline" onclick={handleMediaFlowRefresh} disabled={isMediaFlowBusy}>
+              <RefreshCw class={['size-4 mr-2', isMediaFlowBusy && 'animate-spin']} />
+              Refresh session
+            </Button>
+            <Button variant="outline" onclick={handleMediaFlowSignOut} disabled={isMediaFlowBusy}>
+              <LogOut class="size-4 mr-2" />
+              Sign out
+            </Button>
+          {:else}
+            <Button onclick={handleMediaFlowSignIn} disabled={isMediaFlowBusy}>
+              {#if isMediaFlowBusy}
+                <RefreshCw class="size-4 mr-2 animate-spin" />
+              {:else}
+                <LogIn class="size-4 mr-2" />
+              {/if}
+              Sign in with MediaFlow
+            </Button>
+          {/if}
+        </div>
+      </Card.Content>
+    </Card.Root>
+
     <!-- LLM API Keys -->
     <Card.Root>
       <Card.Header>
@@ -380,14 +495,14 @@
         </Card.Description>
       </Card.Header>
       <Card.Content class="space-y-4">
-        {#each Object.entries(LLM_PROVIDERS) as [key, provider] (key)}
-          {@const providerKey = key as LLMProvider}
+        {#each LLM_API_KEY_PROVIDERS as providerKey (providerKey)}
+          {@const provider = LLM_PROVIDERS[providerKey]}
           <div class="space-y-2">
-            <Label for={`api-key-${key}`}>{provider.name} API Key</Label>
+            <Label for={`api-key-${providerKey}`}>{provider.name} API Key</Label>
             <div class="flex gap-2">
               <div class="relative flex-1">
                 <Input
-                  id={`api-key-${key}`}
+                  id={`api-key-${providerKey}`}
                   type={showApiKeys[providerKey] ? 'text' : 'password'}
                   placeholder={`Enter your ${provider.name} API key`}
                   value={settingsStore.settings.llmApiKeys[providerKey]}

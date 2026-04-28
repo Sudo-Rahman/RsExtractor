@@ -17,6 +17,7 @@
   import type { ImportSourceId } from '$lib/types/tool-import';
   import { AUDIO_EXTENSIONS } from '$lib/types';
   import { transcribeWithDeepgram } from '$lib/services/deepgram';
+  import { transcribeWithMediaFlow } from '$lib/services/mediaflow-transcription';
   import { scanFile } from '$lib/services/ffprobe';
   import { transcriptionVersionToSubtitleFile } from '$lib/services/subtitle-interop';
   import { loadTranscriptionData, saveTranscriptionData } from '$lib/services/transcription-storage';
@@ -164,7 +165,7 @@
   }
 
   function resolveTranscriptionConfig(file: AudioFile, baseConfig: DeepgramConfig): LanguageResolutionResult {
-    if (baseConfig.language !== 'multi') {
+    if (audioToSubsStore.provider === 'mediaflow' || baseConfig.language !== 'multi') {
       return {
         ok: true,
         config: baseConfig,
@@ -186,7 +187,7 @@
   }
 
   function collectFilesMissingLanguage(files: AudioFile[], baseConfig: DeepgramConfig): LanguageResolutionFailure[] {
-    if (baseConfig.language !== 'multi') {
+    if (audioToSubsStore.provider === 'mediaflow' || baseConfig.language !== 'multi') {
       return [];
     }
 
@@ -635,7 +636,11 @@
       // Use OPUS path if available, otherwise original path
       const audioPath = file.opusPath || file.path;
       
-      const result = await transcribeWithDeepgram({
+      const transcribe = audioToSubsStore.provider === 'mediaflow'
+        ? transcribeWithMediaFlow
+        : transcribeWithDeepgram;
+
+      const result = await transcribe({
         audioPath,
         config,
         signal,
@@ -1126,7 +1131,11 @@
     );
   });
 
-  const apiKeyConfigured = $derived(settingsStore.hasDeepgramApiKey());
+  const apiKeyConfigured = $derived(
+    audioToSubsStore.provider === 'mediaflow'
+      ? settingsStore.hasMediaFlowSession()
+      : settingsStore.hasDeepgramApiKey()
+  );
   const audioFiles = $derived(audioToSubsStore.audioFiles);
   const selectedFile = $derived(audioToSubsStore.selectedFile);
   const totalFilesCount = $derived(audioFiles.length);
@@ -1169,6 +1178,7 @@
     {transcodingCount}
     {invalidAutoLanguageFiles}
     onChangeTrack={handleChangeTrack}
+    onProviderChange={(provider) => audioToSubsStore.setTranscriptionProvider(provider)}
     onDeepgramConfigChange={(updates) => audioToSubsStore.updateDeepgramConfig(updates)}
     onMaxConcurrentChange={(value) => audioToSubsStore.setMaxConcurrentTranscriptions(value)}
     onTranscribeAll={handleTranscribeAll}

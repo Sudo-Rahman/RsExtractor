@@ -1,6 +1,7 @@
 import type { LogSource } from '$lib/stores/logs.svelte';
 import type { LLMProvider } from '$lib/types';
 import { log } from '$lib/utils/log-toast';
+import { fetchMediaFlowApi } from './mediaflow-auth';
 
 // API request timeout in milliseconds (10 minutes)
 const API_REQUEST_TIMEOUT = 600_000;
@@ -315,6 +316,20 @@ function normalizeOpenAiUsage(usage: any): LlmUsage | undefined {
     completionTokens: usage.completion_tokens || 0,
     totalTokens: usage.total_tokens || 0,
   };
+}
+
+function mediaFlowApiErrorMessage(status: number, errorBody: string): string {
+  try {
+    const parsed = JSON.parse(errorBody) as { error?: { code?: string; message?: string } };
+    const message = parsed.error?.message;
+    const code = parsed.error?.code;
+    if (message && code) return `${message} (${code})`;
+    if (message) return message;
+  } catch {
+    // Fall through to the raw response body.
+  }
+
+  return errorBody;
 }
 
 function isNetworkError(error: unknown): boolean {
@@ -694,8 +709,85 @@ async function callOpenRouter(params: ProviderCallParams): Promise<LlmResponse> 
   }
 }
 
+async function callMediaFlow(params: ProviderCallParams): Promise<LlmResponse> {
+  const providerLabel = 'MediaFlow';
+  const contentParts = ensureContentParts(params);
+
+  try {
+    const response = await fetchMediaFlowApi('/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: params.model,
+        messages: [
+          { role: 'system', content: params.systemPrompt },
+          { role: 'user', content: buildOpenAiContent(contentParts) },
+        ],
+        ...(params.responseMode === 'json' ? { response_format: { type: 'json_object' } } : {}),
+      }),
+      signal: params.signal,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      const parsedError = parseAPIError(
+        response.status,
+        mediaFlowApiErrorMessage(response.status, errorBody),
+        providerLabel,
+        response.headers.get('Retry-After')
+      );
+
+      maybeLog(params.logSource, 'error', `${providerLabel} API error`, parsedError.message, {
+        provider: 'mediaflow',
+        apiError: errorBody,
+      });
+
+      return {
+        content: '',
+        error: parsedError.message,
+        retryable: parsedError.retryable,
+        retryAfter: parsedError.retryAfter,
+      };
+    }
+
+    const data = await response.json();
+    const finishReason = data.choices?.[0]?.finish_reason;
+
+    return {
+      content: data.choices?.[0]?.message?.content || '',
+      finishReason,
+      truncated: finishReason === 'length',
+      usage: normalizeOpenAiUsage(data.usage),
+    };
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      const reason: 'cancelled' | 'timeout' = params.signal?.aborted ? 'cancelled' : 'timeout';
+      return buildAbortErrorResponse(providerLabel, reason);
+    }
+
+    const networkError = isNetworkError(error);
+    const errorMessage = networkError
+      ? `${providerLabel}: Network error - Check your backend connection`
+      : `${providerLabel}: ${error.message || error}`;
+
+    maybeLog(params.logSource, 'error', `${providerLabel} request failed`, errorMessage, {
+      provider: 'mediaflow',
+      apiError: String(error),
+    });
+
+    return {
+      content: '',
+      error: errorMessage,
+      retryable: networkError,
+      retryAfter: networkError ? 5000 : undefined,
+    };
+  }
+}
+
 export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
-  if (!request.apiKey.trim()) {
+  if (request.provider !== 'mediaflow' && !request.apiKey.trim()) {
     return {
       content: '',
       error: `No API key configured for ${request.provider}`,
@@ -732,6 +824,8 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
       return callGoogle(params);
     case 'openrouter':
       return callOpenRouter(params);
+    case 'mediaflow':
+      return callMediaFlow(params);
     default:
       return { content: '', error: `Unknown provider: ${request.provider}` };
   }

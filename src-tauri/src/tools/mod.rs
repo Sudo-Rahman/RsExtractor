@@ -1,3 +1,4 @@
+pub(crate) mod auth;
 pub(crate) mod data;
 pub(crate) mod ffmpeg;
 pub(crate) mod ffprobe;
