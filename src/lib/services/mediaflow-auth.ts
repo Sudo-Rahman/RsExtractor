@@ -65,6 +65,11 @@ function authBaseUrlFor(baseUrl: string): string {
   return `${trimTrailingSlash(baseUrl)}/api/auth`;
 }
 
+function loginUrlFor(baseUrl: string, redirectTo: string): string {
+  const params = new URLSearchParams({ redirectTo });
+  return `${trimTrailingSlash(baseUrl)}/auth/login?${params}`;
+}
+
 function apiUrl(path: string): string {
   return `${getMediaFlowBaseUrl()}${path.startsWith('/') ? path : `/${path}`}`;
 }
@@ -406,7 +411,7 @@ export async function signInWithMediaFlow(): Promise<void> {
   });
 
   try {
-    await openUrl(`${authBaseUrlFor(baseUrl)}/oauth2/authorize?${params}`);
+    await openUrl(loginUrlFor(baseUrl, `/api/auth/oauth2/authorize?${params}`));
   } catch (error) {
     clearPendingLogin();
     logStore.addLog({

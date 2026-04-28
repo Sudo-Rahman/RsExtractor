@@ -47,6 +47,16 @@ vi.mock('$lib/stores/logs.svelte', () => ({
   },
 }));
 
+function getAuthorizeUrlFromOpenedLogin(): URL {
+  const loginUrl = new URL(openUrlMock.mock.calls[0]?.[0] as string);
+  expect(loginUrl.pathname).toBe('/auth/login');
+
+  const redirectTo = loginUrl.searchParams.get('redirectTo');
+  expect(redirectTo).toMatch(/^\/api\/auth\/oauth2\/authorize\?/);
+
+  return new URL(redirectTo as string, loginUrl.origin);
+}
+
 describe('MediaFlow OAuth helpers', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -102,7 +112,7 @@ describe('MediaFlow OAuth helpers', () => {
 
     await signInWithMediaFlow();
 
-    const authorizeUrl = new URL(openUrlMock.mock.calls[0]?.[0] as string);
+    const authorizeUrl = getAuthorizeUrlFromOpenedLogin();
     const callbackUrl = `mediaflow://oauth/callback?code=auth-code&state=${authorizeUrl.searchParams.get('state')}`;
 
     vi.resetModules();
@@ -145,7 +155,7 @@ describe('MediaFlow OAuth helpers', () => {
 
     await signInWithMediaFlow();
 
-    const authorizeUrl = new URL(openUrlMock.mock.calls[0]?.[0] as string);
+    const authorizeUrl = getAuthorizeUrlFromOpenedLogin();
     const callbackUrl = `mediaflow://oauth/callback?code=auth-code&state=${authorizeUrl.searchParams.get('state')}`;
 
     vi.resetModules();

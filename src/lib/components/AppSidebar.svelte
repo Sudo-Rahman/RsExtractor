@@ -1,11 +1,31 @@
 <script lang="ts">
-  import { FileOutput, FileVideo, GitMerge, Info, Settings, Languages, PenLine, AudioLines, ScanText } from '@lucide/svelte';
+  import { toast } from 'svelte-sonner';
+  import { openUrl } from '@tauri-apps/plugin-opener';
+  import {
+    ChevronsUpDown,
+    FileOutput,
+    FileVideo,
+    GitMerge,
+    Info,
+    LayoutDashboard,
+    LogIn,
+    LogOut,
+    Settings,
+    Languages,
+    PenLine,
+    AudioLines,
+    ScanText,
+    UserRound,
+  } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import type { ComponentProps } from 'svelte';
 
   import { Badge } from '$lib/components/ui/badge';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as Sidebar from '$lib/components/ui/sidebar';
+  import { settingsStore } from '$lib/stores';
   import { formatAppVersion, loadAppVersion } from '$lib/services/app-metadata';
+  import { signInWithMediaFlow, signOutMediaFlow } from '$lib/services/mediaflow-auth';
   import { OS } from '$lib/utils';
 
   interface NavItem {
@@ -71,6 +91,18 @@
 
   const isMacOS = OS() === 'MacOS';
   let appVersionLabel = $state('Loading version...');
+  let isAccountBusy = $state(false);
+  const mediaflowUser = $derived(settingsStore.settings.mediaflowUser);
+  const accountDisplayName = $derived(mediaflowUser?.name || mediaflowUser?.email || 'MediaFlow Account');
+  const accountEmail = $derived(mediaflowUser?.email || 'Sign in to continue');
+  const accountInitials = $derived.by(() => {
+    const source = mediaflowUser?.name || mediaflowUser?.email || 'MF';
+    const parts = source.trim().split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    }
+    return source.slice(0, 2).toUpperCase();
+  });
 
   onMount(() => {
     void loadAppVersion()
@@ -81,9 +113,49 @@
         appVersionLabel = 'Version unavailable';
       });
   });
+
+  function dashboardUrl() {
+    return `${(settingsStore.settings.mediaflowBaseUrl || 'http://localhost:5173').replace(/\/+$/, '')}/dashboard`;
+  }
+
+  async function handleOpenDashboard() {
+    try {
+      await openUrl(dashboardUrl());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message);
+    }
+  }
+
+  async function handleSignIn() {
+    isAccountBusy = true;
+    try {
+      await signInWithMediaFlow();
+      toast.info('Complete sign-in in your browser');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message);
+    } finally {
+      isAccountBusy = false;
+    }
+  }
+
+  async function handleSignOut() {
+    isAccountBusy = true;
+    try {
+      await signOutMediaFlow();
+      toast.success('Signed out from MediaFlow');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message);
+    } finally {
+      isAccountBusy = false;
+    }
+  }
+  
 </script>
 
-<Sidebar.Root variant="floating" {...restProps}>
+<Sidebar.Root variant="floating"  {...restProps}>
   <Sidebar.Header>
     <Sidebar.Menu>
       <Sidebar.MenuItem>
@@ -120,12 +192,8 @@
                 isActive={isActive}
                 onclick={() => onNavigate?.(item.id)}
               >
-                {#snippet child({ props })}
-                  <button {...props} class="flex items-center gap-2 w-full p-2 rounded-lg" class:bg-accent={isActive}>
-                    <Icon class="size-4" />
-                    <span>{item.title}</span>
-                  </button>
-                {/snippet}
+                <Icon class="size-4" />
+                <span>{item.title}</span>
               </Sidebar.MenuButton>
               {#if item.badge}
                 <Sidebar.MenuBadge>
@@ -142,18 +210,65 @@
   <Sidebar.Footer>
     <Sidebar.Menu>
       <Sidebar.MenuItem>
-        {@const isActive = currentView === 'settings'}
+        {@const isSettingsActive = currentView === 'settings'}
         <Sidebar.MenuButton
-          isActive={isActive}
+          isActive={isSettingsActive}
           onclick={() => onNavigate?.('settings')}
         >
-          {#snippet child({ props })}
-            <button {...props} class="flex items-center gap-2 w-full p-2 rounded-lg" class:bg-accent={isActive}>
-              <Settings class="size-4" />
-              <span>Settings</span>
-            </button>
-          {/snippet}
+          <Settings class="size-4" />
+          <span>Settings</span>
         </Sidebar.MenuButton>
+      </Sidebar.MenuItem>
+      <Sidebar.MenuItem>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
+            {#snippet child({ props })}
+              <Sidebar.MenuButton {...props}>
+                <UserRound class="size-4" />
+                <span>Account</span>
+                <ChevronsUpDown class="ml-auto size-4 text-muted-foreground" />
+              </Sidebar.MenuButton>
+            {/snippet}
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content side="right" align="end" class="w-56">
+            <DropdownMenu.Label>
+              <div class="flex items-center gap-2 py-1">
+                <div class="flex size-8 shrink-0 items-center justify-center rounded-full border bg-background text-xs font-medium">
+                  {#if mediaflowUser}
+                    {accountInitials}
+                  {:else}
+                    <UserRound class="size-4 text-muted-foreground" />
+                  {/if}
+                </div>
+                <div class="min-w-0 leading-tight">
+                  <p class="truncate text-sm font-medium">{accountDisplayName}</p>
+                  <p class="truncate text-xs font-normal text-muted-foreground">{accountEmail}</p>
+                </div>
+              </div>
+            </DropdownMenu.Label>
+            <DropdownMenu.Separator />
+            {#if mediaflowUser}
+              <DropdownMenu.Item onclick={handleOpenDashboard}>
+                <LayoutDashboard class="size-4" />
+                <span>Dashboard</span>
+              </DropdownMenu.Item>
+            {:else}
+              <DropdownMenu.Item onclick={handleSignIn} disabled={isAccountBusy}>
+                <LogIn class="size-4" />
+                <span>Sign in</span>
+              </DropdownMenu.Item>
+            {/if}
+            <DropdownMenu.Separator />
+            <DropdownMenu.Item
+              onclick={handleSignOut}
+              disabled={!mediaflowUser || isAccountBusy}
+              variant="destructive"
+            >
+              <LogOut class="size-4" />
+              <span>Log out</span>
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
       </Sidebar.MenuItem>
     </Sidebar.Menu>
   </Sidebar.Footer>

@@ -9,7 +9,7 @@ pub use shared::ExtractionError;
 pub use tools::ocr::OcrModelPaths;
 
 pub fn run() {
-    let mut builder = tauri::Builder::default();
+    let builder = tauri::Builder::default();
 
     builder
         .plugin(tauri_plugin_deep_link::init())
