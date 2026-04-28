@@ -54,7 +54,9 @@ function getAuthorizeUrlFromOpenedLogin(): URL {
   const redirectTo = loginUrl.searchParams.get('redirectTo');
   expect(redirectTo).toMatch(/^\/api\/auth\/oauth2\/authorize\?/);
 
-  return new URL(redirectTo as string, loginUrl.origin);
+  const authorizeUrl = new URL(redirectTo as string, loginUrl.origin);
+  expect(authorizeUrl.searchParams.get('redirect_uri')).toBe('http://localhost:5173/desktop/oauth/callback');
+  return authorizeUrl;
 }
 
 describe('MediaFlow OAuth helpers', () => {
@@ -144,6 +146,7 @@ describe('MediaFlow OAuth helpers', () => {
     expect(body.get('grant_type')).toBe('authorization_code');
     expect(body.get('code')).toBe('auth-code');
     expect(body.get('code_verifier')).toBeTruthy();
+    expect(body.get('redirect_uri')).toBe('http://localhost:5173/desktop/oauth/callback');
     expect(settingsStoreMock.settings.mediaflowUser).toEqual({
       email: 'local@example.com',
       name: 'Local User',

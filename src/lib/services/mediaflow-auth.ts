@@ -7,7 +7,8 @@ import { settingsStore, type MediaFlowUser } from '$lib/stores/settings.svelte';
 import { logStore } from '$lib/stores/logs.svelte';
 
 const CLIENT_ID = 'mediaflow-desktop';
-const REDIRECT_URI = 'mediaflow://oauth/callback';
+const APP_REDIRECT_URI = 'mediaflow://oauth/callback';
+const WEB_OAUTH_CALLBACK_PATH = '/desktop/oauth/callback';
 const AUTH_SCOPE = 'openid profile email offline_access';
 const ACCESS_TOKEN_REFRESH_BUFFER_MS = 60_000;
 const PENDING_LOGIN_STORAGE_KEY = 'mediaflow.oauth.pendingLogin';
@@ -37,6 +38,7 @@ interface PendingLogin {
   state: string;
   codeVerifier: string;
   baseUrl: string;
+  redirectUri?: string;
   createdAt: number;
 }
 
@@ -63,6 +65,10 @@ function authBaseUrl(): string {
 
 function authBaseUrlFor(baseUrl: string): string {
   return `${trimTrailingSlash(baseUrl)}/api/auth`;
+}
+
+function webRedirectUriFor(baseUrl: string): string {
+  return `${trimTrailingSlash(baseUrl)}${WEB_OAUTH_CALLBACK_PATH}`;
 }
 
 function loginUrlFor(baseUrl: string, redirectTo: string): string {
@@ -271,11 +277,16 @@ async function applyTokenResponse(
   return accessToken;
 }
 
-async function exchangeAuthorizationCode(code: string, codeVerifier: string, baseUrl: string): Promise<string> {
+async function exchangeAuthorizationCode(
+  code: string,
+  codeVerifier: string,
+  baseUrl: string,
+  redirectUri: string,
+): Promise<string> {
   return applyTokenResponse(await tokenRequest(new URLSearchParams({
     grant_type: 'authorization_code',
     client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI,
+    redirect_uri: redirectUri,
     code,
     code_verifier: codeVerifier,
   }), baseUrl), { requireRefreshToken: true });
@@ -308,7 +319,12 @@ async function handleOAuthCallbackUrl(url: string): Promise<void> {
       title: 'OAuth callback received',
       details: 'Exchanging MediaFlow authorization code for access and refresh tokens.',
     });
-    await exchangeAuthorizationCode(callback.code, login.codeVerifier, login.baseUrl);
+    await exchangeAuthorizationCode(
+      callback.code,
+      login.codeVerifier,
+      login.baseUrl,
+      login.redirectUri ?? APP_REDIRECT_URI,
+    );
     logStore.addLog({
       level: 'success',
       source: 'mediaflow',
@@ -392,7 +408,8 @@ export async function signInWithMediaFlow(): Promise<void> {
   const { codeVerifier, codeChallenge } = await createPkcePair();
   const state = randomBase64Url(24);
   const baseUrl = getMediaFlowBaseUrl();
-  storePendingLogin({ state, codeVerifier, baseUrl, createdAt: Date.now() });
+  const redirectUri = webRedirectUriFor(baseUrl);
+  storePendingLogin({ state, codeVerifier, baseUrl, redirectUri, createdAt: Date.now() });
   logStore.addLog({
     level: 'info',
     source: 'mediaflow',
@@ -402,7 +419,7 @@ export async function signInWithMediaFlow(): Promise<void> {
 
   const params = new URLSearchParams({
     client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI,
+    redirect_uri: redirectUri,
     response_type: 'code',
     scope: AUTH_SCOPE,
     code_challenge: codeChallenge,
@@ -422,6 +439,10 @@ export async function signInWithMediaFlow(): Promise<void> {
     });
     throw error;
   }
+}
+
+export function cancelPendingMediaFlowSignIn(): void {
+  clearPendingLogin();
 }
 
 export async function refreshMediaFlowSession(): Promise<string> {
