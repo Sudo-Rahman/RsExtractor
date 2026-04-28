@@ -82,7 +82,7 @@
   }
 </script>
 
-<div class="flex-2 flex flex-col min-h-0 overflow-scroll">
+<div class="flex-2 flex flex-col min-h-0 overflow-hidden">
   {#if selectedJob}
     <div class="p-4 border-b flex items-center justify-between">
       <div class="flex items-center gap-2 min-w-0">
@@ -108,22 +108,61 @@
       {/if}
     </div>
 
-    <Resizable.PaneGroup direction="horizontal" class="flex-1 min-h-0">
+    <Resizable.PaneGroup direction="horizontal" class="flex-1 min-h-0 min-w-0">
       <Resizable.Pane defaultSize={50} minSize={20}>
-        <div class="h-full flex flex-col">
-          <div class="h-10 px-2 bg-muted/30 border-b flex items-center justify-between">
-            <span class="text-sm font-medium">Original</span>
-            <span class="text-xs text-muted-foreground">
-              {originalLineCount} lines
-              {#if tokenCount !== null}
-                · ~{tokenCount.toLocaleString()} tokens
-              {:else if isCountingTokens}
-                · <Loader2 class="size-3 animate-spin inline" />
-              {/if}
-            </span>
+        <div class="h-full min-w-0 flex flex-col [contain:layout_paint_style]">
+          <div class="@container h-10 px-2 bg-muted/30 border-b flex items-center justify-between gap-2 overflow-hidden">
+            <span class="text-sm font-medium shrink-0">Original</span>
+            <HoverCard.Root openDelay={200}>
+              <span class="@max-[14rem]:hidden min-w-0 truncate whitespace-nowrap text-right text-xs text-muted-foreground">
+                {originalLineCount.toLocaleString()} lines
+                {#if tokenCount !== null}
+                  · ~{tokenCount.toLocaleString()} tokens
+                {:else if isCountingTokens}
+                  · <Loader2 class="size-3 animate-spin inline" />
+                {/if}
+              </span>
+              <HoverCard.Trigger>
+                {#snippet child({ props })}
+                  <Button
+                    {...props}
+                    variant="ghost"
+                    size="icon-xs"
+                    class="hidden text-muted-foreground hover:text-foreground @max-[14rem]:inline-flex"
+                    aria-label="Show original metrics"
+                  >
+                    <Info class="size-3.5" />
+                  </Button>
+                {/snippet}
+              </HoverCard.Trigger>
+              <HoverCard.Content align="end" class="w-56 rounded-2xl p-3">
+                <div class="space-y-2">
+                  <p class="text-xs font-medium text-muted-foreground">Original metrics</p>
+                  <div class="space-y-1 text-xs">
+                    <div class="flex items-center justify-between gap-4">
+                      <span class="text-muted-foreground">Lines</span>
+                      <span class="font-medium">{originalLineCount.toLocaleString()}</span>
+                    </div>
+                    <div class="flex items-center justify-between gap-4">
+                      <span class="text-muted-foreground">Tokens</span>
+                      {#if tokenCount !== null}
+                        <span class="font-medium">~{tokenCount.toLocaleString()}</span>
+                      {:else if isCountingTokens}
+                        <span class="inline-flex items-center gap-1 text-muted-foreground">
+                          <Loader2 class="size-3 animate-spin" />
+                          Counting
+                        </span>
+                      {:else}
+                        <span class="text-muted-foreground">Unavailable</span>
+                      {/if}
+                    </div>
+                  </div>
+                </div>
+              </HoverCard.Content>
+            </HoverCard.Root>
           </div>
-          <div class="flex-1 overflow-y-scroll">
-            <pre class="p-4 text-sm whitespace-pre-wrap font-mono">{selectedJob.file.content}</pre>
+          <div class="flex-1 min-h-0 min-w-0 overflow-auto overscroll-contain">
+            <pre class="inline-block min-w-full p-4 text-sm whitespace-pre font-mono [contain:layout_paint_style] [tab-size:2]">{selectedJob.file.content}</pre>
           </div>
         </div>
       </Resizable.Pane>
@@ -131,7 +170,7 @@
       <Resizable.Handle withHandle />
 
       <Resizable.Pane defaultSize={50} minSize={20}>
-        <div class="h-full flex flex-col">
+        <div class="h-full min-w-0 flex flex-col [contain:layout_paint_style]">
           <div class="@container h-10 px-2 bg-muted/30 border-b flex items-center justify-between gap-2 overflow-hidden">
             <div class="text-sm font-medium min-w-0 flex items-center gap-1.5 whitespace-nowrap">
               <span class="shrink-0">Translation</span>
@@ -242,7 +281,7 @@
             {/if}
           </div>
 
-          <div class="flex-1 overflow-y-scroll">
+          <div class="flex-1 min-h-0 min-w-0 overflow-hidden overscroll-contain">
             {#if selectedJob.status === 'translating'}
               <div class="flex flex-col items-center justify-center h-full p-8 gap-4">
                 <Loader2 class="size-8 text-primary animate-spin" />
@@ -259,7 +298,9 @@
               </div>
             {:else if displayedContent}
               <Textarea
-                class="w-full h-full p-4 resize-none font-mono text-sm border-0 focus-visible:ring-0 rounded-none bg-transparent"
+                class="w-full h-full p-4 resize-none font-mono text-sm border-0 focus-visible:ring-0 rounded-none bg-transparent overflow-auto whitespace-pre field-sizing-fixed [contain:layout_paint_style] [tab-size:2]"
+                wrap="off"
+                spellcheck="false"
                 value={displayedContent}
                 oninput={handleContentInput}
               />
