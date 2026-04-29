@@ -1,7 +1,7 @@
 import type { LogSource } from '$lib/stores/logs.svelte';
 import type { LLMProvider } from '$lib/types';
 import { log } from '$lib/utils/log-toast';
-import { fetchMediaFlowApi } from './mediaflow-auth';
+import { fetchMediaFlowBillableApi } from './mediaflow-billing';
 
 // API request timeout in milliseconds (10 minutes)
 const API_REQUEST_TIMEOUT = 600_000;
@@ -714,7 +714,7 @@ async function callMediaFlow(params: ProviderCallParams): Promise<LlmResponse> {
   const contentParts = ensureContentParts(params);
 
   try {
-    const response = await fetchMediaFlowApi('/api/v1/chat/completions', {
+    const response = await fetchMediaFlowBillableApi('/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

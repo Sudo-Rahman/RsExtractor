@@ -1,7 +1,7 @@
 import { readFile } from '@tauri-apps/plugin-fs';
 import { logStore } from '$lib/stores/logs.svelte';
 import type { DeepgramAPIResponse, DeepgramConfig, DeepgramResult } from '$lib/types';
-import { fetchMediaFlowApi } from './mediaflow-auth';
+import { fetchMediaFlowBillableApi } from './mediaflow-billing';
 import { processDeepgramResponse, type TranscribeResult } from './deepgram';
 import { withSleepInhibit } from './sleep-inhibit';
 
@@ -102,7 +102,7 @@ export async function transcribeWithMediaFlow(options: MediaFlowTranscribeOption
         context: { filePath: audioPath },
       });
 
-      const response = await fetchMediaFlowApi('/api/v1/audio/transcriptions', () => ({
+      const response = await fetchMediaFlowBillableApi('/api/v1/audio/transcriptions', () => ({
         method: 'POST',
         body: buildMediaFlowTranscriptionForm(audioBlob, config),
         signal,
