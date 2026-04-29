@@ -1,6 +1,6 @@
 <script lang="ts">
   import { AlertTriangle, Key, Loader2, Play, Settings2, Users } from '@lucide/svelte';
-  import type { TranscriptionConfig, DeepgramConfig, TranscriptionProvider } from '$lib/types';
+  import { DEEPGRAM_MODELS, type TranscriptionConfig, type DeepgramConfig, type TranscriptionProvider } from '$lib/types';
   import { cn } from '$lib/utils';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
@@ -75,6 +75,9 @@
   const invalidFileCountLabel = $derived(
     `${invalidAutoLanguageFiles.length} affected file${invalidAutoLanguageFiles.length === 1 ? '' : 's'}`
   );
+  const mediaFlowModels = [DEEPGRAM_MODELS[0]] as const;
+  const modelOptions = $derived(isMediaFlow ? mediaFlowModels : DEEPGRAM_MODELS);
+  const showProviderSelector = import.meta.env.DEV;
 </script>
 
 <div class={cn("h-full flex flex-col overflow-auto", className)}>
@@ -97,51 +100,44 @@
   {/if}
 
   <div class="p-4 space-y-6 flex-1">
-    <!-- Provider Selection -->
+    <!-- Model Selection -->
     <Card.Root>
-      <Card.Header class="pb-3">
-        <Card.Title class="text-sm">Provider</Card.Title>
-      </Card.Header>
-      <Card.Content>
-        <Select.Root
-          type="single"
-          value={config.provider}
-          onValueChange={(value) => onProviderChange(value as TranscriptionProvider)}
-        >
-          <Select.Trigger class="w-full">
-            {config.provider === 'mediaflow' ? 'MediaFlow' : 'Deepgram'}
-          </Select.Trigger>
-          <Select.Content>
-            <Select.Group>
-              <Select.Item value="deepgram">Deepgram</Select.Item>
-              <Select.Item value="mediaflow">MediaFlow</Select.Item>
-            </Select.Group>
-          </Select.Content>
-        </Select.Root>
+      <Card.Content class="space-y-4">
+        {#if showProviderSelector}
+          <div class="space-y-2">
+            <Label class="text-sm font-medium">Provider</Label>
+            <Select.Root
+              type="single"
+              value={config.provider}
+              onValueChange={(value) => onProviderChange(value as TranscriptionProvider)}
+              disabled={isTranscribing}
+            >
+              <Select.Trigger class="w-full">
+                {config.provider === 'mediaflow' ? 'MediaFlow' : 'Deepgram'}
+              </Select.Trigger>
+              <Select.Content>
+                <Select.Group>
+                  <Select.Item value="deepgram">Deepgram</Select.Item>
+                  <Select.Item value="mediaflow">MediaFlow</Select.Item>
+                </Select.Group>
+              </Select.Content>
+            </Select.Root>
+          </div>
+
+          <Separator />
+        {/if}
+
+        <ModelSelector
+          value={config.deepgramConfig.model}
+          models={modelOptions}
+          onValueChange={(model) => onDeepgramConfigChange({ model })}
+          disabled={isTranscribing || isMediaFlow}
+        />
       </Card.Content>
     </Card.Root>
 
-    <!-- Model Selection -->
-    {#if !isMediaFlow}
-      <Card.Root>
-        <Card.Header class="pb-3">
-          <Card.Title class="text-sm">Model</Card.Title>
-        </Card.Header>
-        <Card.Content>
-          <ModelSelector
-            value={config.deepgramConfig.model}
-            onValueChange={(model) => onDeepgramConfigChange({ model })}
-            disabled={isTranscribing}
-          />
-        </Card.Content>
-      </Card.Root>
-    {/if}
-
     <!-- Language -->
     <Card.Root>
-      <Card.Header class="pb-3">
-        <Card.Title class="text-sm">Language</Card.Title>
-      </Card.Header>
       <Card.Content>
         <LanguageSelector
           value={config.deepgramConfig.language}
@@ -172,7 +168,7 @@
       <Card.Header class="pb-3">
         <Card.Title class="text-sm flex items-center gap-2">
           <Settings2 class="size-4" />
-          {isMediaFlow ? 'MediaFlow Options' : 'Deepgram Options'}
+          Transcription Configuration
         </Card.Title>
       </Card.Header>
       <Card.Content class="space-y-4">
@@ -241,32 +237,30 @@
           />
         </div>
 
-        {#if !isMediaFlow}
-          <Separator />
+        <Separator />
 
-          <!-- Utterance Split -->
-          <div class="space-y-3">
-            <div class="space-y-0.5">
-              <Label class="text-sm">Pause Threshold</Label>
-              <p class="text-xs text-muted-foreground">
-                Silence duration to split phrases ({config.deepgramConfig.uttSplit.toFixed(1)}s)
-              </p>
-            </div>
-            <Slider
-              type="multiple"
-              value={[config.deepgramConfig.uttSplit]}
-              onValueChange={(values: number[]) => onDeepgramConfigChange({ uttSplit: values[0] })}
-              min={0.1}
-              max={2.0}
-              step={0.1}
-              disabled={isTranscribing}
-            />
-            <div class="flex justify-between text-xs text-muted-foreground">
-              <span>0.1s (short phrases)</span>
-              <span>2.0s (long phrases)</span>
-            </div>
+        <!-- Utterance Split -->
+        <div class="space-y-3">
+          <div class="space-y-0.5">
+            <Label class="text-sm">Pause Threshold</Label>
+            <p class="text-xs text-muted-foreground">
+              Silence duration to split phrases ({config.deepgramConfig.uttSplit.toFixed(1)}s)
+            </p>
           </div>
-        {/if}
+          <Slider
+            type="multiple"
+            value={[config.deepgramConfig.uttSplit]}
+            onValueChange={(values: number[]) => onDeepgramConfigChange({ uttSplit: values[0] })}
+            min={0.1}
+            max={2.0}
+            step={0.1}
+            disabled={isTranscribing}
+          />
+          <div class="flex justify-between text-xs text-muted-foreground">
+            <span>0.1s (short phrases)</span>
+            <span>2.0s (long phrases)</span>
+          </div>
+        </div>
 
         <Separator />
 

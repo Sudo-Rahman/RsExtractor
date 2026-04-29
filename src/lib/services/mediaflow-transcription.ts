@@ -25,17 +25,14 @@ interface MediaFlowTranscriptionResponse {
 export function buildMediaFlowTranscriptionForm(audioBlob: Blob, config: DeepgramConfig): FormData {
   const form = new FormData();
   form.set('file', audioBlob, 'audio.opus');
+  form.set('model', config.model);
   form.set('punctuate', String(config.punctuate));
   form.set('paragraphs', String(config.paragraphs));
   form.set('smart_format', String(config.smartFormat));
   form.set('utterances', String(config.utterances));
+  form.set('utt_split', String(config.uttSplit));
   form.set('diarize', String(config.diarize));
-
-  if (config.language === 'multi' || config.language === 'auto') {
-    form.set('detect_language', 'true');
-  } else {
-    form.set('language', config.language);
-  }
+  form.set('language', config.language === 'auto' ? 'multi' : config.language);
 
   return form;
 }
@@ -53,7 +50,7 @@ function normalizedToDeepgramResponse(body: MediaFlowTranscriptionResponse): Dee
       created: new Date().toISOString(),
       duration: Number(body.metadata?.duration ?? 0),
       channels: 1,
-      models: ['Transcribe'],
+      models: ['Nova 3'],
       model_info: {},
     },
     results: {
@@ -125,12 +122,29 @@ export async function transcribeWithMediaFlow(options: MediaFlowTranscribeOption
       const data = await response.json() as MediaFlowTranscriptionResponse;
       const result: DeepgramResult = processDeepgramResponse(normalizedToDeepgramResponse(data));
 
+      if (result.transcript.trim().length === 0 && result.phrases.length === 0) {
+        const words = Array.isArray(data.words) ? data.words.length : 0;
+        const utterances = Array.isArray(data.utterances) ? data.utterances.length : 0;
+        const duration = Math.round(data.metadata?.duration ?? 0);
+        logStore.addLog({
+          level: 'error',
+          source: 'mediaflow',
+          title: 'MediaFlow transcription returned no text',
+          details: `Request: ${data.metadata?.request_id ?? 'unknown'}, duration: ${duration}s, words: ${words}, utterances: ${utterances}`,
+          context: { filePath: audioPath },
+        });
+        return {
+          success: false,
+          error: 'MediaFlow returned an empty transcription. Check server Deepgram response logs.',
+        };
+      }
+
       onProgress?.(100, 'processing');
       logStore.addLog({
         level: 'success',
         source: 'mediaflow',
         title: 'MediaFlow transcription complete',
-        details: `Duration: ${Math.round(result.duration)}s`,
+        details: `Duration: ${Math.round(result.duration)}s, transcript: ${result.transcript.trim().length} chars, phrases: ${result.phrases.length}`,
         context: { filePath: audioPath },
       });
 
